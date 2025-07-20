@@ -1,3 +1,4 @@
+## experiments_interrogate.py
 import cv2
 from extras.interrogate import default_interrogator as default_interrogator_photo
 from extras.wd14tagger import default_interrogator as default_interrogator_anime

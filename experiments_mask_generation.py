@@ -1,3 +1,4 @@
+## experiments_mask_generation.py
 # https://github.com/sail-sg/EditAnything/blob/main/sam2groundingdino_edit.py
 
 import numpy as np
