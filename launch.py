@@ -19,45 +19,20 @@ import platform
 import fooocus_version
 
 from build_launcher import build_launcher
-from modules.launch_util import is_installed, run, python, run_pip, requirements_met, delete_folder_content
+# Removed: from modules.launch_util import is_installed, run, python, run_pip, requirements_met
+from modules.launch_util import delete_folder_content # Keep this for cleanup
 from modules.model_loader import load_file_from_url
 
-REINSTALL_ALL = False
-TRY_INSTALL_XFORMERS = False
-
+# Removed REINSTALL_ALL, TRY_INSTALL_XFORMERS as we handle dependencies manually
 
 def prepare_environment():
-    torch_index_url = os.environ.get('TORCH_INDEX_URL', "https://download.pytorch.org/whl/cu121")
-    torch_command = os.environ.get('TORCH_COMMAND',
-                                   f"pip install torch==2.1.0 torchvision==0.16.0 --extra-index-url {torch_index_url}")
-    requirements_file = os.environ.get('REQS_FILE', "requirements_versions.txt")
+    # Removed all torch_index_url, torch_command, requirements_file definitions
+    # Removed all run() and run_pip() calls for dependency installation
 
     print(f"Python {sys.version}")
     print(f"Fooocus version: {fooocus_version.version}")
-
-    if REINSTALL_ALL or not is_installed("torch") or not is_installed("torchvision"):
-        run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
-
-    if TRY_INSTALL_XFORMERS:
-        if REINSTALL_ALL or not is_installed("xformers"):
-            xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.23')
-            if platform.system() == "Windows":
-                if platform.python_version().startswith("3.10"):
-                    run_pip(f"install -U -I --no-deps {xformers_package}", "xformers", live=True)
-                else:
-                    print("Installation of xformers is not supported in this version of Python.")
-                    print(
-                        "You can also check this and build manually: https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Xformers#building-xformers-on-windows-by-duckness")
-                    if not is_installed("xformers"):
-                        exit(0)
-            elif platform.system() == "Linux":
-                run_pip(f"install -U -I --no-deps {xformers_package}", "xformers")
-
-    if REINSTALL_ALL or not requirements_met(requirements_file):
-        run_pip(f"install -r \"{requirements_file}\"", "requirements")
-
+    print("Dependency management is handled manually in Colab cells.")
     return
-
 
 vae_approx_filenames = [
     ('xlvaeapp.pth', 'https://huggingface.co/lllyasviel/misc/resolve/main/xlvaeapp.pth'),
@@ -66,11 +41,9 @@ vae_approx_filenames = [
      'https://huggingface.co/mashb1t/misc/resolve/main/xl-to-v1_interposer-v4.0.safetensors')
 ]
 
-
 def ini_args():
     from args_manager import args
     return args
-
 
 prepare_environment()
 build_launcher()
@@ -83,6 +56,18 @@ if args.gpu_device_id is not None:
 if args.hf_mirror is not None:
     os.environ['HF_MIRROR'] = str(args.hf_mirror)
     print("Set hf_mirror to:", args.hf_mirror)
+
+# Load .env variables (requires python-dotenv to be installed manually)
+try:
+    from dotenv import load_dotenv
+    if os.path.exists(os.path.join(root, '.env')):
+        load_dotenv(os.path.join(root, '.env'))
+        print("Loaded environment variables from .env file.")
+except ImportError:
+    print("python-dotenv not installed. .env file will not be loaded automatically.")
+except Exception as e:
+    print(f"Error loading .env file: {e}")
+
 
 from modules import config
 from modules.hash_cache import init_cache
