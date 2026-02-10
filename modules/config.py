@@ -71,7 +71,7 @@ def try_load_deprecated_user_path_config():
         replace_config('inpaint_models_path', 'path_inpaint')
         replace_config('controlnet_models_path', 'path_controlnet')
         replace_config('clip_vision_models_path', 'path_clip_vision')
-        replace_config('fooocus_expansion_path', 'path_fooocus_expansion')
+
         replace_config('temp_outputs_path', 'path_outputs')
 
         if deprecated_config_dict.get("default_model", None) == 'juggernautXL_version6Rundiffusion.safetensors':
@@ -197,7 +197,7 @@ path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/u
 path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/')
 path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/')
 path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/')
-path_fooocus_expansion = get_dir_or_set_default('path_fooocus_expansion', '../models/prompt_expansion/fooocus_expansion')
+
 path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_safety_checker = get_dir_or_set_default('path_safety_checker', '../models/safety_checker/')
 path_sam = get_dir_or_set_default('path_sam', '../models/sam/')
@@ -376,7 +376,6 @@ default_vae = get_config_item_or_set_default(
 default_styles = get_config_item_or_set_default(
     key='default_styles',
     default_value=[
-        "Fooocus V2",
         "Fooocus Enhance",
         "Fooocus Sharp"
     ],

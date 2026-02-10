@@ -28,7 +28,7 @@ Below is a quick list using Midjourney's examples:
 
 | Midjourney | Fooocus |
 | - | - |
-| High-quality text-to-image without needing much prompt engineering or parameter tuning. <br> (Unknown method) | High-quality text-to-image without needing much prompt engineering or parameter tuning. <br> (Fooocus has an offline GPT-2 based prompt processing engine and lots of sampling improvements so that results are always beautiful, no matter if your prompt is as short as “house in garden” or as long as 1000 words) |
+| High-quality text-to-image without needing much prompt engineering or parameter tuning. <br> (Unknown method) | High-quality text-to-image without needing much prompt engineering or parameter tuning. <br> (Fooocus has lots of sampling improvements so that results are always beautiful, no matter if your prompt is as short as “house in garden” or as long as 1000 words) |
 | V1 V2 V3 V4 | Input Image -> Upscale or Variation -> Vary (Subtle) / Vary (Strong)|
 | U1 U2 U3 U4 | Input Image -> Upscale or Variation -> Upscale (1.5x) / Upscale (2x) |
 | Inpaint / Up / Down / Left / Right (Pan) | Input Image -> Inpaint or Outpaint -> Inpaint / Up / Down / Left / Right <br> (Fooocus uses its own inpaint algorithm and inpaint models so that results are more satisfying than all other software that uses standard SDXL inpaint method/model) |
@@ -49,7 +49,7 @@ Below is a quick list using LeonardoAI's examples:
 
 | LeonardoAI | Fooocus |
 | - | - |
-| Prompt Magic | Advanced -> Style -> Fooocus V2 |
+| Prompt Magic | (Removed) |
 | Advanced Sampler Parameters (like Contrast/Sharpness/etc) | Advanced -> Advanced -> Sampling Sharpness / etc |
 | User-friendly ControlNets | Input Image -> Image Prompt -> Advanced |
 
@@ -296,7 +296,7 @@ In both ways the access is unauthenticated by default. You can add basic authent
 <details>
 <summary>Click to see a list of tricks. Those are based on SDXL and are not very up-to-date with latest models.</summary>
 
-1. GPT2-based [prompt expansion as a dynamic style "Fooocus V2".](https://github.com/lllyasviel/Fooocus/discussions/117#raw) (similar to Midjourney's hidden pre-processing and "raw" mode, or the LeonardoAI's Prompt Magic).
+1. (Removed) <s>GPT2-based prompt expansion as a dynamic style "Fooocus V2". (similar to Midjourney's hidden pre-processing and "raw" mode, or the LeonardoAI's Prompt Magic).</s>
 2. Native refiner swap inside one single k-sampler. The advantage is that the refiner model can now reuse the base model's momentum (or ODE's history parameters) collected from k-sampling to achieve more coherent sampling. In Automatic1111's high-res fix and ComfyUI's node system, the base model and refiner use two independent k-samplers, which means the momentum is largely wasted, and the sampling continuity is broken. Fooocus uses its own advanced k-diffusion sampling that ensures seamless, native, and continuous swap in a refiner setup. (Update Aug 13: Actually, I discussed this with Automatic1111 several days ago, and it seems that the “native refiner swap inside one single k-sampler” is [merged]( https://github.com/AUTOMATIC1111/stable-diffusion-webui/pull/12371) into the dev branch of webui. Great!)
 3. Negative ADM guidance. Because the highest resolution level of XL Base does not have cross attentions, the positive and negative signals for XL's highest resolution level cannot receive enough contrasts during the CFG sampling, causing the results to look a bit plastic or overly smooth in certain cases. Fortunately, since the XL's highest resolution level is still conditioned on image aspect ratios (ADM), we can modify the adm on the positive/negative side to compensate for the lack of CFG contrast in the highest resolution level. (Update Aug 16, the IOS App [Draw Things](https://apps.apple.com/us/app/draw-things-ai-generation/id6444050820) will support Negative ADM Guidance. Great!)
 4. We implemented a carefully tuned variation of Section 5.1 of ["Improving Sample Quality of Diffusion Models Using Self-Attention Guidance"](https://arxiv.org/pdf/2210.00939.pdf). The weight is set to very low, but this is Fooocus's final guarantee to make sure that the XL will never yield an overly smooth or plastic appearance (examples [here](https://github.com/lllyasviel/Fooocus/discussions/117#sharpness)). This can almost eliminate all cases for which XL still occasionally produces overly smooth results, even with negative ADM guidance. (Update 2023 Aug 18, the Gaussian kernel of SAG is changed to an anisotropic kernel for better structure preservation and fewer artifacts.)
@@ -328,7 +328,7 @@ For example, an edited `Fooocus\config.txt` (this file will be generated after t
     "path_inpaint": "D:\\Fooocus\\models\\inpaint",
     "path_controlnet": "D:\\Fooocus\\models\\controlnet",
     "path_clip_vision": "D:\\Fooocus\\models\\clip_vision",
-    "path_fooocus_expansion": "D:\\Fooocus\\models\\prompt_expansion\\fooocus_expansion",
+
     "path_outputs": "D:\\Fooocus\\outputs",
     "default_model": "realisticStockPhoto_v10.safetensors",
     "default_refiner": "",
@@ -339,7 +339,7 @@ For example, an edited `Fooocus\config.txt` (this file will be generated after t
     "default_negative_prompt": "low quality",
     "default_positive_prompt": "",
     "default_styles": [
-        "Fooocus V2",
+        "Fooocus Enhance",
         "Fooocus Photograph",
         "Fooocus Negative"
     ]

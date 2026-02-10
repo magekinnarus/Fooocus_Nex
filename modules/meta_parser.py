@@ -407,8 +407,8 @@ class A1111MetadataParser(MetadataParser):
         if 'raw_prompt' in data:
             data['prompt'] = data['raw_prompt']
             raw_prompt = data['raw_prompt'].replace("\n", ', ')
-            if metadata_prompt != raw_prompt and modules.sdxl_styles.fooocus_expansion not in found_styles:
-                found_styles.append(modules.sdxl_styles.fooocus_expansion)
+            if metadata_prompt != raw_prompt:
+                pass
 
         if 'raw_negative_prompt' in data:
             data['negative_prompt'] = data['raw_negative_prompt']

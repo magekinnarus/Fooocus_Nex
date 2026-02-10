@@ -191,9 +191,9 @@ def worker():
     import fooocus_version
 
     from extras.censor import default_censor
-    from modules.sdxl_styles import apply_style, get_random_style, fooocus_expansion, apply_arrays, random_style_name
+    from modules.sdxl_styles import apply_style, get_random_style, apply_arrays, random_style_name
     from modules.private_logger import log
-    from extras.expansion import safe_str
+    from modules.util import safe_str
     from modules.util import (remove_empty_str, HWC3, resize_image, get_image_shape_ceil, set_image_shape_ceil,
                               get_shape_ceil, resample_image, erode_or_dilate, parse_lora_references_from_prompt,
                               apply_wildcards)
@@ -339,9 +339,7 @@ def worker():
         for x in imgs:
             d = [('Prompt', 'prompt', task['log_positive_prompt']),
                  ('Negative Prompt', 'negative_prompt', task['log_negative_prompt']),
-                 ('Fooocus V2 Expansion', 'prompt_expansion', task['expansion']),
-                 ('Styles', 'styles',
-                  str(task['styles'] if not use_expansion else [fooocus_expansion] + task['styles'])),
+                 ('Styles', 'styles', str(task['styles'])),
                  ('Performance', 'performance', async_task.performance_selection.value),
                  ('Steps', 'steps', async_task.steps),
                  ('Resolution', 'resolution', str((width, height))),
@@ -729,16 +727,7 @@ def worker():
                 log_negative_prompt='\n'.join([task_negative_prompt] + task_extra_negative_prompts),
                 styles=task_styles
             ))
-        if use_expansion:
-            if advance_progress:
-                current_progress += 1
-            for i, t in enumerate(tasks):
 
-                progressbar(async_task, current_progress, f'Preparing Fooocus text #{i + 1} ...')
-                expansion = pipeline.final_expansion(t['task_prompt'], t['task_seed'])
-                print(f'[Prompt Expansion] {expansion}')
-                t['expansion'] = expansion
-                t['positive'] = copy.deepcopy(t['positive']) + [expansion]  # Deep copy.
         if advance_progress:
             current_progress += 1
         for i, t in enumerate(tasks):
@@ -1077,11 +1066,7 @@ def worker():
         async_task.uov_method = async_task.uov_method.casefold()
         async_task.enhance_uov_method = async_task.enhance_uov_method.casefold()
 
-        if fooocus_expansion in async_task.style_selections:
-            use_expansion = True
-            async_task.style_selections.remove(fooocus_expansion)
-        else:
-            use_expansion = False
+        use_expansion = False
 
         use_style = len(async_task.style_selections) > 0
 

@@ -48,9 +48,8 @@ for styles_file in styles_files:
         print(f'Failed to load style file {styles_file}')
 
 style_keys = list(styles.keys())
-fooocus_expansion = 'Fooocus V2'
 random_style_name = 'Random Style'
-legal_style_names = [fooocus_expansion, random_style_name] + style_keys
+legal_style_names = [random_style_name] + style_keys
 
 
 def get_random_style(rng: Random) -> str:

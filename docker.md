@@ -33,7 +33,6 @@ docker run -p 7865:7865 -v fooocus-data:/content/data -it \
 -e path_inpaint=/content/data/models/inpaint/ \
 -e path_controlnet=/content/data/models/controlnet/ \
 -e path_clip_vision=/content/data/models/clip_vision/ \
--e path_fooocus_expansion=/content/data/models/prompt_expansion/fooocus_expansion/ \
 -e path_outputs=/content/app/outputs/ \
 ghcr.io/lllyasviel/fooocus
 ```
