@@ -1068,12 +1068,12 @@ with shared.gradio_root:
             if flags.describe_type_photo in modes:
                 from extras.interrogate import default_interrogator as default_interrogator_photo
                 describe_prompts.append(default_interrogator_photo(img))
-                styles.update(["Fooocus V2", "Fooocus Enhance", "Fooocus Sharp"])
+                styles.update(["Fooocus Enhance", "Fooocus Sharp"])
 
             if flags.describe_type_anime in modes:
                 from extras.wd14tagger import default_interrogator as default_interrogator_anime
                 describe_prompts.append(default_interrogator_anime(img))
-                styles.update(["Fooocus V2", "Fooocus Masterpiece"])
+                styles.update(["Fooocus Masterpiece"])
 
             if len(styles) == 0 or not apply_styles:
                 styles = gr.update()
