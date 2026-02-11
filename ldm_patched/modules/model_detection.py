@@ -25,7 +25,8 @@ def calculate_transformer_depth(prefix, state_dict_keys, state_dict):
         context_dim = state_dict['{}0.attn2.to_k.weight'.format(transformer_prefix)].shape[1]
         use_linear_in_transformer = len(state_dict['{}1.proj_in.weight'.format(prefix)].shape) == 2
         time_stack = '{}1.time_stack.0.attn1.to_q.weight'.format(prefix) in state_dict or '{}1.time_mix_blocks.0.attn1.to_q.weight'.format(prefix) in state_dict
-        return last_transformer_depth, context_dim, use_linear_in_transformer, time_stack
+        time_stack_cross = '{}1.time_stack.0.attn2.to_q.weight'.format(prefix) in state_dict or '{}1.time_mix_blocks.0.attn2.to_q.weight'.format(prefix) in state_dict
+        return last_transformer_depth, context_dim, use_linear_in_transformer, time_stack, time_stack_cross
     return None
 
 def detect_unet_config(state_dict, key_prefix, dtype):
@@ -107,6 +108,7 @@ def detect_unet_config(state_dict, key_prefix, dtype):
                         context_dim = out[1]
                         use_linear_in_transformer = out[2]
                         video_model = out[3]
+                        video_model_cross = out[4]
                 else:
                     transformer_depth.append(0)
 
@@ -145,27 +147,45 @@ def detect_unet_config(state_dict, key_prefix, dtype):
         unet_config["video_kernel_size"] = [3, 1, 1]
         unet_config["use_temporal_resblock"] = True
         unet_config["use_temporal_attention"] = True
+        unet_config["disable_temporal_crossattention"] = not video_model_cross
     else:
         unet_config["use_temporal_resblock"] = False
         unet_config["use_temporal_attention"] = False
 
     return unet_config
 
-def model_config_from_unet_config(unet_config):
+def model_config_from_unet_config(unet_config, state_dict=None):
     for model_config in ldm_patched.modules.supported_models.models:
-        if model_config.matches(unet_config):
+        if model_config.matches(unet_config, state_dict):
             return model_config(unet_config)
 
     print("no match", unet_config)
     return None
 
-def model_config_from_unet(state_dict, unet_key_prefix, dtype, use_base_if_no_match=False):
-    unet_config = detect_unet_config(state_dict, unet_key_prefix, dtype)
-    model_config = model_config_from_unet_config(unet_config)
+def model_config_from_unet(state_dict, unet_key_prefix, use_base_if_no_match=False):
+    unet_config = detect_unet_config(state_dict, unet_key_prefix, None)
+    model_config = model_config_from_unet_config(unet_config, state_dict)
     if model_config is None and use_base_if_no_match:
         return ldm_patched.modules.supported_models_base.BASE(unet_config)
     else:
         return model_config
+
+def unet_prefix_from_state_dict(state_dict):
+    candidates = ["model.diffusion_model.", #ldm/sgm models
+                  "model.model.", #audio models
+                  ]
+    counts = {k: 0 for k in candidates}
+    for k in state_dict:
+        for c in candidates:
+            if k.startswith(c):
+                counts[c] += 1
+                break
+
+    top = max(counts, key=counts.get)
+    if counts[top] > 5:
+        return top
+    else:
+        return "model." #aura flow and others
 
 def convert_config(unet_config):
     new_config = unet_config.copy()

@@ -77,7 +77,8 @@ def load_lora_for_models(model, clip, lora, strength_model, strength_clip):
     k1 = set(k1)
     for x in loaded:
         if (x not in k) and (x not in k1):
-            print("NOT LOADED", x)
+            import logging
+            logging.warning("NOT LOADED {}".format(x))
 
     return (new_modelpatcher, new_clip)
 
@@ -148,7 +149,7 @@ class CLIP:
         return self.patcher.get_key_patches()
 
 class VAE:
-    def __init__(self, sd=None, device=None, config=None, dtype=None):
+    def __init__(self, sd=None, device=None, config=None, dtype=None, metadata=None):
         if 'decoder.up_blocks.0.resnets.0.norm1.weight' in sd.keys(): #diffusers format
             sd = diffusers_convert.convert_vae_state_dict(sd)
 
@@ -446,7 +447,7 @@ def load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, o
     class WeightsLoader(torch.nn.Module):
         pass
 
-    model_config = model_detection.model_config_from_unet(sd, "model.diffusion_model.", unet_dtype)
+    model_config = model_detection.model_config_from_unet(sd, "model.diffusion_model.")
     model_config.set_manual_cast(manual_cast_dtype)
 
     if model_config is None:
