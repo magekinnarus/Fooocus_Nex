@@ -34,7 +34,6 @@ import ldm_patched.modules.lora
 import ldm_patched.modules.model_management
 import ldm_patched.modules.patcher_extension
 import ldm_patched.modules.utils
-import ldm_patched.modules.weight_adapter as weight_adapter
 from ldm_patched.modules.comfy_types import UnetWrapperFunction
 from ldm_patched.modules.patcher_extension import CallbacksMP, PatcherInjection, WrappersMP
 
@@ -147,6 +146,7 @@ def calculate_weight(patches, weight, key, intermediate_dtype=None, original_wei
             v = (calculate_weight(v[1:], v[0][1](ldm_patched.modules.model_management.cast_to_device(v[0][0], weight.device, intermediate_dtype, copy=True), inplace=True), key, intermediate_dtype=intermediate_dtype), )
 
         # Standard ComfyUI WeightAdapter support
+        import ldm_patched.modules.weight_adapter as weight_adapter
         if isinstance(v, weight_adapter.WeightAdapterBase):
             output = v.calculate_weight(weight, key, alpha, strength_model, offset, function, intermediate_dtype, original_weights)
             if output is None:

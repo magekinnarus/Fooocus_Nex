@@ -19,7 +19,6 @@ import ldm_patched.modules.clip_vision
 import ldm_patched.modules.ops as ops
 
 from modules.ops import use_patched_ops
-from transformers import CLIPTextModel, CLIPTextConfig, modeling_utils, CLIPVisionConfig, CLIPVisionModelWithProjection
 
 
 def patched_encode_token_weights(self, token_weight_pairs):
@@ -70,6 +69,8 @@ def patched_SDClipModel__init__(self, max_length=77, freeze=True, layer="last", 
 
     if special_tokens is None:
         special_tokens = {"start": 49406, "end": 49407, "pad": 49407}
+
+    from transformers import CLIPTextModel, CLIPTextConfig, modeling_utils
 
     if textmodel_json_config is None:
         textmodel_json_config = os.path.join(os.path.dirname(os.path.realpath(ldm_patched.modules.sd1_clip.__file__)),
@@ -147,6 +148,7 @@ def patched_SDClipModel_forward(self, tokens):
 
 
 def patched_ClipVisionModel__init__(self, json_config):
+    from transformers import modeling_utils, CLIPVisionConfig, CLIPVisionModelWithProjection
     config = CLIPVisionConfig.from_json_file(json_config)
 
     self.load_device = ldm_patched.modules.model_management.text_encoder_device()

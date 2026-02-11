@@ -1,6 +1,6 @@
 import threading
 
-from extras.inpaint_mask import generate_mask_from_image, SAMOptions
+from extras.inpaint_mask import generate_mask_from_image
 from modules.patch import PatchSettings, patch_settings, patch_all
 import modules.config
 
@@ -1355,15 +1355,7 @@ def worker():
                     extras['cloth_category'] = enhance_mask_cloth_category
 
                 mask, dino_detection_count, sam_detection_count, sam_detection_on_mask_count = generate_mask_from_image(
-                    img, mask_model=enhance_mask_model, extras=extras, sam_options=SAMOptions(
-                        dino_prompt=enhance_mask_dino_prompt_text,
-                        dino_box_threshold=enhance_mask_box_threshold,
-                        dino_text_threshold=enhance_mask_text_threshold,
-                        dino_erode_or_dilate=async_task.dino_erode_or_dilate,
-                        dino_debug=async_task.debugging_dino,
-                        max_detections=enhance_mask_sam_max_detections,
-                        model_type=enhance_mask_sam_model,
-                    ))
+                    img, mask_model=enhance_mask_model, extras=extras, sam_options=None)
                 if len(mask.shape) == 3:
                     mask = mask[:, :, 0]
 
@@ -1383,8 +1375,8 @@ def worker():
                 print(f'[Enhance] {sam_detection_count} segments detected in boxes')
                 print(f'[Enhance] {sam_detection_on_mask_count} segments applied to mask')
 
-                if enhance_mask_model == 'sam' and (dino_detection_count == 0 or not async_task.debugging_dino and sam_detection_on_mask_count == 0):
-                    print(f'[Enhance] No "{enhance_mask_dino_prompt_text}" detected, skipping')
+                if enhance_mask_model == 'sam':
+                    print(f'[Enhance] SAM/GroundingDINO is disabled, skipping')
                     continue
 
                 goals_enhance = ['inpaint']

@@ -302,21 +302,11 @@ with shared.gradio_root:
                                     from extras.inpaint_mask import generate_mask_from_image
 
                                     extras = {}
-                                    sam_options = None
                                     if mask_model == 'u2net_cloth_seg':
                                         extras['cloth_category'] = cloth_category
-                                    elif mask_model == 'sam':
-                                        sam_options = SAMOptions(
-                                            dino_prompt=dino_prompt_text,
-                                            dino_box_threshold=box_threshold,
-                                            dino_text_threshold=text_threshold,
-                                            dino_erode_or_dilate=dino_erode_or_dilate,
-                                            dino_debug=dino_debug,
-                                            max_detections=sam_max_detections,
-                                            model_type=sam_model
-                                        )
-
-                                    mask, _, _, _ = generate_mask_from_image(image, mask_model, extras, sam_options)
+                                    
+                                    # sam_options is now removed as SAM/GroundingDINO logic is purged.
+                                    mask, _, _, _ = generate_mask_from_image(image, mask_model, extras, None)
 
                                     return mask
 
@@ -332,26 +322,8 @@ with shared.gradio_root:
                                                                    example_inpaint_mask_dino_prompt_text],
                                                           queue=False, show_progress=False)
 
-                    with gr.Tab(label='Describe', id='describe_tab') as describe_tab:
-                        with gr.Row():
-                            with gr.Column():
-                                describe_input_image = grh.Image(label='Image', source='upload', type='numpy', show_label=False)
-                            with gr.Column():
-                                describe_methods = gr.CheckboxGroup(
-                                    label='Content Type',
-                                    choices=flags.describe_types,
-                                    value=modules.config.default_describe_content_type)
-                                describe_apply_styles = gr.Checkbox(label='Apply Styles', value=modules.config.default_describe_apply_prompts_checkbox)
-                                describe_btn = gr.Button(value='Describe this Image into Prompt')
-                                describe_image_size = gr.Textbox(label='Image Size and Recommended Size', elem_id='describe_image_size', visible=False)
-                                gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/1363" target="_blank">\U0001F4D4 Documentation</a>')
-
-                                def trigger_show_image_properties(image):
-                                    value = modules.util.get_image_size_info(image, modules.flags.sdxl_aspect_ratios)
-                                    return gr.update(value=value, visible=True)
-
-                                describe_input_image.upload(trigger_show_image_properties, inputs=describe_input_image,
-                                                            outputs=describe_image_size, show_progress=False, queue=False)
+                    with gr.Tab(label='Describe (Disabled)', id='describe_tab') as describe_tab:
+                        gr.HTML('<h3>Describe feature is disabled in Fooocus Nex to reduce bloat.</h3>')
 
                     with gr.Tab(label='Enhance', id='enhance_tab') as enhance_tab:
                         with gr.Row():
