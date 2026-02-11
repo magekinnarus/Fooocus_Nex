@@ -361,11 +361,11 @@ else:
 
 # COLAB FIX: Detect Colab environment and override VRAM State
 if "google.colab" in sys.modules or os.environ.get("COLAB_GPU", ""):
-    if total_vram >= 14000: # L4 (24GB) or T4 (16GB)
+    if total_vram >= 13000: # L4 (24GB) or T4 (16GB)
+        # Force HIGH_VRAM on Colab to prevent slowness caused by NORMAL_VRAM offloading
         if set_vram_to == VRAMState.NORMAL_VRAM:
-             # Default to NORMAL_VRAM on Colab if nothing specific requested
-             set_vram_to = VRAMState.NORMAL_VRAM
-        print(f"Colab Environment Detected with {total_vram:.0f}MB VRAM. Target VRAM state: {set_vram_to.name}")
+             set_vram_to = VRAMState.HIGH_VRAM
+        print(f"Colab Environment Detected with {total_vram:.0f}MB VRAM. Forcing VRAM state: {set_vram_to.name}")
 
 vram_state = set_vram_to
 

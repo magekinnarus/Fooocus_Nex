@@ -329,7 +329,9 @@ def pad_tensor_to_shape(tensor: torch.Tensor, new_shape: list[int]) -> torch.Ten
 
     return padded_tensor
 
-def calculate_weight(patches, weight, key, intermediate_dtype=torch.float32, original_weights=None):
+def calculate_weight(patches, weight, key, intermediate_dtype=None, original_weights=None):
+    if intermediate_dtype is None:
+        intermediate_dtype = weight.dtype
     for p in patches:
         strength = p[0]
         v = p[1]

@@ -130,7 +130,7 @@ class LowVramPatch:
         intermediate_dtype = weight.dtype
         if intermediate_dtype not in [torch.float32, torch.float16, torch.bfloat16]: #intermediate_dtype has to be one that is supported in math ops
             intermediate_dtype = torch.float32
-            return ldm_patched.modules.float.stochastic_rounding(ldm_patched.modules.lora.calculate_weight(self.patches[self.key], weight.to(intermediate_dtype), self.key, intermediate_dtype=intermediate_dtype), weight.dtype, seed=string_to_seed(self.key))
+            return ldm_patched.modules.float.stochastic_rounding(ldm_patched.modules.lora.calculate_weight(self.patches[self.key], weight.to(intermediate_dtype), self.key, intermediate_dtype=intermediate_dtype), intermediate_dtype, seed=string_to_seed(self.key))
 
         return ldm_patched.modules.lora.calculate_weight(self.patches[self.key], weight, self.key, intermediate_dtype=intermediate_dtype)
 
@@ -549,25 +549,39 @@ class ModelPatcher:
             return sd
 
     def patch_weight_to_device(self, key, device_to=None, inplace_update=False):
-        if key not in self.patches:
-            return
-
-        weight, set_func, convert_func = get_key_weight(self.model, key)
         inplace_update = self.weight_inplace_update or inplace_update
+        weight, set_func, convert_func = get_key_weight(self.model, key)
+        target_dtype = ldm_patched.modules.model_management.unet_dtype(device=device_to, weight_dtype=weight.dtype)
+
+        if key not in self.patches:
+            if device_to is not None or target_dtype != weight.dtype:
+                temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, device_to, target_dtype, copy=True)
+                if convert_func is not None:
+                    temp_weight = convert_func(temp_weight, inplace=True)
+                
+                if set_func is None:
+                    if inplace_update:
+                        ldm_patched.modules.utils.copy_to_param(self.model, key, temp_weight)
+                    else:
+                        ldm_patched.modules.utils.set_attr_param(self.model, key, temp_weight)
+                else:
+                    set_func(temp_weight, inplace_update=inplace_update, seed=string_to_seed(key))
+            return
 
         if key not in self.backup:
             self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
 
         if device_to is not None:
-            temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
+            temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, device_to, target_dtype, copy=True)
         else:
-            temp_weight = weight.to(torch.float32, copy=True)
+            temp_weight = weight.to(target_dtype, copy=True)
+
         if convert_func is not None:
             temp_weight = convert_func(temp_weight, inplace=True)
 
-        out_weight = ldm_patched.modules.lora.calculate_weight(self.patches[key], temp_weight, key)
+        out_weight = ldm_patched.modules.lora.calculate_weight(self.patches[key], temp_weight, key, intermediate_dtype=target_dtype)
         if set_func is None:
-            out_weight = ldm_patched.modules.float.stochastic_rounding(out_weight, weight.dtype, seed=string_to_seed(key))
+            out_weight = ldm_patched.modules.float.stochastic_rounding(out_weight, target_dtype, seed=string_to_seed(key))
             if inplace_update:
                 ldm_patched.modules.utils.copy_to_param(self.model, key, out_weight)
             else:
@@ -1164,16 +1178,17 @@ class ModelPatcher:
                     target_device = weight.device
             self.hook_backup[key] = (weight.to(device=target_device, copy=True), weight.device)
         # TODO: properly handle LowVramPatch, if it ends up an issue
-        temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
+        target_dtype = ldm_patched.modules.model_management.unet_dtype(device=weight.device, weight_dtype=weight.dtype)
+        temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, weight.device, target_dtype, copy=True)
         if convert_func is not None:
             temp_weight = convert_func(temp_weight, inplace=True)
 
         out_weight = ldm_patched.modules.lora.calculate_weight(combined_patches[key],
                                                  temp_weight,
-                                                 key, original_weights=original_weights)
+                                                 key, intermediate_dtype=target_dtype, original_weights=original_weights)
         del original_weights[key]
         if set_func is None:
-            out_weight = ldm_patched.modules.float.stochastic_rounding(out_weight, weight.dtype, seed=string_to_seed(key))
+            out_weight = ldm_patched.modules.float.stochastic_rounding(out_weight, target_dtype, seed=string_to_seed(key))
             ldm_patched.modules.utils.copy_to_param(self.model, key, out_weight)
         else:
             set_func(out_weight, inplace_update=True, seed=string_to_seed(key))
