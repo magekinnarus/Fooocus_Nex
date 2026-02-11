@@ -229,11 +229,37 @@ def prepare_text_encoder(async_call=True):
     return
 
 
+refresh_state = {
+    'refiner_model_name': None,
+    'base_model_name': None,
+    'loras': None,
+    'base_model_additional_loras': None,
+    'use_synthetic_refiner': None,
+    'vae_name': None
+}
+
+
 @torch.no_grad()
 @torch.inference_mode()
 def refresh_everything(refiner_model_name, base_model_name, loras,
                        base_model_additional_loras=None, use_synthetic_refiner=False, vae_name=None):
-    global final_unet, final_clip, final_vae, final_refiner_unet, final_refiner_vae
+    global final_unet, final_clip, final_vae, final_refiner_unet, final_refiner_vae, refresh_state
+
+    # Sort loras to ensure consistent comparison
+    loras = sorted(loras) if loras is not None else []
+    base_model_additional_loras = sorted(base_model_additional_loras) if base_model_additional_loras is not None else []
+
+    current_state = {
+        'refiner_model_name': refiner_model_name,
+        'base_model_name': base_model_name,
+        'loras': loras,
+        'base_model_additional_loras': base_model_additional_loras,
+        'use_synthetic_refiner': use_synthetic_refiner,
+        'vae_name': vae_name
+    }
+
+    if refresh_state == current_state and final_unet is not None:
+        return
 
     final_unet = None
     final_clip = None
@@ -259,10 +285,10 @@ def refresh_everything(refiner_model_name, base_model_name, loras,
     final_refiner_unet = model_refiner.unet_with_lora
     final_refiner_vae = model_refiner.vae
 
-
-
     prepare_text_encoder(async_call=True)
     clear_all_caches()
+
+    refresh_state = current_state
     return
 
 

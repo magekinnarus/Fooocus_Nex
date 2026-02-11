@@ -30,8 +30,8 @@ class CPUState(Enum):
     MPS = 2
 
 # Determine VRAM State
-vram_state = VRAMState.NORMAL_VRAM
 set_vram_to = VRAMState.NORMAL_VRAM
+vram_state = VRAMState.NORMAL_VRAM
 cpu_state = CPUState.GPU
 
 total_vram = 0
@@ -234,15 +234,6 @@ try:
 except:
     pass
 
-# COLAB FIX: Detect Colab environment and override VRAM State
-# This explicitly fixes the issue where Colab triggers Low VRAM logic unnecessarily
-is_colab = False
-if "google.colab" in sys.modules or os.environ.get("COLAB_GPU", ""):
-    is_colab = True
-    if total_vram >= 14000: # L4 (24GB) or T4 (16GB)
-        vram_state = VRAMState.NORMAL_VRAM
-        set_vram_to = VRAMState.NORMAL_VRAM
-        print(f"Colab Environment Detected with {total_vram:.0f}MB VRAM. Forcing NORMAL_VRAM state.")
 
 try:
     OOM_EXCEPTION = torch.cuda.OutOfMemoryError
@@ -355,22 +346,37 @@ try:
 except:
     logging.warning("Warning, could not set allow_fp16_bf16_reduction_math_sdp")
 
-if args.always_low_vram: # Legacy mapping
+if args.always_gpu: # Legacy
+    set_vram_to = VRAMState.HIGH_VRAM
+elif args.always_high_vram or "--always-high-vram" in sys.argv:
+    set_vram_to = VRAMState.HIGH_VRAM
+elif args.always_normal_vram or "--always-normal-vram" in sys.argv:
+    set_vram_to = VRAMState.NORMAL_VRAM
+elif args.always_low_vram or "--always-low-vram" in sys.argv:
     set_vram_to = VRAMState.LOW_VRAM
-    lowvram_available = True
-elif args.always_no_vram: # Legacy mapping
+elif args.always_no_vram or "--always-no-vram" in sys.argv:
     set_vram_to = VRAMState.NO_VRAM
-elif args.always_high_vram or args.always_gpu: # Legacy mapping
-    vram_state = VRAMState.HIGH_VRAM
+else:
+    set_vram_to = VRAMState.NORMAL_VRAM
+
+# COLAB FIX: Detect Colab environment and override VRAM State
+if "google.colab" in sys.modules or os.environ.get("COLAB_GPU", ""):
+    if total_vram >= 14000: # L4 (24GB) or T4 (16GB)
+        if set_vram_to == VRAMState.NORMAL_VRAM:
+             # Default to NORMAL_VRAM on Colab if nothing specific requested
+             set_vram_to = VRAMState.NORMAL_VRAM
+        print(f"Colab Environment Detected with {total_vram:.0f}MB VRAM. Target VRAM state: {set_vram_to.name}")
+
+vram_state = set_vram_to
 
 FORCE_FP32 = False
 if args.all_in_fp32: # Legacy mapping
     logging.info("Forcing FP32, if this improves things please report it.")
     FORCE_FP32 = True
 
-if lowvram_available:
-    if set_vram_to in (VRAMState.LOW_VRAM, VRAMState.NO_VRAM):
-        vram_state = set_vram_to
+if not lowvram_available:
+    if vram_state in (VRAMState.LOW_VRAM, VRAMState.NO_VRAM):
+        vram_state = VRAMState.NORMAL_VRAM
 
 
 if cpu_state != CPUState.GPU:
@@ -627,9 +633,11 @@ WINDOWS = any(platform.win32_ver())
 
 EXTRA_RESERVED_VRAM = 400 * 1024 * 1024
 if WINDOWS:
-    EXTRA_RESERVED_VRAM = 600 * 1024 * 1024 #Windows is higher because of the shared vram issue
+    EXTRA_RESERVED_VRAM = 500 * 1024 * 1024 #Windows is higher because of the shared vram issue
     if total_vram > (15 * 1024):  # more extra reserved vram on 16GB+ cards
         EXTRA_RESERVED_VRAM += 100 * 1024 * 1024
+else:
+    EXTRA_RESERVED_VRAM = 128 * 1024 * 1024 # Linux/Colab can be more aggressive
 
 if args.always_offload_from_vram: # Legacy mapping
     # Assuming this maps roughly to reserve vram idea or just forcing offload?
@@ -873,17 +881,10 @@ def unet_dtype(device=None, model_params=0, supported_dtypes=[torch.float16, tor
         if model_params * 2 > free_model_memory:
             return fp8_dtype
 
-    if PRIORITIZE_FP16 or weight_dtype == torch.float16:
-        if torch.float16 in supported_dtypes and should_use_fp16(device=device, model_params=model_params):
-            return torch.float16
-
-    for dt in supported_dtypes:
-        if dt == torch.float16 and should_use_fp16(device=device, model_params=model_params):
-            if torch.float16 in supported_dtypes:
-                return torch.float16
-        if dt == torch.bfloat16 and should_use_bf16(device, model_params=model_params):
-            if torch.bfloat16 in supported_dtypes:
-                return torch.bfloat16
+    if torch.float16 in supported_dtypes and should_use_fp16(device=device, model_params=model_params):
+        return torch.float16
+    if torch.bfloat16 in supported_dtypes and should_use_bf16(device, model_params=model_params):
+        return torch.bfloat16
 
     for dt in supported_dtypes:
         if dt == torch.float16 and should_use_fp16(device=device, model_params=model_params, manual_cast=True):
@@ -991,13 +992,14 @@ def vae_dtype(device=None, allowed_dtypes=[]):
     if args.vae_in_bf16: return torch.bfloat16
     if args.vae_in_fp32: return torch.float32
 
+    if allowed_dtypes is None or len(allowed_dtypes) == 0:
+        allowed_dtypes = [torch.float16, torch.bfloat16]
+
     for d in allowed_dtypes:
-        if d == torch.float16 and should_use_fp16(device):
+        if d == torch.bfloat16 and (not is_amd()) and should_use_bf16(device):
             return d
 
-        # NOTE: bfloat16 seems to work on AMD for the VAE but is extremely slow in some cases compared to fp32
-        # slowness still a problem on pytorch nightly 2.9.0.dev20250720+rocm6.4 tested on RDNA3
-        if d == torch.bfloat16 and (not is_amd()) and should_use_bf16(device):
+        if d == torch.float16 and should_use_fp16(device):
             return d
 
     return torch.float32

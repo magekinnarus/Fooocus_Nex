@@ -88,6 +88,10 @@ def get_list(key: str, fallback: str | None, source_dict: dict, results: list, d
         h = source_dict.get(key, source_dict.get(fallback, default))
         h = eval(h)
         assert isinstance(h, list)
+
+        if key == 'styles':
+            h = [s for s in h if s != 'Fooocus V2']
+
         results.append(h)
     except:
         results.append(gr.update())
