@@ -200,14 +200,14 @@ def model_lora_keys_unet(model, key_map={}):
                     diffusers_lora_key = diffusers_lora_key[:-2]
                 key_map[diffusers_lora_key] = unet_key
 
-    if isinstance(model, ldm_patched.modules.model_base.StableCascade_C):
+    if hasattr(ldm_patched.modules.model_base, 'StableCascade_C') and isinstance(model, ldm_patched.modules.model_base.StableCascade_C):
         for k in sdk:
             if k.startswith("diffusion_model."):
                 if k.endswith(".weight"):
                     key_lora = k[len("diffusion_model."):-len(".weight")].replace(".", "_")
                     key_map["lora_prior_unet_{}".format(key_lora)] = k
 
-    if isinstance(model, ldm_patched.modules.model_base.SD3): #Diffusers lora SD3
+    if hasattr(ldm_patched.modules.model_base, 'SD3') and isinstance(model, ldm_patched.modules.model_base.SD3): #Diffusers lora SD3
         diffusers_keys = ldm_patched.modules.utils.mmdit_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
         for k in diffusers_keys:
             if k.endswith(".weight"):
@@ -224,7 +224,7 @@ def model_lora_keys_unet(model, key_map={}):
                 key_lora = "lycoris_{}".format(k[:-len(".weight")].replace(".", "_")) #simpletuner lycoris format
                 key_map[key_lora] = to
 
-    if isinstance(model, ldm_patched.modules.model_base.AuraFlow): #Diffusers lora AuraFlow
+    if hasattr(ldm_patched.modules.model_base, 'AuraFlow') and isinstance(model, ldm_patched.modules.model_base.AuraFlow): #Diffusers lora AuraFlow
         diffusers_keys = ldm_patched.modules.utils.auraflow_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
         for k in diffusers_keys:
             if k.endswith(".weight"):
@@ -232,7 +232,7 @@ def model_lora_keys_unet(model, key_map={}):
                 key_lora = "transformer.{}".format(k[:-len(".weight")]) #simpletrainer and probably regular diffusers lora format
                 key_map[key_lora] = to
 
-    if isinstance(model, ldm_patched.modules.model_base.PixArt):
+    if hasattr(ldm_patched.modules.model_base, 'PixArt') and isinstance(model, ldm_patched.modules.model_base.PixArt):
         diffusers_keys = ldm_patched.modules.utils.pixart_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
         for k in diffusers_keys:
             if k.endswith(".weight"):
@@ -246,13 +246,13 @@ def model_lora_keys_unet(model, key_map={}):
                 key_lora = "unet.base_model.model.{}".format(k[:-len(".weight")]) #old reference peft script
                 key_map[key_lora] = to
 
-    if isinstance(model, ldm_patched.modules.model_base.HunyuanDiT):
+    if hasattr(ldm_patched.modules.model_base, 'HunyuanDiT') and isinstance(model, ldm_patched.modules.model_base.HunyuanDiT):
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"):
                 key_lora = k[len("diffusion_model."):-len(".weight")]
                 key_map["base_model.model.{}".format(key_lora)] = k #official hunyuan lora format
 
-    if isinstance(model, ldm_patched.modules.model_base.Flux): #Diffusers lora Flux
+    if hasattr(ldm_patched.modules.model_base, 'Flux') and isinstance(model, ldm_patched.modules.model_base.Flux): #Diffusers lora Flux
         diffusers_keys = ldm_patched.modules.utils.flux_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
         for k in diffusers_keys:
             if k.endswith(".weight"):
@@ -261,13 +261,13 @@ def model_lora_keys_unet(model, key_map={}):
                 key_map["lycoris_{}".format(k[:-len(".weight")].replace(".", "_"))] = to #simpletrainer lycoris
                 key_map["lora_transformer_{}".format(k[:-len(".weight")].replace(".", "_"))] = to #onetrainer
 
-    if isinstance(model, ldm_patched.modules.model_base.GenmoMochi):
+    if hasattr(ldm_patched.modules.model_base, 'GenmoMochi') and isinstance(model, ldm_patched.modules.model_base.GenmoMochi):
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"): #Official Mochi lora format
                 key_lora = k[len("diffusion_model."):-len(".weight")]
                 key_map["{}".format(key_lora)] = k
 
-    if isinstance(model, ldm_patched.modules.model_base.HunyuanVideo):
+    if hasattr(ldm_patched.modules.model_base, 'HunyuanVideo') and isinstance(model, ldm_patched.modules.model_base.HunyuanVideo):
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"):
                 # diffusion-pipe lora format
@@ -279,7 +279,7 @@ def model_lora_keys_unet(model, key_map={}):
                 key_map["transformer.{}".format(key_lora)] = k
                 key_map["diffusion_model.{}".format(key_lora)] = k  # Old loras
 
-    if isinstance(model, ldm_patched.modules.model_base.HiDream):
+    if hasattr(ldm_patched.modules.model_base, 'HiDream') and isinstance(model, ldm_patched.modules.model_base.HiDream):
         for k in sdk:
             if k.startswith("diffusion_model."):
                 if k.endswith(".weight"):
@@ -287,7 +287,7 @@ def model_lora_keys_unet(model, key_map={}):
                     key_map["lycoris_{}".format(key_lora.replace(".", "_"))] = k #SimpleTuner lycoris format
                     key_map["transformer.{}".format(key_lora)] = k #SimpleTuner regular format
 
-    if isinstance(model, ldm_patched.modules.model_base.ACEStep):
+    if hasattr(ldm_patched.modules.model_base, 'ACEStep') and isinstance(model, ldm_patched.modules.model_base.ACEStep):
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"): #Official ACE step lora format
                 key_lora = k[len("diffusion_model."):-len(".weight")]

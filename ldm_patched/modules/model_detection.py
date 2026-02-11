@@ -156,7 +156,7 @@ def detect_unet_config(state_dict, key_prefix, dtype):
 
 def model_config_from_unet_config(unet_config, state_dict=None):
     for model_config in ldm_patched.modules.supported_models.models:
-        if model_config.matches(unet_config, state_dict):
+        if model_config.matches(unet_config, state_dict=state_dict):
             return model_config(unet_config)
 
     print("no match", unet_config)

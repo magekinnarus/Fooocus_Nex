@@ -25,7 +25,7 @@ class BASE:
     manual_cast_dtype = None
 
     @classmethod
-    def matches(s, unet_config):
+    def matches(s, unet_config, state_dict=None, **kwargs):
         for k in s.unet_config:
             if s.unet_config[k] != unet_config[k]:
                 return False

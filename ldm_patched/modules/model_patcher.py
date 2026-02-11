@@ -202,7 +202,8 @@ class MemoryCounter:
         self.value -= used
 
 class ModelPatcher:
-    def __init__(self, model, load_device, offload_device, size=0, weight_inplace_update=False):
+    def __init__(self, model, load_device, offload_device, size=0, weight_inplace_update=False, current_device=None, **kwargs):
+        self.is_injected = False
         self.size = size
         self.model = model
         if not hasattr(self.model, 'device'):
@@ -220,6 +221,7 @@ class ModelPatcher:
         self.model_size()
         self.load_device = load_device
         self.offload_device = offload_device
+        self.current_device = current_device
         self.weight_inplace_update = weight_inplace_update
         self.force_cast_weights = False
         self.patches_uuid = uuid.uuid4()
@@ -230,7 +232,6 @@ class ModelPatcher:
         self.callbacks: dict[str, dict[str, list[Callable]]] = CallbacksMP.init_callbacks()
         self.wrappers: dict[str, dict[str, list[Callable]]] = WrappersMP.init_wrappers()
 
-        self.is_injected = False
         self.skip_injection = False
         self.injections: dict[str, list[PatcherInjection]] = {}
 

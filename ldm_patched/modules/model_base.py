@@ -12,9 +12,14 @@ class ModelType(Enum):
     EPS = 1
     V_PREDICTION = 2
     V_PREDICTION_EDM = 3
+    STABLE_CASCADE = 4
+    EDM = 5
+    FLOW = 6
+    V_PREDICTION_CONTINUOUS = 7
+    FLUX = 8
 
 
-from ldm_patched.modules.model_sampling import EPS, V_PREDICTION, ModelSamplingDiscrete, ModelSamplingContinuousEDM
+from ldm_patched.modules.model_sampling import EPS, V_PREDICTION, EDM as EDM_sampler, CONST, ModelSamplingDiscrete, ModelSamplingContinuousEDM, StableCascadeSampling
 
 
 def model_sampling(model_config, model_type):
@@ -27,6 +32,23 @@ def model_sampling(model_config, model_type):
     elif model_type == ModelType.V_PREDICTION_EDM:
         c = V_PREDICTION
         s = ModelSamplingContinuousEDM
+    elif model_type == ModelType.EDM:
+        c = EDM_sampler
+        s = ModelSamplingContinuousEDM
+    elif model_type == ModelType.STABLE_CASCADE:
+        c = EPS
+        s = StableCascadeSampling
+    elif model_type == ModelType.FLOW:
+        c = CONST
+        s = ModelSamplingContinuousEDM
+    elif model_type == ModelType.FLUX:
+        c = CONST
+        s = ModelSamplingContinuousEDM
+    elif model_type == ModelType.V_PREDICTION_CONTINUOUS:
+        c = V_PREDICTION
+        s = ModelSamplingContinuousEDM
+    else:
+        c = EPS  # safe fallback
 
     class ModelSampling(s, c):
         pass
