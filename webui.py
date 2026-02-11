@@ -16,7 +16,6 @@ import modules.meta_parser
 import args_manager
 import copy
 import launch
-from extras.inpaint_mask import SAMOptions
 
 from modules.sdxl_styles import legal_style_names
 from modules.private_logger import get_current_html_path
@@ -1033,54 +1032,6 @@ with shared.gradio_root:
                 gr.Audio(interactive=False, value=notification_file, elem_id='audio_notification', visible=False)
                 break
 
-        def trigger_describe(modes, img, apply_styles):
-            describe_prompts = []
-            styles = set()
-
-            if flags.describe_type_photo in modes:
-                from extras.interrogate import default_interrogator as default_interrogator_photo
-                describe_prompts.append(default_interrogator_photo(img))
-                styles.update(["Fooocus Enhance", "Fooocus Sharp"])
-
-            if flags.describe_type_anime in modes:
-                from extras.wd14tagger import default_interrogator as default_interrogator_anime
-                describe_prompts.append(default_interrogator_anime(img))
-                styles.update(["Fooocus Masterpiece"])
-
-            if len(styles) == 0 or not apply_styles:
-                styles = gr.update()
-            else:
-                styles = list(styles)
-
-            if len(describe_prompts) == 0:
-                describe_prompt = gr.update()
-            else:
-                describe_prompt = ', '.join(describe_prompts)
-
-            return describe_prompt, styles
-
-        describe_btn.click(trigger_describe, inputs=[describe_methods, describe_input_image, describe_apply_styles],
-                           outputs=[prompt, style_selections], show_progress=True, queue=True) \
-            .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
-            .then(lambda: None, _js='()=>{refresh_style_localization();}')
-
-        if args_manager.args.enable_auto_describe_image:
-            def trigger_auto_describe(mode, img, prompt, apply_styles):
-                # keep prompt if not empty
-                if prompt == '':
-                    return trigger_describe(mode, img, apply_styles)
-                return gr.update(), gr.update()
-
-            uov_input_image.upload(trigger_auto_describe, inputs=[describe_methods, uov_input_image, prompt, describe_apply_styles],
-                                   outputs=[prompt, style_selections], show_progress=True, queue=True) \
-                .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
-                .then(lambda: None, _js='()=>{refresh_style_localization();}')
-
-            enhance_input_image.upload(lambda: gr.update(value=True), outputs=enhance_checkbox, queue=False, show_progress=False) \
-                .then(trigger_auto_describe, inputs=[describe_methods, enhance_input_image, prompt, describe_apply_styles],
-                      outputs=[prompt, style_selections], show_progress=True, queue=True) \
-                .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
-                .then(lambda: None, _js='()=>{refresh_style_localization();}')
 
 def dump_default_english_config():
     from modules.localization import dump_english_config
