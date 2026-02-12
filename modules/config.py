@@ -193,10 +193,21 @@ paths_loras = get_dir_or_set_default('path_loras', ['../models/loras/'], True)
 path_embeddings = get_dir_or_set_default('path_embeddings', '../models/embeddings/')
 path_vae_approx = get_dir_or_set_default('path_vae_approx', '../models/vae_approx/')
 path_vae = get_dir_or_set_default('path_vae', '../models/vae/')
+path_unet = get_dir_or_set_default('path_unet', '../models/unet/')
+path_clip = get_dir_or_set_default('path_clip', '../models/clip/')
 path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/')
 path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/')
 path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/')
 path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/')
+
+# Add unet path to checkpoints for base model selection
+if not isinstance(paths_checkpoints, list):
+    paths_checkpoints = [paths_checkpoints]
+
+if path_unet not in paths_checkpoints:
+    paths_checkpoints.append(path_unet)
+
+paths_clips = [path_clip] + paths_checkpoints
 
 path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_safety_checker = get_dir_or_set_default('path_safety_checker', '../models/safety_checker/')
@@ -791,6 +802,7 @@ with open(config_example_path, "w", encoding="utf-8") as json_file:
     json.dump({k: config_dict[k] for k in visited_keys}, json_file, indent=4)
 
 model_filenames = []
+clip_filenames = []
 lora_filenames = []
 vae_filenames = []
 wildcard_filenames = []
@@ -798,7 +810,7 @@ wildcard_filenames = []
 
 def get_model_filenames(folder_paths, extensions=None, name_filter=None):
     if extensions is None:
-        extensions = ['.pth', '.ckpt', '.bin', '.safetensors', '.fooocus.patch']
+        extensions = ['.pth', '.ckpt', '.bin', '.safetensors', '.fooocus.patch', '.gguf']
     files = []
 
     if not isinstance(folder_paths, list):
@@ -810,8 +822,9 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
 
 
 def update_files():
-    global model_filenames, lora_filenames, vae_filenames, wildcard_filenames, available_presets
+    global model_filenames, clip_filenames, lora_filenames, vae_filenames, wildcard_filenames, available_presets
     model_filenames = get_model_filenames(paths_checkpoints)
+    clip_filenames = get_model_filenames(paths_clips)
     lora_filenames = get_model_filenames(paths_loras)
     vae_filenames = get_model_filenames(path_vae)
     wildcard_filenames = get_files_from_folder(path_wildcards, ['.txt'])

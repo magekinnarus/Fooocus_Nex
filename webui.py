@@ -628,7 +628,7 @@ with shared.gradio_root:
                         base_model = gr.Dropdown(label='Base Model', choices=modules.config.model_filenames, value=modules.config.default_base_model_name, show_label=True)
                         vae_model = gr.Dropdown(label='VAE', choices=[modules.flags.default_vae] + modules.config.vae_filenames, value=modules.config.default_vae, show_label=True)
 
-                    clip_model = gr.Dropdown(label='Force CLIP', choices=['None'] + modules.config.model_filenames, value='None', show_label=True)
+                    clip_model = gr.Dropdown(label='Force CLIP', choices=['None'] + modules.config.clip_filenames, value='None', show_label=True)
 
                 with gr.Group():
                     lora_ctrls = []
@@ -832,7 +832,7 @@ with shared.gradio_root:
                     modules.config.update_files()
                     results = [gr.update(choices=modules.config.model_filenames)]
                     results += [gr.update(choices=[modules.flags.default_vae] + modules.config.vae_filenames)]
-                    results += [gr.update(choices=['None'] + modules.config.model_filenames)]
+                    results += [gr.update(choices=['None'] + modules.config.clip_filenames)]
                     if not args_manager.args.disable_preset_selection:
                         results += [gr.update(choices=modules.config.available_presets)]
                     for i in range(modules.config.default_max_lora_number):
