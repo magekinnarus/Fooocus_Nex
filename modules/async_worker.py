@@ -43,8 +43,8 @@ class AsyncTask:
         self.sharpness = args.pop()
         self.cfg_scale = args.pop()
         self.base_model_name = args.pop()
-        self.refiner_model_name = args.pop()
-        self.refiner_switch = args.pop()
+        self.vae_name = args.pop()
+        self.clip_model_name = args.pop()
         self.loras = get_enabled_loras([(bool(args.pop()), str(args.pop()), float(args.pop())) for _ in
                                         range(default_max_lora_number)])
         self.input_image_checkbox = args.pop()
@@ -67,7 +67,6 @@ class AsyncTask:
         self.clip_skip = args.pop()
         self.sampler_name = args.pop()
         self.scheduler_name = args.pop()
-        self.vae_name = args.pop()
         self.overwrite_step = args.pop()
         self.overwrite_switch = args.pop()
         self.overwrite_width = args.pop()
@@ -350,14 +349,10 @@ def worker():
                      modules.patch.patch_settings[pid].negative_adm_scale,
                      modules.patch.patch_settings[pid].adm_scaler_end))),
                  ('Base Model', 'base_model', async_task.base_model_name),
-                 ('Refiner Model', 'refiner_model', async_task.refiner_model_name),
-                 ('Refiner Switch', 'refiner_switch', async_task.refiner_switch)]
+                 ('Force CLIP', 'force_clip', async_task.clip_model_name)]
 
-            if async_task.refiner_model_name != 'None':
-                if async_task.overwrite_switch > 0:
-                    d.append(('Overwrite Switch', 'overwrite_switch', async_task.overwrite_switch))
-                if async_task.refiner_swap_method != flags.refiner_swap_method:
-                    d.append(('Refiner Swap Method', 'refiner_swap_method', async_task.refiner_swap_method))
+            if async_task.clip_model_name != 'None':
+                d.append(('Force CLIP', 'force_clip', async_task.clip_model_name))
             if modules.patch.patch_settings[pid].adaptive_cfg != modules.config.default_cfg_tsnr:
                 d.append(
                     ('CFG Mimicking from TSNR', 'adaptive_cfg', modules.patch.patch_settings[pid].adaptive_cfg))
@@ -382,7 +377,7 @@ def worker():
                 metadata_parser = modules.meta_parser.get_metadata_parser(async_task.metadata_scheme)
                 metadata_parser.set_data(task['log_positive_prompt'], task['positive'],
                                          task['log_negative_prompt'], task['negative'],
-                                         async_task.steps, async_task.base_model_name, async_task.refiner_model_name,
+                                         async_task.steps, async_task.base_model_name, 'None',
                                          loras, async_task.vae_name)
             d.append(('Metadata Scheme', 'metadata_scheme',
                       async_task.metadata_scheme.value if async_task.save_metadata_to_images else async_task.save_metadata_to_images))
@@ -627,7 +622,7 @@ def worker():
     def apply_overrides(async_task, steps, height, width):
         if async_task.overwrite_step > 0:
             steps = async_task.overwrite_step
-        switch = int(round(async_task.steps * async_task.refiner_switch))
+        switch = 0
         if async_task.overwrite_switch > 0:
             switch = async_task.overwrite_switch
         if async_task.overwrite_width > 0:
@@ -656,10 +651,11 @@ def worker():
                                                           modules.config.default_max_lora_number,
                                                           lora_filenames=lora_filenames)
         loras += async_task.performance_loras
-        pipeline.refresh_everything(refiner_model_name=async_task.refiner_model_name,
+        pipeline.refresh_everything(refiner_model_name='None',
                                     base_model_name=async_task.base_model_name,
                                     loras=loras, base_model_additional_loras=base_model_additional_loras,
-                                    use_synthetic_refiner=use_synthetic_refiner, vae_name=async_task.vae_name)
+                                    use_synthetic_refiner=use_synthetic_refiner, vae_name=async_task.vae_name,
+                                    clip_name=async_task.clip_model_name)
         pipeline.set_clip_skip(async_task.clip_skip)
         if advance_progress:
             current_progress += 1

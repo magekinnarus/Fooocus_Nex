@@ -143,9 +143,16 @@ def apply_controlnet(positive, negative, control_net, image, strength, start_per
 
 @torch.no_grad()
 @torch.inference_mode()
-def load_model(ckpt_filename, vae_filename=None):
+def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
     unet, clip, vae, vae_filename, clip_vision = load_checkpoint_guess_config(ckpt_filename, embedding_directory=path_embeddings,
                                                                 vae_filename_param=vae_filename)
+
+    if clip_filename is not None and clip_filename != 'None':
+        clip_filename = get_file_from_folder_list(clip_filename, modules.config.paths_checkpoints)
+        if os.path.exists(clip_filename):
+            print(f'Force CLIP loaded from: {clip_filename}')
+            _, clip, _, _, _ = load_checkpoint_guess_config(clip_filename, embedding_directory=path_embeddings)
+
     return StableDiffusionModel(unet=unet, clip=clip, vae=vae, clip_vision=clip_vision, filename=ckpt_filename, vae_filename=vae_filename)
 
 

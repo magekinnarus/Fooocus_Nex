@@ -3,17 +3,13 @@ import torch
 import time
 import math
 import ldm_patched.modules.model_base
-import ldm_patched.ldm.modules.diffusionmodules.openaimodel
 import ldm_patched.modules.model_management
 import modules.anisotropic as anisotropic
 import ldm_patched.ldm.modules.attention
 import ldm_patched.k_diffusion.sampling
-import ldm_patched.modules.sd1_clip
 import modules.inpaint_worker as inpaint_worker
-import ldm_patched.ldm.modules.diffusionmodules.openaimodel
 import ldm_patched.ldm.modules.diffusionmodules.model
 import ldm_patched.modules.sd
-import ldm_patched.controlnet.cldm
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.samplers
 import ldm_patched.modules.args_parser
@@ -24,9 +20,6 @@ import modules.constants as constants
 
 from ldm_patched.modules.samplers import calc_cond_uncond_batch
 from ldm_patched.k_diffusion.sampling import BatchedBrownianTree
-from ldm_patched.ldm.modules.diffusionmodules.openaimodel import forward_timestep_embed, apply_control
-from modules.patch_precision import patch_all_precision
-from modules.patch_clip import patch_all_clip
 
 
 class PatchSettings:
@@ -208,7 +201,8 @@ def timed_adm(y, timesteps):
 
 
 def patched_cldm_forward(self, x, hint, timesteps, context, y=None, **kwargs):
-    t_emb = ldm_patched.ldm.modules.diffusionmodules.openaimodel.timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
+    from ldm_patched.ldm.modules.diffusionmodules.openaimodel import timestep_embedding
+    t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
     emb = self.time_embed(t_emb)
     pid = os.getpid()
 
@@ -275,7 +269,8 @@ def patched_unet_forward(self, x, timesteps=None, context=None, y=None, control=
             self.num_classes is not None
     ), "must specify y if and only if the model is class-conditional"
     hs = []
-    t_emb = ldm_patched.ldm.modules.diffusionmodules.openaimodel.timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
+    from ldm_patched.ldm.modules.diffusionmodules.openaimodel import timestep_embedding, forward_timestep_embed, apply_control
+    t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False).to(x.dtype)
     emb = self.time_embed(t_emb)
 
     if self.num_classes is not None:
@@ -370,6 +365,11 @@ def build_loaded(module, loader_name):
 
 
 def patch_all():
+    from modules.patch_precision import patch_all_precision
+    from modules.patch_clip import patch_all_clip
+    import ldm_patched.controlnet.cldm
+    import ldm_patched.ldm.modules.diffusionmodules.openaimodel
+
     if ldm_patched.modules.model_management.directml_enabled:
         ldm_patched.modules.model_management.lowvram_available = True
         ldm_patched.modules.model_management.OOM_EXCEPTION = Exception

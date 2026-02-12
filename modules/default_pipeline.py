@@ -59,7 +59,7 @@ def assert_model_integrity():
 
 @torch.no_grad()
 @torch.inference_mode()
-def refresh_base_model(name, vae_name=None):
+def refresh_base_model(name, vae_name=None, clip_name=None):
     global model_base
 
     filename = get_file_from_folder_list(name, modules.config.paths_checkpoints)
@@ -68,12 +68,14 @@ def refresh_base_model(name, vae_name=None):
     if vae_name is not None and vae_name != modules.flags.default_vae:
         vae_filename = get_file_from_folder_list(vae_name, modules.config.path_vae)
 
-    if model_base.filename == filename and model_base.vae_filename == vae_filename:
+    if model_base.filename == filename and model_base.vae_filename == vae_filename and getattr(model_base, 'clip_filename', None) == clip_name:
         return
 
-    model_base = core.load_model(filename, vae_filename)
+    model_base = core.load_model(filename, vae_filename, clip_name)
+    model_base.clip_filename = clip_name
     print(f'Base model loaded: {model_base.filename}')
     print(f'VAE loaded: {model_base.vae_filename}')
+    print(f'Force CLIP: {clip_name}')
     return
 
 
@@ -235,14 +237,15 @@ refresh_state = {
     'loras': None,
     'base_model_additional_loras': None,
     'use_synthetic_refiner': None,
-    'vae_name': None
+    'vae_name': None,
+    'clip_name': None
 }
 
 
 @torch.no_grad()
 @torch.inference_mode()
 def refresh_everything(refiner_model_name, base_model_name, loras,
-                       base_model_additional_loras=None, use_synthetic_refiner=False, vae_name=None):
+                       base_model_additional_loras=None, use_synthetic_refiner=False, vae_name=None, clip_name=None):
     global final_unet, final_clip, final_vae, final_refiner_unet, final_refiner_vae, refresh_state
 
     # Sort loras to ensure consistent comparison
@@ -255,7 +258,8 @@ def refresh_everything(refiner_model_name, base_model_name, loras,
         'loras': loras,
         'base_model_additional_loras': base_model_additional_loras,
         'use_synthetic_refiner': use_synthetic_refiner,
-        'vae_name': vae_name
+        'vae_name': vae_name,
+        'clip_name': clip_name
     }
 
     if refresh_state == current_state and final_unet is not None:
@@ -269,11 +273,11 @@ def refresh_everything(refiner_model_name, base_model_name, loras,
 
     if use_synthetic_refiner and refiner_model_name == 'None':
         print('Synthetic Refiner Activated')
-        refresh_base_model(base_model_name, vae_name)
+        refresh_base_model(base_model_name, vae_name, clip_name)
         synthesize_refiner_model()
     else:
         refresh_refiner_model(refiner_model_name)
-        refresh_base_model(base_model_name, vae_name)
+        refresh_base_model(base_model_name, vae_name, clip_name)
 
     refresh_loras(loras, base_model_additional_loras=base_model_additional_loras)
     assert_model_integrity()

@@ -24,9 +24,8 @@ current_task = None
 
 
 def box_blur(x, k):
-    x = Image.fromarray(x)
-    x = x.filter(ImageFilter.BoxBlur(k))
-    return np.array(x)
+    kernel_size = 2 * k + 1
+    return cv2.blur(x, (kernel_size, kernel_size))
 
 
 def max_filter_opencv(x, ksize=3):
@@ -135,9 +134,8 @@ def solve_abcd(x, a, b, c, d, k):
 
 def fooocus_fill(image, mask):
     current_image = image.copy()
-    raw_image = image.copy()
     area = np.where(mask < 127)
-    store = raw_image[area]
+    store = image[area]
 
     for k, repeats in [(512, 2), (256, 2), (128, 4), (64, 4), (33, 8), (15, 8), (5, 16), (3, 16)]:
         for _ in range(repeats):
