@@ -97,6 +97,9 @@ def download_models(default_model, previous_default_models, checkpoint_downloads
         print('Skipped model download.')
         return default_model, checkpoint_downloads
 
+    if default_model == 'None':
+        return default_model, checkpoint_downloads
+
     if not args.always_download_new_model:
         if not os.path.isfile(get_file_from_folder_list(default_model, config.paths_checkpoints)):
             for alternative_model_name in previous_default_models:

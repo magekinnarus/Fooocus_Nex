@@ -151,10 +151,11 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
     unet, clip, vae, vae_filename, clip_vision = load_checkpoint(ckpt_filename, vae_filename=vae_filename)
 
     if clip_filename is not None and clip_filename != 'None':
-        clip_filename_abs = get_file_from_folder_list(clip_filename, modules.config.paths_checkpoints)
+        clip_filename_abs = get_file_from_folder_list(clip_filename, modules.config.paths_clips)
         if os.path.exists(clip_filename_abs):
             print(f'Force CLIP loaded from: {clip_filename_abs}')
-            _, clip_forced, _, _, _ = load_checkpoint(clip_filename_abs)
+            from modules.nex_loader import load_standalone_clip
+            clip_forced = load_standalone_clip(clip_filename_abs, embedding_directory=path_embeddings)
             if clip_forced is not None:
                 clip = clip_forced
 
@@ -276,7 +277,7 @@ def get_previewer(model):
 @torch.inference_mode()
 def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sampler_name='dpmpp_2m_sde_gpu',
              scheduler='karras', denoise=1.0, disable_noise=False, start_step=None, last_step=None,
-             force_full_denoise=False, callback_function=None, refiner=None, refiner_switch=-1,
+             force_full_denoise=False, callback_function=None,
              previewer_start=None, previewer_end=None, sigmas=None, noise_mean=None, disable_preview=False):
 
     if sigmas is not None:
@@ -314,25 +315,22 @@ def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sa
             callback_function(previewer_start + step, x0, x, previewer_end, y)
 
     disable_pbar = False
-    modules.sample_hijack.current_refiner = refiner
-    modules.sample_hijack.refiner_switch_step = refiner_switch
+    # 
+    # 
     ldm_patched.modules.samplers.sample = modules.sample_hijack.sample_hacked
 
-    try:
-        samples = ldm_patched.modules.sample.sample(model,
-                                                    noise, steps, cfg, sampler_name, scheduler,
-                                                    positive, negative, latent_image,
-                                                    denoise=denoise, disable_noise=disable_noise,
-                                                    start_step=start_step,
-                                                    last_step=last_step,
-                                                    force_full_denoise=force_full_denoise, noise_mask=noise_mask,
-                                                    callback=callback,
-                                                    disable_pbar=disable_pbar, seed=seed, sigmas=sigmas)
+    samples = ldm_patched.modules.sample.sample(model,
+                                                noise, steps, cfg, sampler_name, scheduler,
+                                                positive, negative, latent_image,
+                                                denoise=denoise, disable_noise=disable_noise,
+                                                start_step=start_step,
+                                                last_step=last_step,
+                                                force_full_denoise=force_full_denoise, noise_mask=noise_mask,
+                                                callback=callback,
+                                                disable_pbar=disable_pbar, seed=seed, sigmas=sigmas)
 
-        out = latent.copy()
-        out["samples"] = samples
-    finally:
-        modules.sample_hijack.current_refiner = None
+    out = latent.copy()
+    out["samples"] = samples
 
     return out
 

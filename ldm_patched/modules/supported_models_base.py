@@ -43,11 +43,12 @@ class BASE:
         for x in self.unet_extra_config:
             self.unet_config[x] = self.unet_extra_config[x]
 
-    def get_model(self, state_dict, prefix="", device=None):
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
         if self.noise_aug_config is not None:
-            out = model_base.SD21UNCLIP(self, self.noise_aug_config, model_type=self.model_type(state_dict, prefix), device=device)
+            out = model_base.SD21UNCLIP(self, self.noise_aug_config, model_type=self.model_type(state_dict, prefix), device=device, operations=operations)
         else:
-            out = model_base.BaseModel(self, model_type=self.model_type(state_dict, prefix), device=device)
+            out = model_base.BaseModel(self, model_type=self.model_type(state_dict, prefix), device=device, operations=operations)
         if self.inpaint_model():
             out.set_inpaint()
         return out

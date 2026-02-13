@@ -1,0 +1,40 @@
+[
+    {
+        "name": "DJ hyperrealism",
+        "prompt": "hyperrealistic art, extremely high-resolution details, photographic, realism pushed to extreme, fine texture, incredibly lifelike",
+        "negative_prompt": "anime, manga, drawings, abstract, unrealistic, low resolution"
+    },
+    {
+        "name": "DJ Illustrious",
+        "prompt": "masterpiece, best quality, amazing quality, very aesthetic, absurdres, newest",
+        "negative_prompt": "bad quality, worst quality, worst detail, sketch, censored, watermark, signature"
+    },
+    {
+        "name": "DJ Negative Enhance",
+        "negative_prompt": "worst quality, low quality, lowres, bw, bad art, watermark, signature, text, username, logo, trademark, blur, blurry, grainy, ugly, mutated, mutilated, bad shadow, draft, cropped, out of frame, cut off, censored, out of focus, glitch, hands, feet, bad anatomy"
+    },
+    {
+        "name": "DJ Dynamic",
+        "prompt": "dynamic pose, interesting angle, eye catching composition, depth of field, forced perspective"
+    },
+    {
+        "name": "DJ Digital Illustration",
+        "prompt": "Digital illustration, perfect composition, intricate details",
+        "negative_prompt": "lowres, bad anatomy"
+    },
+    {
+        "name": "DJ Pony",
+        "prompt": "(score_9), score_8_up, score_7_up, rating_explicit",
+        "negative_prompt": "source_furry, source_pony, score_6, score_5, score_4, low quality, bad quality, muscular, furry"
+    },
+    {
+        "name": "DJ dystopian",
+        "prompt": "dystopian style, bleak, post-apocalyptic, somber, dramatic, highly detailed",
+        "negative_prompt": "ugly, deformed, noisy, blurry, low contrast"
+    },
+    {
+        "name": "DJ fairy tale",
+        "prompt": "fairy tale, magical, fantastical, enchanting, storybook style, highly detailed",
+        "negative_prompt": "modern, ordinary, mundane"
+    }
+]

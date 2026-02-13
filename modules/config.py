@@ -204,10 +204,20 @@ path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vi
 if not isinstance(paths_checkpoints, list):
     paths_checkpoints = [paths_checkpoints]
 
-if path_unet not in paths_checkpoints:
-    paths_checkpoints.append(path_unet)
+if isinstance(path_unet, list):
+    for x in path_unet:
+        if x not in paths_checkpoints:
+            paths_checkpoints.append(x)
+else:
+    if path_unet not in paths_checkpoints:
+        paths_checkpoints.append(path_unet)
 
-paths_clips = [path_clip] + paths_checkpoints
+paths_clips = []
+if isinstance(path_clip, list):
+    paths_clips += path_clip
+else:
+    paths_clips.append(path_clip)
+
 
 path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_safety_checker = get_dir_or_set_default('path_safety_checker', '../models/safety_checker/')
@@ -282,23 +292,16 @@ default_base_model_name = default_model = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, str),
     expected_type=str
 )
+
+if getattr(args_manager.args, 'skip_model_load', False):
+    print("Skipping model load: Forcing default_model to None")
+    default_base_model_name = default_model = 'None'
+
 previous_default_models = get_config_item_or_set_default(
     key='previous_default_models',
     default_value=[],
     validator=lambda x: isinstance(x, list) and all(isinstance(k, str) for k in x),
     expected_type=list
-)
-default_refiner_model_name = default_refiner = get_config_item_or_set_default(
-    key='default_refiner',
-    default_value='None',
-    validator=lambda x: isinstance(x, str),
-    expected_type=str
-)
-default_refiner_switch = get_config_item_or_set_default(
-    key='default_refiner_switch',
-    default_value=0.8,
-    validator=lambda x: isinstance(x, numbers.Number) and 0 <= x <= 1,
-    expected_type=numbers.Number
 )
 default_loras_min_weight = get_config_item_or_set_default(
     key='default_loras_min_weight',
@@ -347,6 +350,10 @@ default_loras = get_config_item_or_set_default(
         for y in x),
     expected_type=list
 )
+if getattr(args_manager.args, 'skip_model_load', False):
+    print("Skipping model load: Forcing default_loras to None")
+    default_loras = [[y[0], 'None', y[2]] if len(y) == 3 else [True, 'None', y[1]] for y in default_loras]
+
 default_loras = [(y[0], y[1], y[2]) if len(y) == 3 else (True, y[0], y[1]) for y in default_loras]
 default_max_lora_number = get_config_item_or_set_default(
     key='default_max_lora_number',
@@ -590,12 +597,6 @@ default_overwrite_step = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, int),
     expected_type=int
 )
-default_overwrite_switch = get_config_item_or_set_default(
-    key='default_overwrite_switch',
-    default_value=-1,
-    validator=lambda x: isinstance(x, int),
-    expected_type=int
-)
 default_overwrite_upscale = get_config_item_or_set_default(
     key='default_overwrite_upscale',
     default_value=-1,
@@ -734,8 +735,6 @@ config_dict["default_loras"] = default_loras = default_loras[:default_max_lora_n
 # mapping config to meta parameter
 possible_preset_keys = {
     "default_model": "base_model",
-    "default_refiner": "refiner_model",
-    "default_refiner_switch": "refiner_switch",
     "previous_default_models": "previous_default_models",
     "default_loras_min_weight": "default_loras_min_weight",
     "default_loras_max_weight": "default_loras_max_weight",
@@ -747,7 +746,6 @@ possible_preset_keys = {
     "default_sampler": "sampler",
     "default_scheduler": "scheduler",
     "default_overwrite_step": "steps",
-    "default_overwrite_switch": "overwrite_switch",
     "default_performance": "performance",
     "default_image_number": "image_number",
     "default_prompt": "prompt",

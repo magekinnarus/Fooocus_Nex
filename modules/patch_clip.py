@@ -86,8 +86,6 @@ def patched_SDClipModel__init__(self, max_length=77, freeze=True, layer="last", 
     if dtype is not None:
         self.transformer.to(dtype)
 
-    self.transformer.text_model.embeddings.to(torch.float32)
-
     if freeze:
         self.freeze()
 
@@ -110,6 +108,17 @@ def patched_SDClipModel__init__(self, max_length=77, freeze=True, layer="last", 
 def patched_SDClipModel_forward(self, tokens):
     backup_embeds = self.transformer.get_input_embeddings()
     device = backup_embeds.weight.device
+    # Ensure all embeddings are on the correct device (safety guard for GGUF/standalone CLIP paths)
+    if hasattr(self.transformer, 'text_model'):
+        emb = self.transformer.text_model.embeddings
+        if emb.position_embedding.weight.device != device:
+            emb.to(device)
+        if hasattr(emb, 'position_ids'):
+            emb.position_ids.data = emb.position_ids.data.to(device)
+        if self.text_projection is not None and self.text_projection.device != device:
+            self.text_projection.data = self.text_projection.data.to(device)
+        if self.logit_scale is not None and self.logit_scale.device != device:
+            self.logit_scale.data = self.logit_scale.data.to(device)
     tokens = self.set_up_textual_embeddings(tokens, backup_embeds)
     tokens = torch.LongTensor(tokens).to(device)
 

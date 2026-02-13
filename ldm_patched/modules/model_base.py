@@ -57,7 +57,7 @@ def model_sampling(model_config, model_type):
 
 
 class BaseModel(torch.nn.Module):
-    def __init__(self, model_config, model_type=ModelType.EPS, device=None):
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None, operations=None):
         super().__init__()
 
         unet_config = model_config.unet_config
@@ -66,10 +66,11 @@ class BaseModel(torch.nn.Module):
         self.manual_cast_dtype = model_config.manual_cast_dtype
 
         if not unet_config.get("disable_unet_model_creation", False):
-            if self.manual_cast_dtype is not None:
-                operations = ldm_patched.modules.ops.manual_cast
-            else:
-                operations = ldm_patched.modules.ops.disable_weight_init
+            if operations is None:
+                if self.manual_cast_dtype is not None:
+                    operations = ldm_patched.modules.ops.manual_cast
+                else:
+                    operations = ldm_patched.modules.ops.disable_weight_init
             self.diffusion_model = UNetModel(**unet_config, device=device, operations=operations)
         self.model_type = model_type
         self.model_sampling = model_sampling(model_config, model_type)
@@ -265,8 +266,8 @@ def unclip_adm(unclip_conditioning, device, noise_augmentor, noise_augment_merge
     return adm_out
 
 class SD21UNCLIP(BaseModel):
-    def __init__(self, model_config, noise_aug_config, model_type=ModelType.V_PREDICTION, device=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, noise_aug_config, model_type=ModelType.V_PREDICTION, device=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.noise_augmentor = CLIPEmbeddingNoiseAugmentation(**noise_aug_config)
 
     def encode_adm(self, **kwargs):
@@ -284,8 +285,8 @@ def sdxl_pooled(args, noise_augmentor):
         return args["pooled_output"]
 
 class SDXLRefiner(BaseModel):
-    def __init__(self, model_config, model_type=ModelType.EPS, device=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.embedder = Timestep(256)
         self.noise_augmentor = CLIPEmbeddingNoiseAugmentation(**{"noise_schedule_config": {"timesteps": 1000, "beta_schedule": "squaredcos_cap_v2"}, "timestep_dim": 1280})
 
@@ -311,8 +312,8 @@ class SDXLRefiner(BaseModel):
         return torch.cat((clip_pooled.to(flat.device), flat), dim=1)
 
 class SDXL(BaseModel):
-    def __init__(self, model_config, model_type=ModelType.EPS, device=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.embedder = Timestep(256)
         self.noise_augmentor = CLIPEmbeddingNoiseAugmentation(**{"noise_schedule_config": {"timesteps": 1000, "beta_schedule": "squaredcos_cap_v2"}, "timestep_dim": 1280})
 
@@ -336,8 +337,8 @@ class SDXL(BaseModel):
         return torch.cat((clip_pooled.to(flat.device), flat), dim=1)
 
 class SVD_img2vid(BaseModel):
-    def __init__(self, model_config, model_type=ModelType.V_PREDICTION_EDM, device=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, model_type=ModelType.V_PREDICTION_EDM, device=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.embedder = Timestep(256)
 
     def encode_adm(self, **kwargs):
@@ -385,8 +386,8 @@ class SVD_img2vid(BaseModel):
         return out
 
 class Stable_Zero123(BaseModel):
-    def __init__(self, model_config, model_type=ModelType.EPS, device=None, cc_projection_weight=None, cc_projection_bias=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None, cc_projection_weight=None, cc_projection_bias=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.cc_projection = ldm_patched.modules.ops.manual_cast.Linear(cc_projection_weight.shape[1], cc_projection_weight.shape[0], dtype=self.get_dtype(), device=device)
         self.cc_projection.weight.copy_(cc_projection_weight)
         self.cc_projection.bias.copy_(cc_projection_bias)
@@ -415,8 +416,8 @@ class Stable_Zero123(BaseModel):
         return out
 
 class SD_X4Upscaler(BaseModel):
-    def __init__(self, model_config, model_type=ModelType.V_PREDICTION, device=None):
-        super().__init__(model_config, model_type, device=device)
+    def __init__(self, model_config, model_type=ModelType.V_PREDICTION, device=None, operations=None):
+        super().__init__(model_config, model_type, device=device, operations=operations)
         self.noise_augmentor = ImageConcatWithNoiseAugmentation(noise_schedule_config={"linear_start": 0.0001, "linear_end": 0.02}, max_noise_level=350)
 
     def extra_conds(self, **kwargs):

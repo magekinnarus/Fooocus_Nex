@@ -125,8 +125,9 @@ class SDXLRefiner(supported_models_base.BASE):
 
     latent_format = latent_formats.SDXL
 
-    def get_model(self, state_dict, prefix="", device=None):
-        return model_base.SDXLRefiner(self, device=device)
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        return model_base.SDXLRefiner(self, device=device, operations=operations)
 
     def process_clip_state_dict(self, state_dict):
         keys_to_replace = {}
@@ -169,8 +170,9 @@ class SDXL(supported_models_base.BASE):
         else:
             return model_base.ModelType.EPS
 
-    def get_model(self, state_dict, prefix="", device=None):
-        out = model_base.SDXL(self, model_type=self.model_type(state_dict, prefix), device=device)
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        out = model_base.SDXL(self, model_type=self.model_type(state_dict, prefix), device=device, operations=operations)
         if self.inpaint_model():
             out.set_inpaint()
         return out
@@ -245,8 +247,9 @@ class SVD_img2vid(supported_models_base.BASE):
 
     sampling_settings = {"sigma_max": 700.0, "sigma_min": 0.002}
 
-    def get_model(self, state_dict, prefix="", device=None):
-        out = model_base.SVD_img2vid(self, device=device)
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        out = model_base.SVD_img2vid(self, device=device, operations=operations)
         return out
 
     def clip_target(self):
@@ -271,8 +274,9 @@ class Stable_Zero123(supported_models_base.BASE):
 
     latent_format = latent_formats.SD15
 
-    def get_model(self, state_dict, prefix="", device=None):
-        out = model_base.Stable_Zero123(self, device=device, cc_projection_weight=state_dict["cc_projection.weight"], cc_projection_bias=state_dict["cc_projection.bias"])
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        out = model_base.Stable_Zero123(self, device=device, cc_projection_weight=state_dict["cc_projection.weight"], cc_projection_bias=state_dict["cc_projection.bias"], operations=operations)
         return out
 
     def clip_target(self):
@@ -302,9 +306,10 @@ class SD_X4Upscaler(SD20):
         "linear_end": 0.02,
     }
 
-    def get_model(self, state_dict, prefix="", device=None):
-        out = model_base.SD_X4Upscaler(self, device=device)
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        out = model_base.SD_X4Upscaler(self, device=device, operations=operations)
         return out
 
-models = [Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXLRefiner, SDXL, SSD1B, Segmind_Vega, SD_X4Upscaler]
+models = [Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXL, SSD1B, Segmind_Vega, SD_X4Upscaler]
 models += [SVD_img2vid]

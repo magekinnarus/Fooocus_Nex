@@ -37,6 +37,9 @@ args_parser.parser.add_argument("--enable-auto-describe-image", action='store_tr
 args_parser.parser.add_argument("--always-download-new-model", action='store_true',
                                 help="Always download newer models", default=False)
 
+args_parser.parser.add_argument("--skip-model-load", action='store_true',
+                                help="Skip loading models at startup (useful for low VRAM)", default=False)
+
 args_parser.parser.add_argument("--rebuild-hash-cache", help="Generates missing model and LoRA hashes.",
                                 type=int, nargs="?", metavar="CPU_NUM_THREADS", const=-1)
 

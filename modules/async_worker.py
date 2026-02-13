@@ -68,7 +68,6 @@ class AsyncTask:
         self.sampler_name = args.pop()
         self.scheduler_name = args.pop()
         self.overwrite_step = args.pop()
-        self.overwrite_switch = args.pop()
         self.overwrite_width = args.pop()
         self.overwrite_height = args.pop()
         self.overwrite_vary_strength = args.pop()
@@ -79,7 +78,6 @@ class AsyncTask:
         self.skipping_cn_preprocessor = args.pop()
         self.canny_low_threshold = args.pop()
         self.canny_high_threshold = args.pop()
-        self.refiner_swap_method = args.pop()
         self.controlnet_softness = args.pop()
         self.freeu_enabled = args.pop()
         self.freeu_b1 = args.pop()
@@ -277,7 +275,7 @@ def worker():
         return
 
     def process_task(all_steps, async_task, callback, controlnet_canny_path, controlnet_cpds_path, current_task_id,
-                     denoising_strength, final_scheduler_name, goals, initial_latent, steps, switch, positive_cond,
+                     denoising_strength, final_scheduler_name, goals, initial_latent, steps, positive_cond,
                      negative_cond, task, loras, tiled, use_expansion, width, height, base_progress, preparation_steps,
                      total_count, show_intermediate_results, persist_image=True):
         if async_task.last_stop is not False:
@@ -295,7 +293,6 @@ def worker():
             positive_cond=positive_cond,
             negative_cond=negative_cond,
             steps=steps,
-            switch=switch,
             width=width,
             height=height,
             image_seed=task['task_seed'],
@@ -306,7 +303,6 @@ def worker():
             denoise=denoising_strength,
             tiled=tiled,
             cfg_scale=async_task.cfg_scale,
-            refiner_swap_method=async_task.refiner_swap_method,
             disable_preview=async_task.disable_preview
         )
         del positive_cond, negative_cond  # Save memory
@@ -437,7 +433,7 @@ def worker():
         if len(all_ip_tasks) > 0:
             pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
 
-    def apply_vary(async_task, uov_method, denoising_strength, uov_input_image, switch, current_progress, advance_progress=False):
+    def apply_vary(async_task, uov_method, denoising_strength, uov_input_image, current_progress, advance_progress=False):
         if 'subtle' in uov_method:
             denoising_strength = 0.5
         if 'strong' in uov_method:
@@ -458,9 +454,7 @@ def worker():
         progressbar(async_task, current_progress, 'VAE encoding ...')
         candidate_vae, _ = pipeline.get_candidate_vae(
             steps=async_task.steps,
-            switch=switch,
-            denoise=denoising_strength,
-            refiner_swap_method=async_task.refiner_swap_method
+            denoise=denoising_strength
         )
         initial_latent = core.encode_vae(vae=candidate_vae, pixels=initial_pixels)
         B, C, H, W = initial_latent['samples'].shape
@@ -470,7 +464,7 @@ def worker():
         return uov_input_image, denoising_strength, initial_latent, width, height, current_progress
 
     def apply_inpaint(async_task, initial_latent, inpaint_head_model_path, inpaint_image,
-                      inpaint_mask, inpaint_parameterized, denoising_strength, inpaint_respective_field, switch,
+                      inpaint_mask, inpaint_parameterized, denoising_strength, inpaint_respective_field,
                       inpaint_disable_initial_latent, current_progress, skip_apply_outpaint=False,
                       advance_progress=False):
         if not skip_apply_outpaint:
@@ -495,9 +489,7 @@ def worker():
         inpaint_pixel_mask = core.numpy_to_pytorch(inpaint_worker.current_task.interested_mask)
         candidate_vae, candidate_vae_swap = pipeline.get_candidate_vae(
             steps=async_task.steps,
-            switch=switch,
-            denoise=denoising_strength,
-            refiner_swap_method=async_task.refiner_swap_method
+            denoise=denoising_strength
         )
         latent_inpaint, latent_mask = core.encode_vae_inpaint(
             mask=inpaint_pixel_mask,
@@ -563,7 +555,7 @@ def worker():
             async_task.inpaint_respective_field = 1.0
         return inpaint_image, inpaint_mask
 
-    def apply_upscale(async_task, uov_input_image, uov_method, switch, current_progress, advance_progress=False):
+    def apply_upscale(async_task, uov_input_image, uov_method, current_progress, advance_progress=False):
         H, W, C = uov_input_image.shape
         if advance_progress:
             current_progress += 1
@@ -606,9 +598,7 @@ def worker():
         progressbar(async_task, current_progress, 'VAE encoding ...')
         candidate_vae, _ = pipeline.get_candidate_vae(
             steps=async_task.steps,
-            switch=switch,
-            denoise=denoising_strength,
-            refiner_swap_method=async_task.refiner_swap_method
+            denoise=denoising_strength
         )
         initial_latent = core.encode_vae(
             vae=candidate_vae,
@@ -622,17 +612,14 @@ def worker():
     def apply_overrides(async_task, steps, height, width):
         if async_task.overwrite_step > 0:
             steps = async_task.overwrite_step
-        switch = 0
-        if async_task.overwrite_switch > 0:
-            switch = async_task.overwrite_switch
         if async_task.overwrite_width > 0:
             width = async_task.overwrite_width
         if async_task.overwrite_height > 0:
             height = async_task.overwrite_height
-        return steps, switch, width, height
+        return steps, width, height
 
     def process_prompt(async_task, prompt, negative_prompt, base_model_additional_loras, image_number, disable_seed_increment, use_expansion, use_style,
-                       use_synthetic_refiner, current_progress, advance_progress=False):
+                       current_progress, advance_progress=False):
         prompts = remove_empty_str([safe_str(p) for p in prompt.splitlines()], default='')
         negative_prompts = remove_empty_str([safe_str(p) for p in negative_prompt.splitlines()], default='')
         prompt = prompts[0]
@@ -651,10 +638,9 @@ def worker():
                                                           modules.config.default_max_lora_number,
                                                           lora_filenames=lora_filenames)
         loras += async_task.performance_loras
-        pipeline.refresh_everything(refiner_model_name='None',
-                                    base_model_name=async_task.base_model_name,
+        pipeline.refresh_everything(base_model_name=async_task.base_model_name,
                                     loras=loras, base_model_additional_loras=base_model_additional_loras,
-                                    use_synthetic_refiner=use_synthetic_refiner, vae_name=async_task.vae_name,
+                                    vae_name=async_task.vae_name,
                                     clip_name=async_task.clip_model_name)
         pipeline.set_clip_skip(async_task.clip_skip)
         if advance_progress:
@@ -762,15 +748,11 @@ def worker():
             final_scheduler_name = 'sgm_uniform'
             if pipeline.final_unet is not None:
                 pipeline.final_unet = patch_discrete(pipeline.final_unet, async_task.scheduler_name)
-            if pipeline.final_refiner_unet is not None:
-                pipeline.final_refiner_unet = patch_discrete(pipeline.final_refiner_unet, async_task.scheduler_name)
 
         elif async_task.scheduler_name == 'edm_playground_v2.5':
             final_scheduler_name = 'karras'
             if pipeline.final_unet is not None:
                 pipeline.final_unet = patch_edm(pipeline.final_unet, async_task.scheduler_name)
-            if pipeline.final_refiner_unet is not None:
-                pipeline.final_refiner_unet = patch_edm(pipeline.final_refiner_unet, async_task.scheduler_name)
 
         return final_scheduler_name
 
@@ -780,15 +762,11 @@ def worker():
             current_progress += 1
         progressbar(async_task, current_progress, 'Downloading Hyper-SD components ...')
         async_task.performance_loras += [(modules.config.downloading_sdxl_hyper_sd_lora(), 0.8)]
-        if async_task.refiner_model_name != 'None':
-            print(f'Refiner disabled in Hyper-SD mode.')
-        async_task.refiner_model_name = 'None'
         async_task.sampler_name = 'dpmpp_sde_gpu'
         async_task.scheduler_name = 'karras'
         async_task.sharpness = 0.0
         async_task.cfg_scale = 1.0
         async_task.adaptive_cfg = 1.0
-        async_task.refiner_switch = 1.0
         async_task.adm_scaler_positive = 1.0
         async_task.adm_scaler_negative = 1.0
         async_task.adm_scaler_end = 0.0
@@ -800,15 +778,13 @@ def worker():
             current_progress += 1
         progressbar(async_task, 1, 'Downloading Lightning components ...')
         async_task.performance_loras += [(modules.config.downloading_sdxl_lightning_lora(), 1.0)]
-        if async_task.refiner_model_name != 'None':
-            print(f'Refiner disabled in Lightning mode.')
-        async_task.refiner_model_name = 'None'
+        
         async_task.sampler_name = 'euler'
         async_task.scheduler_name = 'sgm_uniform'
         async_task.sharpness = 0.0
         async_task.cfg_scale = 1.0
         async_task.adaptive_cfg = 1.0
-        async_task.refiner_switch = 1.0
+        
         async_task.adm_scaler_positive = 1.0
         async_task.adm_scaler_negative = 1.0
         async_task.adm_scaler_end = 0.0
@@ -820,15 +796,13 @@ def worker():
             current_progress += 1
         progressbar(async_task, 1, 'Downloading LCM components ...')
         async_task.performance_loras += [(modules.config.downloading_sdxl_lcm_lora(), 1.0)]
-        if async_task.refiner_model_name != 'None':
-            print(f'Refiner disabled in LCM mode.')
-        async_task.refiner_model_name = 'None'
+        
         async_task.sampler_name = 'lcm'
         async_task.scheduler_name = 'lcm'
         async_task.sharpness = 0.0
         async_task.cfg_scale = 1.0
         async_task.adaptive_cfg = 1.0
-        async_task.refiner_switch = 1.0
+        
         async_task.adm_scaler_positive = 1.0
         async_task.adm_scaler_negative = 1.0
         async_task.adm_scaler_end = 0.0
@@ -837,7 +811,7 @@ def worker():
     def apply_image_input(async_task, base_model_additional_loras, clip_vision_path, controlnet_canny_path,
                           controlnet_cpds_path, goals, inpaint_head_model_path, inpaint_image, inpaint_mask,
                           inpaint_parameterized,  ip_adapter_face_path, ip_adapter_path, ip_negative_path,
-                          skip_prompt_processing, use_synthetic_refiner):
+                          skip_prompt_processing):
         if (async_task.current_tab == 'uov' or (
                 async_task.current_tab == 'ip' and async_task.mixing_image_prompt_and_vary_upscale)) \
                 and async_task.uov_method != flags.disabled.casefold() and async_task.uov_input_image is not None:
@@ -885,9 +859,6 @@ def worker():
                         async_task.inpaint_engine)
                     base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
                     print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
-                    if async_task.refiner_model_name == 'None':
-                        use_synthetic_refiner = True
-                        async_task.refiner_switch = 0.8
                 else:
                     inpaint_head_model_path, inpaint_patch_model_path = None, None
                     print(f'[Inpaint] Parameterized inpaint is disabled.')
@@ -915,7 +886,7 @@ def worker():
             goals.append('enhance')
             skip_prompt_processing = True
             async_task.enhance_input_image = HWC3(async_task.enhance_input_image)
-        return base_model_additional_loras, clip_vision_path, controlnet_canny_path, controlnet_cpds_path, inpaint_head_model_path, inpaint_image, inpaint_mask, ip_adapter_face_path, ip_adapter_path, ip_negative_path, skip_prompt_processing, use_synthetic_refiner
+        return base_model_additional_loras, clip_vision_path, controlnet_canny_path, controlnet_cpds_path, inpaint_head_model_path, inpaint_image, inpaint_mask, ip_adapter_face_path, ip_adapter_path, ip_negative_path, skip_prompt_processing
 
     def prepare_upscale(async_task, goals, uov_input_image, uov_method, performance, steps, current_progress,
                         advance_progress=False, skip_prompt_processing=False):
@@ -951,8 +922,8 @@ def worker():
                         current_progress, current_task_id, denoising_strength, inpaint_disable_initial_latent,
                         inpaint_engine, inpaint_respective_field, inpaint_strength,
                         prompt, negative_prompt, final_scheduler_name, goals, height, img, mask,
-                        preparation_steps, steps, switch, tiled, total_count, use_expansion, use_style,
-                        use_synthetic_refiner, width, show_intermediate_results=True, persist_image=True):
+                        preparation_steps, steps, tiled, total_count, use_expansion, use_style,
+                        width, show_intermediate_results=True, persist_image=True):
         base_model_additional_loras = []
         inpaint_head_model_path = None
         inpaint_parameterized = inpaint_engine != 'None'  # inpaint_engine = None, improve detail
@@ -963,10 +934,10 @@ def worker():
 
         if 'vary' in goals:
             img, denoising_strength, initial_latent, width, height, current_progress = apply_vary(
-                async_task, async_task.enhance_uov_method, denoising_strength, img, switch, current_progress)
+                async_task, async_task.enhance_uov_method, denoising_strength, img, current_progress)
         if 'upscale' in goals:
             direct_return, img, denoising_strength, initial_latent, tiled, width, height, current_progress = apply_upscale(
-                async_task, img, async_task.enhance_uov_method, switch, current_progress)
+                async_task, img, async_task.enhance_uov_method, current_progress)
             if direct_return:
                 d = [('Upscale (Fast)', 'upscale_fast', '2x')]
                 if modules.config.default_black_out_nsfw or async_task.black_out_nsfw:
@@ -988,7 +959,7 @@ def worker():
         # positive and negative conditioning aren't available here anymore, process prompt again
         tasks_enhance, use_expansion, loras, current_progress = process_prompt(
             async_task, prompt, negative_prompt, base_model_additional_loras, 1, True,
-            use_expansion, use_style, use_synthetic_refiner, current_progress)
+            use_expansion, use_style, current_progress)
         task_enhance = tasks_enhance[0]
         # TODO could support vary, upscale and CN in the future
         # if 'cn' in goals:
@@ -1000,11 +971,11 @@ def worker():
             denoising_strength, initial_latent, width, height, current_progress = apply_inpaint(
                 async_task, None, inpaint_head_model_path, img, mask,
                 inpaint_parameterized, inpaint_strength,
-                inpaint_respective_field, switch, inpaint_disable_initial_latent,
+                inpaint_respective_field, inpaint_disable_initial_latent,
                 current_progress, True)
         imgs, img_paths, current_progress = process_task(all_steps, async_task, callback, controlnet_canny_path,
                                                          controlnet_cpds_path, current_task_id, denoising_strength,
-                                                         final_scheduler_name, goals, initial_latent, steps, switch,
+                                                         final_scheduler_name, goals, initial_latent, steps,
                                                          task_enhance['c'], task_enhance['uc'], task_enhance, loras,
                                                          tiled, use_expansion, width, height, current_progress,
                                                          preparation_steps, total_count, show_intermediate_results,
@@ -1015,8 +986,8 @@ def worker():
 
     def enhance_upscale(all_steps, async_task, base_progress, callback, controlnet_canny_path, controlnet_cpds_path,
                         current_task_id, denoising_strength, done_steps_inpainting, done_steps_upscaling, enhance_steps,
-                        prompt, negative_prompt, final_scheduler_name, height, img, preparation_steps, switch, tiled,
-                        total_count, use_expansion, use_style, use_synthetic_refiner, width, persist_image=True):
+                        prompt, negative_prompt, final_scheduler_name, height, img, preparation_steps, tiled,
+                        total_count, use_expansion, use_style, width, persist_image=True):
         # reset inpaint worker to prevent tensor size issues and not mix upscale and inpainting
         inpaint_worker.current_task = None
 
@@ -1025,7 +996,7 @@ def worker():
         img, skip_prompt_processing, steps = prepare_upscale(
             async_task, goals_enhance, img, async_task.enhance_uov_method, async_task.performance_selection,
             enhance_steps, current_progress)
-        steps, _, _, _ = apply_overrides(async_task, steps, height, width)
+        steps, _, _ = apply_overrides(async_task, steps, height, width)
         exception_result = ''
         if len(goals_enhance) > 0:
             try:
@@ -1033,8 +1004,8 @@ def worker():
                     all_steps, async_task, callback, controlnet_canny_path,
                     controlnet_cpds_path, current_progress, current_task_id, denoising_strength, False,
                     'None', 0.0, 0.0, prompt, negative_prompt, final_scheduler_name,
-                    goals_enhance, height, img, None, preparation_steps, steps, switch, tiled, total_count,
-                    use_expansion, use_style, use_synthetic_refiner, width, persist_image=persist_image)
+                    goals_enhance, height, img, None, preparation_steps, steps, tiled, total_count,
+                    use_expansion, use_style, width, persist_image=persist_image)
 
             except ldm_patched.modules.model_management.InterruptProcessingException:
                 if async_task.last_stop == 'skip':
@@ -1066,9 +1037,7 @@ def worker():
 
         use_style = len(async_task.style_selections) > 0
 
-        if async_task.base_model_name == async_task.refiner_model_name:
-            print(f'Refiner disabled because base model and refiner are same.')
-            async_task.refiner_model_name = 'None'
+            
 
         current_progress = 0
         if async_task.performance_selection == Performance.EXTREME_SPEED:
@@ -1107,7 +1076,6 @@ def worker():
         inpaint_mask = None
         inpaint_head_model_path = None
 
-        use_synthetic_refiner = False
 
         controlnet_canny_path = None
         controlnet_cpds_path = None
@@ -1118,10 +1086,10 @@ def worker():
         current_progress = 1
 
         if async_task.input_image_checkbox:
-            base_model_additional_loras, clip_vision_path, controlnet_canny_path, controlnet_cpds_path, inpaint_head_model_path, inpaint_image, inpaint_mask, ip_adapter_face_path, ip_adapter_path, ip_negative_path, skip_prompt_processing, use_synthetic_refiner = apply_image_input(
+            base_model_additional_loras, clip_vision_path, controlnet_canny_path, controlnet_cpds_path, inpaint_head_model_path, inpaint_image, inpaint_mask, ip_adapter_face_path, ip_adapter_path, ip_negative_path, skip_prompt_processing = apply_image_input(
                 async_task, base_model_additional_loras, clip_vision_path, controlnet_canny_path, controlnet_cpds_path,
                 goals, inpaint_head_model_path, inpaint_image, inpaint_mask, inpaint_parameterized, ip_adapter_face_path,
-                ip_adapter_path, ip_negative_path, skip_prompt_processing, use_synthetic_refiner)
+                ip_adapter_path, ip_negative_path, skip_prompt_processing)
 
         # Load or unload CNs
         progressbar(async_task, current_progress, 'Loading control models ...')
@@ -1129,10 +1097,10 @@ def worker():
         ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
         ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
 
-        async_task.steps, switch, width, height = apply_overrides(async_task, async_task.steps, height, width)
+        async_task.steps, width, height = apply_overrides(async_task, async_task.steps, height, width)
 
         print(f'[Parameters] Sampler = {async_task.sampler_name} - {async_task.scheduler_name}')
-        print(f'[Parameters] Steps = {async_task.steps} - {switch}')
+        print(f'[Parameters] Steps = {async_task.steps}')
 
         progressbar(async_task, current_progress, 'Initializing ...')
 
@@ -1141,7 +1109,7 @@ def worker():
             tasks, use_expansion, loras, current_progress = process_prompt(async_task, async_task.prompt, async_task.negative_prompt,
                                                          base_model_additional_loras, async_task.image_number,
                                                          async_task.disable_seed_increment, use_expansion, use_style,
-                                                         use_synthetic_refiner, current_progress, advance_progress=True)
+                                                         current_progress, advance_progress=True)
 
         if len(goals) > 0:
             current_progress += 1
@@ -1151,12 +1119,12 @@ def worker():
 
         if 'vary' in goals:
             async_task.uov_input_image, denoising_strength, initial_latent, width, height, current_progress = apply_vary(
-                async_task, async_task.uov_method, denoising_strength, async_task.uov_input_image, switch,
+                async_task, async_task.uov_method, denoising_strength, async_task.uov_input_image,
                 current_progress)
 
         if 'upscale' in goals:
             direct_return, async_task.uov_input_image, denoising_strength, initial_latent, tiled, width, height, current_progress = apply_upscale(
-                async_task, async_task.uov_input_image, async_task.uov_method, switch, current_progress,
+                async_task, async_task.uov_input_image, async_task.uov_method, current_progress,
                 advance_progress=True)
             if direct_return:
                 d = [('Upscale (Fast)', 'upscale_fast', '2x')]
@@ -1179,7 +1147,6 @@ def worker():
                                                                                                     inpaint_parameterized,
                                                                                                     async_task.inpaint_strength,
                                                                                                     async_task.inpaint_respective_field,
-                                                                                                    switch,
                                                                                                     async_task.inpaint_disable_initial_latent,
                                                                                                     current_progress,
                                                                                                     advance_progress=True)
@@ -1195,7 +1162,7 @@ def worker():
             apply_freeu(async_task)
 
         # async_task.steps can have value of uov steps here when upscale has been applied
-        steps, _, _, _ = apply_overrides(async_task, async_task.steps, height, width)
+        steps, _, _ = apply_overrides(async_task, async_task.steps, height, width)
 
         images_to_enhance = []
         if 'enhance' in goals:
@@ -1216,12 +1183,12 @@ def worker():
                     enhance_upscale_steps = 0
                 else:
                     enhance_upscale_steps = async_task.performance_selection.steps_uov()
-            enhance_upscale_steps, _, _, _ = apply_overrides(async_task, enhance_upscale_steps, height, width)
+            enhance_upscale_steps, _, _ = apply_overrides(async_task, enhance_upscale_steps, height, width)
             enhance_upscale_steps_total = async_task.image_number * enhance_upscale_steps
             all_steps += enhance_upscale_steps_total
 
         if async_task.enhance_checkbox and len(async_task.enhance_ctrls) != 0:
-            enhance_steps, _, _, _ = apply_overrides(async_task, async_task.original_steps, height, width)
+            enhance_steps, _, _ = apply_overrides(async_task, async_task.original_steps, height, width)
             all_steps += async_task.image_number * len(async_task.enhance_ctrls) * enhance_steps
 
         all_steps = max(all_steps, 1)
@@ -1267,7 +1234,7 @@ def worker():
                 imgs, img_paths, current_progress = process_task(all_steps, async_task, callback, controlnet_canny_path,
                                                                  controlnet_cpds_path, current_task_id,
                                                                  denoising_strength, final_scheduler_name, goals,
-                                                                 initial_latent, async_task.steps, switch, task['c'],
+                                                                 initial_latent, async_task.steps, task['c'],
                                                                  task['uc'], task, loras, tiled, use_expansion, width,
                                                                  height, current_progress, preparation_steps,
                                                                  async_task.image_number, show_intermediate_results,
@@ -1311,7 +1278,7 @@ def worker():
         current_task_id = -1
         done_steps_upscaling = 0
         done_steps_inpainting = 0
-        enhance_steps, _, _, _ = apply_overrides(async_task, async_task.original_steps, height, width)
+        enhance_steps, _, _ = apply_overrides(async_task, async_task.original_steps, height, width)
         exception_result = None
         for index, img in enumerate(images_to_enhance):
             async_task.enhance_stats[index] = 0
@@ -1327,7 +1294,7 @@ def worker():
                     all_steps, async_task, base_progress, callback, controlnet_canny_path, controlnet_cpds_path,
                     current_task_id, denoising_strength, done_steps_inpainting, done_steps_upscaling, enhance_steps,
                     async_task.prompt, async_task.negative_prompt, final_scheduler_name, height, img, preparation_steps,
-                    switch, tiled, total_count, use_expansion, use_style, use_synthetic_refiner, width, persist_image)
+                    tiled, total_count, use_expansion, use_style, width, persist_image)
                 async_task.enhance_stats[index] += 1
 
                 if exception_result == 'continue':
@@ -1383,8 +1350,8 @@ def worker():
                         current_progress, current_task_id, denoising_strength, enhance_inpaint_disable_initial_latent,
                         enhance_inpaint_engine, enhance_inpaint_respective_field, enhance_inpaint_strength,
                         enhance_prompt, enhance_negative_prompt, final_scheduler_name, goals_enhance, height, img, mask,
-                        preparation_steps, enhance_steps, switch, tiled, total_count, use_expansion, use_style,
-                        use_synthetic_refiner, width, persist_image=persist_image)
+                        preparation_steps, enhance_steps, tiled, total_count, use_expansion, use_style,
+                        width, persist_image=persist_image)
                     async_task.enhance_stats[index] += 1
 
                     if (should_process_enhance_uov and async_task.enhance_uov_processing_order == flags.enhancement_uov_after
@@ -1420,7 +1387,7 @@ def worker():
                     all_steps, async_task, base_progress, callback, controlnet_canny_path, controlnet_cpds_path,
                     current_task_id, denoising_strength, done_steps_inpainting, done_steps_upscaling, enhance_steps,
                     last_enhance_prompt, last_enhance_negative_prompt, final_scheduler_name, height, img,
-                    preparation_steps, switch, tiled, total_count, use_expansion, use_style, use_synthetic_refiner,
+                    preparation_steps, tiled, total_count, use_expansion, use_style,
                     width, persist_image)
                 async_task.enhance_stats[index] += 1
                 

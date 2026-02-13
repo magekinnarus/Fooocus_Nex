@@ -7,21 +7,19 @@ from ldm_patched.contrib.external_align_your_steps import AlignYourStepsSchedule
 from ldm_patched.contrib.external_custom_sampler import SDTurboScheduler
 from ldm_patched.k_diffusion import sampling as k_diffusion_sampling
 from ldm_patched.modules.samplers import normal_scheduler, simple_scheduler, ddim_scheduler
-from ldm_patched.modules.model_base import SDXLRefiner, SDXL
+from ldm_patched.modules.model_base import SDXL
 from ldm_patched.modules.conds import CONDRegular
 from ldm_patched.modules.sample import get_additional_models, get_models_from_cond, cleanup_additional_models
 from ldm_patched.modules.samplers import resolve_areas_and_cond_masks, wrap_model, calculate_start_end_timesteps, \
     create_cond_with_same_area_if_none, pre_run_control, apply_empty_x_to_equal_area, encode_model_conds
 
 
-current_refiner = None
-refiner_switch_step = -1
 
 
 @torch.no_grad()
 @torch.inference_mode()
 def clip_separate_inner(c, p, target_model=None, target_clip=None):
-    if target_model is None or isinstance(target_model, SDXLRefiner):
+    if target_model is None:
         c = c[..., -1280:].clone()
     elif isinstance(target_model, SDXL):
         c = c.clone()
@@ -87,7 +85,7 @@ def clip_separate_after_preparation(cond, target_model=None, target_clip=None):
 @torch.no_grad()
 @torch.inference_mode()
 def sample_hacked(model, noise, positive, negative, cfg, device, sampler, sigmas, model_options={}, latent_image=None, denoise_mask=None, callback=None, disable_pbar=False, seed=None):
-    global current_refiner
+    
 
     positive = positive[:]
     negative = negative[:]
@@ -119,36 +117,9 @@ def sample_hacked(model, noise, positive, negative, cfg, device, sampler, sigmas
     apply_empty_x_to_equal_area(list(filter(lambda c: c.get('control_apply_to_uncond', False) == True, positive)), negative, 'control', lambda cond_cnets, x: cond_cnets[x])
     apply_empty_x_to_equal_area(positive, negative, 'gligen', lambda cond_cnets, x: cond_cnets[x])
 
-    extra_args = {"cond":positive, "uncond":negative, "cond_scale": cfg, "model_options": model_options, "seed":seed}
-
-    if current_refiner is not None and hasattr(current_refiner.model, 'extra_conds'):
-        positive_refiner = clip_separate_after_preparation(positive, target_model=current_refiner.model)
-        negative_refiner = clip_separate_after_preparation(negative, target_model=current_refiner.model)
-
-        positive_refiner = encode_model_conds(current_refiner.model.extra_conds, positive_refiner, noise, device, "positive", latent_image=latent_image, denoise_mask=denoise_mask)
-        negative_refiner = encode_model_conds(current_refiner.model.extra_conds, negative_refiner, noise, device, "negative", latent_image=latent_image, denoise_mask=denoise_mask)
-
-    def refiner_switch():
-        cleanup_additional_models(set(get_models_from_cond(positive, "control") + get_models_from_cond(negative, "control")))
-
-        extra_args["cond"] = positive_refiner
-        extra_args["uncond"] = negative_refiner
-
-        # clear ip-adapter for refiner
-        extra_args['model_options'] = {k: {} if k == 'transformer_options' else v for k, v in extra_args['model_options'].items()}
-
-        models, inference_memory = get_additional_models(positive_refiner, negative_refiner, current_refiner.model_dtype())
-        ldm_patched.modules.model_management.load_models_gpu(
-            [current_refiner] + models,
-            model.memory_required([noise.shape[0] * 2] + list(noise.shape[1:])) + inference_memory)
-
-        model_wrap.inner_model = current_refiner.model
-        print('Refiner Swapped')
-        return
+    extra_args = {"cond": positive, "uncond": negative, "cond_scale": cfg, "model_options": model_options, "seed": seed}
 
     def callback_wrap(step, x0, x, total_steps):
-        if step == refiner_switch_step and current_refiner is not None:
-            refiner_switch()
         if callback is not None:
             # residual_noise_preview = x - x0
             # residual_noise_preview /= residual_noise_preview.std()

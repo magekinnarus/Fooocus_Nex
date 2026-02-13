@@ -47,8 +47,12 @@ def detect_unet_config(state_dict, key_prefix, dtype):
         unet_config["adm_in_channels"] = None
 
     unet_config["dtype"] = dtype
-    model_channels = state_dict['{}input_blocks.0.0.weight'.format(key_prefix)].shape[0]
-    in_channels = state_dict['{}input_blocks.0.0.weight'.format(key_prefix)].shape[1]
+    unet_key = '{}input_blocks.0.0.weight'.format(key_prefix)
+    if unet_key not in state_dict_keys:
+        return None
+
+    model_channels = state_dict[unet_key].shape[0]
+    in_channels = state_dict[unet_key].shape[1]
 
     out_key = '{}out.2.weight'.format(key_prefix)
     if out_key in state_dict:

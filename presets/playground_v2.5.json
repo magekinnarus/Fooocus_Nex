@@ -1,7 +1,5 @@
 {
     "default_model": "playground-v2.5-1024px-aesthetic.fp16.safetensors",
-    "default_refiner": "None",
-    "default_refiner_switch": 0.5,
     "default_loras": [
         [
             true,

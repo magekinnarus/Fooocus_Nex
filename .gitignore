@@ -24,6 +24,7 @@ user_path_config-deprecated.txt
 /repositories
 /fooocus_env
 /venv
+/tools/llama.cpp/
 /tmp
 /ui-config.json
 /outputs
@@ -54,3 +55,5 @@ user_path_config-deprecated.txt
 /.coverage*
 /auth.json
 .DS_Store
+batch_extractor.bat
+temp_extraction/
