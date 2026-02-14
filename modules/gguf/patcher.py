@@ -2,7 +2,7 @@
 import torch
 import logging
 import collections
-import ldm_patched.modules.sd as comfy_sd
+# import ldm_patched.modules.sd as comfy_sd
 import ldm_patched.modules.utils as comfy_utils
 import ldm_patched.modules.model_patcher as comfy_model_patcher
 import ldm_patched.modules.model_management as comfy_model_management

@@ -70,6 +70,10 @@ class ModelSamplingDiscrete(torch.nn.Module):
             betas = given_betas
         else:
             betas = make_beta_schedule(beta_schedule, timesteps, linear_start=linear_start, linear_end=linear_end, cosine_s=cosine_s)
+        
+        if not isinstance(betas, torch.Tensor):
+            betas = torch.from_numpy(betas)
+
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
 
