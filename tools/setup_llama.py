@@ -12,7 +12,14 @@ def run_command(command, cwd=None, shell=True):
         sys.exit(1)
 
 def main():
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # If script is in 'tools', use current dir. If in root, append 'tools'.
+    if os.path.basename(base_dir).lower() == "tools":
+        tools_dir = base_dir
+    else:
+        tools_dir = os.path.join(base_dir, "tools")
+        os.makedirs(tools_dir, exist_ok=True)
+    
     llama_dir = os.path.join(tools_dir, "llama.cpp")
 
     # 1. Clone llama.cpp if it doesn't exist
@@ -22,13 +29,17 @@ def main():
     else:
         print("llama.cpp directory already exists. Skipping clone.")
 
+    # 1.5 Install dependencies
+    print("Installing python dependencies...")
+    run_command(f"{sys.executable} -m pip install gguf gguf-py", cwd=tools_dir)
+
     # 2. Checkout specific tag (b3962)
     print("Checking out tag b3962...")
     run_command("git checkout tags/b3962", cwd=llama_dir)
 
     # 3. Download patch file
-    patch_url = "https://huggingface.co/Old-Fisherman/SDXL_Finetune_GGUF_Files/resolve/main/lcpp2.patch"
-    patch_file = os.path.join(tools_dir, "lcpp2.patch")
+    patch_url = "https://raw.githubusercontent.com/city96/ComfyUI-GGUF/main/tools/lcpp.patch"
+    patch_file = os.path.join(tools_dir, "lcpp.patch")
     
     # Check if patch file exists
     if not os.path.exists(patch_file):
@@ -37,6 +48,12 @@ def main():
         run_command(f"curl -L --ssl-no-revoke -o {patch_file} {patch_url}", cwd=tools_dir)
     else:
         print("Patch file already exists.")
+
+    # 3.5 Download convert-to-gguf.py
+    convert_url = "https://raw.githubusercontent.com/city96/ComfyUI-GGUF/main/tools/convert.py"
+    convert_file = os.path.join(llama_dir, "convert.py")
+    print(f"Downloading convert.py from {convert_url}...")
+    run_command(f"curl -L --ssl-no-revoke -o {convert_file} {convert_url}", cwd=tools_dir)
 
     # 4. Apply patch
     print("Applying patch...")

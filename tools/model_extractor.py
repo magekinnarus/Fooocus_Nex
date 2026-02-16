@@ -31,6 +31,8 @@ def extract_components(model_path, output_dir, model_name):
     print("Extracting UNet...")
     unet_dict = {}
     for k, v in state_dict.items():
+        if k.startswith("model_ema"):
+             continue
         if not k.startswith("conditioner.") and not k.startswith("first_stage_model."):
             unet_dict[k] = v
     
@@ -66,11 +68,11 @@ def convert_to_gguf(unet_path, output_dir, model_name, tools_dir):
     os.makedirs(f16_output_dir, exist_ok=True)
     f16_output = os.path.join(f16_output_dir, f'{model_name}_F16.gguf')
     
-    convert_script = os.path.join(tools_dir, 'llama.cpp', 'convert-to-gguf.py')
+    convert_script = os.path.join(tools_dir, 'llama.cpp', 'convert.py')
     if not os.path.exists(convert_script):
-        raise FileNotFoundError(f"Could not find convert-to-gguf.py at {convert_script}")
+        raise FileNotFoundError(f"Could not find convert.py at {convert_script}")
 
-    # Call convert-to-gguf.py
+    # Call convert.py
     # --model-type unet for SDXL unet
     cmd = f'python "{convert_script}" --model-type unet --src "{unet_path}" --dst "{f16_output}"'
     run_command(cmd)

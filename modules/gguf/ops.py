@@ -122,6 +122,10 @@ class GGMLLayer(torch.nn.Module):
         prefix_len = len(prefix)
         for k,v in state_dict.items():
             if k[prefix_len:] == "weight":
+                if isinstance(self, torch.nn.Linear):
+                    if v.shape == (self.in_features, self.out_features) and self.in_features != self.out_features:
+                        if hasattr(v, "tensor_shape"):
+                            v.tensor_shape = torch.Size([self.out_features, self.in_features])
                 self.weight = torch.nn.Parameter(v, requires_grad=False)
             elif k[prefix_len:] == "bias" and v is not None:
                 self.bias = torch.nn.Parameter(v, requires_grad=False)

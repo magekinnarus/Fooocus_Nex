@@ -1,5 +1,6 @@
 import torch
 from .defs import sdxl as sdxl_def
+from . import resources
 from ldm_patched.modules import model_base, model_patcher, sdxl_clip, sd1_clip, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import ldm_patched.modules.utils as utils
@@ -95,11 +96,14 @@ def extract_sdxl_components(ckpt_path: str) -> dict:
         
     return results
 
-def load_sdxl_unet(source, load_device, offload_device, dtype=None):
+def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
     """
     Loads the SDXL UNet using sdxl_def.UNET_CONFIG.
     Supports .gguf integration.
     """
+    load_device = load_device or resources.get_torch_device()
+    offload_device = offload_device or resources.unet_offload_device()
+    
     custom_operations = None
     patcher_class = model_patcher.ModelPatcher
 
@@ -119,21 +123,31 @@ def load_sdxl_unet(source, load_device, offload_device, dtype=None):
         operations=custom_operations
     )
     
+    if dtype is None:
+        dtype = torch.float16 if resources.should_use_fp16(load_device) else torch.float32
+        
     if dtype is not None:
         model.to(dtype)
         
-    model.load_state_dict(sd, strict=False)
+    model.diffusion_model.load_state_dict(sd, strict=False)
     
     return patcher_class(model, load_device=load_device, offload_device=offload_device)
 
-def load_sdxl_clip(source_l, source_g, load_device, offload_device, dtype=None):
+def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):
     """
     Loads SDXL CLIP (L and G) and returns a clean CLIP container.
     """
+    load_device = load_device or resources.get_torch_device()
+    offload_device = offload_device or resources.unet_offload_device() # reusing unet offload for clip
+    
     sd_l = resolve_source(source_l)
     sd_g = resolve_source(source_g)
     
     tokenizer = sdxl_clip.SDXLTokenizer()
+    
+    if dtype is None:
+        dtype = torch.float16 if resources.should_use_fp16(load_device) else torch.float32
+        
     model = sdxl_clip.SDXLClipModel(device=offload_device, dtype=dtype)
     
     # Map back to what SDXLClipModel expects if necessary, 
@@ -144,16 +158,22 @@ def load_sdxl_clip(source_l, source_g, load_device, offload_device, dtype=None):
     
     return CLIP(model, tokenizer, load_device, offload_device)
 
-def load_sdxl_vae(source, load_device, offload_device, dtype=None):
+def load_sdxl_vae(source, load_device=None, offload_device=None, dtype=None):
     """
     Loads SDXL VAE and returns a clean VAE container.
     """
+    load_device = load_device or resources.get_torch_device()
+    offload_device = offload_device or resources.vae_offload_device()
+    
     sd = resolve_source(source)
     
     # Minimal SDXL VAE config
     ddconfig = {'double_z': True, 'z_channels': 4, 'resolution': 256, 'in_channels': 3, 'out_ch': 3, 'ch': 128, 'ch_mult': [1, 2, 4, 4], 'num_res_blocks': 2, 'attn_resolutions': [], 'dropout': 0.0}
     model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
     model.load_state_dict(sd, strict=False)
+    
+    if dtype is None:
+        dtype = torch.float32 # VAE usually better in float32 unless specified
     
     if dtype is not None:
         model.to(dtype)
