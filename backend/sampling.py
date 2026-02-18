@@ -83,16 +83,16 @@ def get_area_and_mult(conds: Dict[str, Any], x_in: torch.Tensor, timestep_in: to
 
     conditioning = {}
     if 'cross_attn' in conds:
-        conditioning['c_crossattn'] = conds['cross_attn'].to(device=x_in.device)
+        conditioning['c_crossattn'] = conds['cross_attn'].to(device=x_in.device, dtype=x_in.dtype)
     if 'concat' in conds:
-        conditioning['c_concat'] = conds['concat'].to(device=x_in.device)
+        conditioning['c_concat'] = conds['concat'].to(device=x_in.device, dtype=x_in.dtype)
 
     model_conds = conds.get("model_conds", {})
     for c in model_conds:
         if hasattr(model_conds[c], "process_cond"):
             conditioning[c] = model_conds[c].process_cond(batch_size=x_in.shape[0], device=x_in.device, area=area)
         else:
-            conditioning[c] = model_conds[c].to(device=x_in.device)
+            conditioning[c] = model_conds[c].to(device=x_in.device, dtype=x_in.dtype)
 
     cond_obj = collections.namedtuple('cond_obj', ['input_x', 'mult', 'conditioning', 'area', 'uuid'])
     return cond_obj(input_x, mult, conditioning, area, conds.get('uuid'))
@@ -172,6 +172,20 @@ def calc_cond_batch(model: Any, conds: List[List[Dict[str, Any]]], x_in: torch.T
         input_x = torch.cat(batch_input_x)
         c = cond_cat(batch_c)
         timestep_ = torch.cat([timestep] * batch_chunks)
+
+        # Debug keys
+        # print("Calc Cond Batch Keys:", c.keys(), "Batch Chunks:", batch_chunks)
+        if "c_crossattn" in c:
+            cc = c["c_crossattn"]
+            if cc.shape[0] >= 2:
+                cc0_std = cc[0].std().item()
+                cc1_std = cc[1].std().item()
+                cc_diff = (cc[0] - cc[1]).abs().mean().item()
+                print(f"Batch Cond Stats: C0 Std={cc0_std:.4f}, C1 Std={cc1_std:.4f}, L1 Diff={cc_diff:.4f}")
+            else:
+                print(f"Single Cond Batch element: Std={cc.std().item():.4f}")
+        else:
+            print("WARNING: c_crossattn MISSING in Batch Conditioning!")
 
         output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
 
@@ -471,6 +485,16 @@ class KSampler:
         return cfg_guider.sample(noise, latent_image, sampler_inst, sigmas, denoise_mask, callback, disable_pbar, seed)
 
 def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor, cond_scale: float, x: torch.Tensor, timestep: torch.Tensor, model_options: Dict[str, Any] = {}, cfg_pp: bool = False) -> torch.Tensor:
+    # Debug Prediction Stats
+    if (getattr(cfg_function, "_step_count", 0) % 5 == 0):
+        with torch.no_grad():
+            c_std = cond_pred.std().item()
+            u_std = uncond_pred.std().item()
+            diff = (cond_pred - uncond_pred).abs().mean().item()
+            print(f"Step {getattr(cfg_function, '_step_count', 0)} CFG: Cond Std={c_std:.4f}, Uncond Std={u_std:.4f}, L1 Diff={diff:.4f}, Scale={cond_scale}")
+    
+    cfg_function._step_count = getattr(cfg_function, "_step_count", 0) + 1
+
     if "sampler_cfg_function" in model_options:
         args = {
             "cond_denoised": cond_pred, 
@@ -507,6 +531,7 @@ def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor,
     return cfg_result
 
 def sampling_function(model: Any, x: torch.Tensor, timestep: torch.Tensor, uncond: Any, cond: Any, cond_scale: float, model_options: Dict[str, Any] = {}, seed: Optional[int] = None, cfg_pp: bool = False) -> torch.Tensor:
+
     if math.isclose(cond_scale, 1.0) and not model_options.get("disable_cfg1_optimization", False):
         uncond_ = None
     else:

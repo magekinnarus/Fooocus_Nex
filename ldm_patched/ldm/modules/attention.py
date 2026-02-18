@@ -140,7 +140,12 @@ def attention_sub_quad(query, key, value, heads, mask=None):
     key = key.unsqueeze(3).reshape(b, -1, heads, dim_head).permute(0, 2, 3, 1).reshape(b * heads, dim_head, -1)
 
     dtype = query.dtype
-    upcast_attention = _ATTN_PRECISION =="fp32" and query.dtype != torch.float32
+    # FORCE UPCAST for stability if desired, or rely on _ATTN_PRECISION
+    # The A1111 fix "Upcast cross attention layer to float32" typically means ensuring this is True
+    # WE will force it if the global setting dictates, OR we can just hardcode it for now to verify.
+    # Given the user's request: "Upcast cross attention layer to float32"
+    upcast_attention = True 
+    # upcast_attention = _ATTN_PRECISION =="fp32" and query.dtype != torch.float32
     if upcast_attention:
         bytes_per_token = torch.finfo(torch.float32).bits//8
     else:

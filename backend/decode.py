@@ -66,6 +66,9 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
     dtype = next(vae.first_stage_model.parameters()).dtype
     output_device = "cpu"
     
+    # Nex Fix: Apply latent scaling (e.g., 1/0.18215 for SD1.5) to avoid saturated 'brown blocks'
+    latent = vae.latent_format.process_out(latent)
+    
     if tiled:
         pixel_samples = _decode_tiled(vae, latent, tile_x=tile_size, tile_y=tile_size)
     else:

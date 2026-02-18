@@ -482,6 +482,9 @@ def free_memory(memory_required, device, keep_loaded=[]):
     can_unload = []
     unloaded_models = []
 
+    free_mem = get_free_memory(device)
+    print(f"[Nex-Memory] Requesting {memory_required / (1024**2):.1f} MB. Free: {free_mem / (1024**2):.1f} MB")
+
     for i in range(len(current_loaded_models) - 1, -1, -1):
         shift_model = current_loaded_models[i]
         if shift_model.device == device:
@@ -499,6 +502,8 @@ def free_memory(memory_required, device, keep_loaded=[]):
             memory_to_free = memory_required - free_mem
         
         if current_loaded_models[i].model_unload(memory_to_free):
+            m_size = current_loaded_models[i].model_memory()
+            print(f"[Nex-Memory] Offloading model to CPU to free {m_size / (1024**2):.1f} MB")
             unloaded_model.append(i)
 
     for i in sorted(unloaded_model, reverse=True):
@@ -522,6 +527,7 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
         minimum_memory_required = max(inference_memory, minimum_memory_required + extra_reserved_memory())
 
     models = set(models)
+    print(f"[Nex-Memory] load_models_gpu: {len(models)} models requested")
     models_to_load = []
 
     for x in models:

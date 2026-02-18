@@ -17,14 +17,14 @@ sys.path.append(root_dir)
 # --- Force Configuration for Colab ---
 try:
     import ldm_patched.modules.args_parser
-    import ldm_patched.modules.model_management as model_management
+    # Patch args BEFORE importing model_management
     ldm_patched.modules.args_parser.args.disable_xformers = True
     ldm_patched.modules.args_parser.args.attention_pytorch = True
     ldm_patched.modules.args_parser.args.always_high_vram = True
+    logging.info("Forced Colab Config: Xformers Disabled, SDPA Enabled, High VRAM.")
 except ImportError:
     logging.warning("Could not import ldm_patched modules.")
 
-# Now import backend
 from backend import loader, sampling, decode, resources
 
 def get_vram_usage():
@@ -34,7 +34,9 @@ def get_vram_usage():
         return f"Allocated: {allocated:.2f}GB | Reserved: {reserved:.2f}GB"
     return "N/A"
 
-def test_standard_sdxl_colab():
+@torch.no_grad()
+def test_unified_loader():
+    logging.info("--- Starting Verification with Unified Loader ---")
     device = resources.get_torch_device()
     model_dtype = torch.float16 
     vae_dtype = torch.float32   
@@ -49,72 +51,75 @@ def test_standard_sdxl_colab():
         logging.error(f"Checkpoint not found at {ckpt_path}.")
         return
 
-    # 1. Extract Components
-    components = loader.extract_sdxl_components(ckpt_path)
+    # --- NEW UNIFIED LOADER ---
+    # This single call replaces the complex extract/pop/load/del sequence
+    # and handles memory efficiently internally.
+    logging.info("Loading checkpoint via backend.loader.load_checkpoint...")
+    unet, clip, vae = loader.load_checkpoint(ckpt_path, load_device=device, unet_dtype=model_dtype)
     
-    # 2. Load Models
-    unet = loader.load_sdxl_unet(components["unet"])
-    unet.model.to(device=device, dtype=model_dtype)
-    
-    clip = loader.load_sdxl_clip(components["clip_l"], components["clip_g"])
-    clip.patcher.model.to(device=device, dtype=model_dtype)
-        
-    vae = loader.load_sdxl_vae(components["vae"])
-    vae.first_stage_model.to(dtype=vae_dtype) # KEEP ON CPU IN FP32 initially
-
-    # Clear raw components
-    del components
-    gc.collect()
-    torch.cuda.empty_cache()
+    logging.info(f"Models loaded. VRAM: {get_vram_usage()}")
 
     # 3. Encode & Sample
     prompt = "A cinematic shot of a futuristic city with flying cars, highly detailed, 8k"
     neg_prompt = "blur, low quality"
     
-    logging.info("--- Encoding & Sampling ---")
+    logging.info("--- Encoding ---")
+    resources.load_models_gpu([clip.patcher])
+    
     pos_cond_raw, pos_pooled = clip.encode_from_tokens(clip.tokenize(prompt), return_pooled=True)
     neg_cond_raw, neg_pooled = clip.encode_from_tokens(clip.tokenize(neg_prompt), return_pooled=True)
     
     pos_cond = [{"cross_attn": pos_cond_raw.to(device=device, dtype=model_dtype), "pooled_output": pos_pooled.to(device=device, dtype=model_dtype)}]
     neg_cond = [{"cross_attn": neg_cond_raw.to(device=device, dtype=model_dtype), "pooled_output": neg_pooled.to(device=device, dtype=model_dtype)}]
     
+    logging.info("--- Sampling ---")
+    resources.load_models_gpu([unet])
+    
     noise = torch.randn((1, 4, 128, 128), device=device, dtype=model_dtype)
     conds = {"positive": pos_cond, "negative": neg_cond}
     sampling.process_conds(unet.model, noise, conds, device)
     
-    with torch.amp.autocast('cuda', enabled=True, dtype=torch.float16):
-        samples = sampling.sample_sdxl(
-            model=unet, noise=noise, positive=conds["positive"], negative=conds["negative"], 
-            steps=20, cfg=7.0, sampler_name="euler", scheduler="normal", seed=12345,
-            latent_image=torch.zeros_like(noise).to(device=device, dtype=model_dtype)
-        )
+    try:
+        with torch.amp.autocast('cuda', enabled=True, dtype=torch.float16):
+            samples = sampling.sample_sdxl(
+                model=unet, noise=noise, positive=conds["positive"], negative=conds["negative"], 
+                steps=20, cfg=7.0, sampler_name="euler", scheduler="normal", seed=12345,
+                latent_image=torch.zeros_like(noise).to(device=device, dtype=model_dtype)
+            )
+    except Exception as e:
+        logging.error(f"Sampling failed: {e}")
+        return
 
-    # Check for NaNs in latents
     if torch.isnan(samples).any():
-        logging.warning("NaNs detected in UNet output (samples)! Using nan_to_num.")
         samples = torch.nan_to_num(samples)
 
-    # --- NUCLEAR MEMORY FLUSH ---
-    logging.info("--- Releasing VRAM for VAE ---")
-    unet.model.to("cpu")
-    clip.patcher.model.to("cpu")
+    # 4. Decode
+    logging.info("--- Decoding ---")
+    
+    # Explicitly unload UNet and CLIP to be absolutely safe
+    if hasattr(unet, 'model'):
+        unet.model.to("cpu")
+    if hasattr(clip, 'patcher'):
+        clip.patcher.model.to("cpu")
+    
     del unet
     del clip
     gc.collect()
     torch.cuda.empty_cache()
-
-    # 4. Decode
-    logging.info("--- Decoding (Strict FP32) ---")
+    
     try:
-        # Move VAE and ensure it's FP32
-        vae.first_stage_model.to(device=device, dtype=vae_dtype)
+        # Move VAE to GPU (this will likely kick UNet out of VRAM to make space)
+        # We start with aggressive requirement to ensure space
+        logging.info("Moving VAE to GPU...")
+        resources.load_models_gpu([vae.patcher], minimum_memory_required=2*1024*1024*1024) 
         
-        # Scaling latents: SDXL VAE expects scaled latents
-        # Usually 1/0.13025, but the backend usually handles this. 
-        # We ensure they are FP32 for the VAE.
+        logging.info("Converting samples to VAE dtype...")
         samples_f32 = samples.to(dtype=vae_dtype)
         
-        # Decode - forcing tiled=True with a large tile size often helps stability on L4
+        # Decode
+        # Using tiled=True is safer on L4 for 1024px+ even with 24GB, 
+        # but standard decode valid test too.
+        logging.info(f"Decoding latent shape: {samples_f32.shape}")
         images = decode.decode_latent(vae, samples_f32, tiled=True, tile_size=512)
         
         # Final safety check before casting to numpy
@@ -122,11 +127,13 @@ def test_standard_sdxl_colab():
         images = torch.clamp(images, 0.0, 1.0)
         
         img_np = (images[0].cpu().numpy() * 255).astype(np.uint8)
-        Image.fromarray(img_np).save("colab_test_output.png")
-        logging.info("Success! saved as colab_test_output.png")
+        Image.fromarray(img_np).save("colab_unified_output.png")
+        logging.info("Success! saved as colab_unified_output.png")
 
     except Exception as e:
         logging.error(f"Decoding failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    test_standard_sdxl_colab()
+    test_unified_loader()

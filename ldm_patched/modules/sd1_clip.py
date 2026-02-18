@@ -84,10 +84,13 @@ class SDClipModel(torch.nn.Module, ClipTokenWeightEncoder):
         if freeze:
             self.freeze()
         self.layer = layer
-        self.layer_idx = None
+        self.layer_idx = layer_idx # Store it
         self.special_tokens = special_tokens
-        self.text_projection = torch.nn.Parameter(torch.eye(self.transformer.get_input_embeddings().weight.shape[1]))
-        self.logit_scale = torch.nn.Parameter(torch.tensor(4.6055))
+        
+        # Mandatory layer initialization for SD1.5/SDXL parity
+        self.text_projection = torch.nn.Parameter(torch.eye(config["hidden_size"], config["projection_dim"], device=device, dtype=dtype))
+        self.logit_scale = torch.nn.Parameter(torch.ones([], device=device, dtype=dtype) * 1.6094)
+        
         self.enable_attention_masks = False
 
         self.layer_norm_hidden_state = layer_norm_hidden_state
@@ -104,8 +107,9 @@ class SDClipModel(torch.nn.Module, ClipTokenWeightEncoder):
             param.requires_grad = False
 
     def clip_layer(self, layer_idx):
-        if abs(layer_idx) > self.num_layers:
+        if abs(layer_idx) >= self.num_layers:
             self.layer = "last"
+            self.layer_idx = None
         else:
             self.layer = "hidden"
             self.layer_idx = layer_idx
@@ -184,6 +188,7 @@ class SDClipModel(torch.nn.Module, ClipTokenWeightEncoder):
 
         if self.text_projection is not None and pooled_output is not None:
             pooled_output = pooled_output.float().to(self.text_projection.device) @ self.text_projection.float()
+
         return z.float(), pooled_output
 
     def encode(self, tokens):
@@ -191,9 +196,16 @@ class SDClipModel(torch.nn.Module, ClipTokenWeightEncoder):
 
     def load_sd(self, sd):
         if "text_projection" in sd:
-            self.text_projection[:] = sd.pop("text_projection")
+            self.text_projection = torch.nn.Parameter(torch.empty(sd["text_projection"].shape, device=self.transformer.get_input_embeddings().weight.device))
+            self.text_projection.data.copy_(sd.pop("text_projection"))
         if "text_projection.weight" in sd:
-            self.text_projection[:] = sd.pop("text_projection.weight").transpose(0, 1)
+            w = sd.pop("text_projection.weight").transpose(0, 1)
+            self.text_projection = torch.nn.Parameter(torch.empty(w.shape, device=self.transformer.get_input_embeddings().weight.device))
+            self.text_projection.data.copy_(w)
+        if "logit_scale" in sd:
+            self.logit_scale = torch.nn.Parameter(torch.empty(sd["logit_scale"].shape, device=self.transformer.get_input_embeddings().weight.device))
+            self.logit_scale.data.copy_(sd.pop("logit_scale"))
+
         return self.transformer.load_state_dict(sd, strict=False)
 
 def parse_parentheses(string):
@@ -502,6 +514,14 @@ class SD1ClipModel(torch.nn.Module):
         self.clip_name = clip_name
         self.clip = "clip_{}".format(self.clip_name)
         setattr(self, self.clip, clip_model(device=device, dtype=dtype, **kwargs))
+
+    @property
+    def layer_idx(self):
+        return getattr(self, self.clip).layer_idx
+
+    @layer_idx.setter
+    def layer_idx(self, layer_idx):
+        self.clip_layer(layer_idx)
 
     def clip_layer(self, layer_idx):
         getattr(self, self.clip).clip_layer(layer_idx)

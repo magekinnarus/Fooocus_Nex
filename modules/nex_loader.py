@@ -55,89 +55,80 @@ def load_unet_gguf(unet_path):
 
 def load_standalone_clip(clip_path, embedding_directory=None):
     """
-    Load a standalone CLIP file using the same pipeline as full checkpoint loading.
-    
-    This reuses ComfyUI's native process_clip_state_dict() which handles:
-    - CLIP-L prefix stripping (conditioner.embedders.0.transformer.text_model -> clip_l)
-    - CLIP-G OpenCLIP->HF conversion (QKV split, key renaming via transformers_convert)
-    - Proper dual-CLIP routing for SDXL
+    Load a standalone CLIP file using backend.loader.
     """
+    import backend.loader
     import ldm_patched.modules.utils
-    import ldm_patched.modules.supported_models as supported_models
-    from ldm_patched.modules.sd import CLIP, load_model_weights
-
+    
+    # We need to detect if it's SDXL or SD1.5 to call the right loader.
+    # We can peek at the state dict keys (lightweight).
     sd = ldm_patched.modules.utils.load_torch_file(clip_path, safe_load=True)
-
-    # Detect CLIP type from key patterns (same detection as model_config does)
+    
+    # Heuristic detection same as before
     has_sdxl_clip_l = any(k.startswith("conditioner.embedders.0.transformer.") for k in sd)
     has_sdxl_clip_g = any(k.startswith("conditioner.embedders.1.model.") for k in sd)
     has_sd15_clip = any(k.startswith("cond_stage_model.") for k in sd)
     
-    # Already in ComfyUI internal format (text_model.* without conditioner prefix)
-    has_stripped_keys = any(k.startswith("text_model.") for k in sd) and not has_sdxl_clip_l
-
+    # SDXL Dual Clip
     if has_sdxl_clip_l and has_sdxl_clip_g:
-        # Full SDXL dual-CLIP bundle
-        model_config = supported_models.SDXL(supported_models.SDXL.unet_config)
         print("[Nex] Detected SDXL dual-CLIP bundle (CLIP-L + CLIP-G)")
+        # load_sdxl_clip expects separate sources or same source.
+        # It handles the splitting internally if keys match.
+        return backend.loader.load_sdxl_clip(sd, sd)
+
+    # SDXL CLIP-L only (rare but exists)
     elif has_sdxl_clip_l and not has_sdxl_clip_g:
-        # SDXL checkpoint but only CLIP-L portion
-        model_config = supported_models.SD15(supported_models.SD15.unet_config)
-        print("[Nex] Detected standalone CLIP-L (SD1.5 format)")
+        print("[Nex] Detected standalone CLIP-L (SDXL format)")
+        # This is ambiguous. Is it for SDXL or SD1.5? 
+        # Usually SDXL L is same architecture as SD1.5 L.
+        # But keys are "conditioner...". 
+        # backend.loader.load_sdxl_clip handles this if we pass as 'source_l'.
+        return backend.loader.load_sdxl_clip(sd, None)
+
+    # SD1.5 CLIP
     elif has_sd15_clip:
-        # SD1.5 style CLIP
-        model_config = supported_models.SD15(supported_models.SD15.unet_config)
         print("[Nex] Detected SD1.5 CLIP")
-    elif has_stripped_keys:
-        # Already stripped format — use load_clip directly
-        from ldm_patched.modules.sd import load_clip
-        print("[Nex] Detected pre-stripped CLIP format, using load_clip()")
-        return load_clip([clip_path], embedding_directory=embedding_directory)
-    else:
-        # Unknown format — try load_clip as fallback
-        from ldm_patched.modules.sd import load_clip
-        print("[Nex] Unknown CLIP format, attempting load_clip() fallback")
-        return load_clip([clip_path], embedding_directory=embedding_directory)
-
-    # === Use the exact same pipeline as load_checkpoint_guess_config ===
+        return backend.loader.load_sd15_clip(sd)
+        
+    # Standalone files (text_model.*)
+    # Could be L or G.
+    # Check for G specific keys?
+    # OpenCLIP G usually has "text_model.encoder.layers..." OR "resnet..." if visual.
+    # But we are doing text.
+    # If it has "text_model.", backend.loader normalization handles it.
+    # But we need to know WHICH function to call.
     
-    # Step 1: Get the clip target (model class + tokenizer)
-    clip_target = model_config.clip_target()
-    if clip_target is None:
-        raise RuntimeError(f"Model config {type(model_config).__name__} does not support CLIP loading")
-
-    # Step 2: Create the CLIP object (this sets up the model with proper dtype/device)
-    clip = CLIP(clip_target, embedding_directory=embedding_directory)
-
-    # Step 3: Process the state dict (key conversion, QKV split, etc.)
-    sd = model_config.process_clip_state_dict(sd)
-
-    # Step 4: Load weights using the WeightsLoader pattern
-    class WeightsLoader(torch.nn.Module):
-        pass
-
-    w = WeightsLoader()
-    w.cond_stage_model = clip.cond_stage_model
-    m, u = w.load_state_dict(sd, strict=False)
+    # Generic "text_model" keys:
+    # If it has 768 dim -> likely L (Standard SD1.5/SDXL-L)
+    # If it has 1280 dim -> likely G (SDXL-G)
     
-    # Clean up loaded keys from sd
-    unexpected_keys = set(u)
-    for x in list(sd.keys()):
-        if x not in unexpected_keys:
-            del sd[x]
-
-    if len(m) > 0:
-        # Filter out known non-essential missing keys
-        essential_missing = [k for k in m if 'position_ids' not in k]
-        if essential_missing:
-            print(f"[Nex] CLIP missing keys: {essential_missing}")
-    if len(u) > 0:
-        # Filter benign unexpected keys
-        notable_unexpected = [k for k in u if k not in ('logit_scale', 'text_model.embeddings.position_ids')]
-        if notable_unexpected:
-            print(f"[Nex] CLIP unexpected keys: {notable_unexpected}")
-
-    return clip
+    # Let's check a key shape if poss.
+    keys = list(sd.keys())
+    if any("text_model.encoder.layers.0.layer_norm1.weight" in k for k in keys) or \
+       any("text_model.embeddings.token_embedding.weight" in k for k in keys):
+           
+        # Check hidden size
+        for k in keys:
+            if "layer_norm1.weight" in k:
+                w = sd[k]
+                if w.shape[0] == 1280:
+                    print("[Nex] Detected Standalone CLIP-G (based on dim 1280)")
+                    return backend.loader.load_sdxl_clip(None, sd)
+                elif w.shape[0] == 768:
+                    print("[Nex] Detected Standalone CLIP-L (based on dim 768)")
+                    # Could be SD1.5 or SDXL-L. 
+                    # Use SD1.5 loader as default for L-only? 
+                    # Or SDXL loader with only L? 
+                    # If we use SD1.5 loader, we get a generic CLIP object.
+                    # If we use SDXL loader, we get SDXL object.
+                    # App.py / webui might expect generic CLIP for SD1.5.
+                    return backend.loader.load_sd15_clip(sd)
+                    
+    # Fallback to legacy if we can't determine (or it's SD3/Flux which backend.loader doesn't support yet)
+    # Actually, we should probably just return the backend.loader version if possible.
+    
+    print("[Nex] Unknown CLIP format, defaulting to SD1.5 loader")
+    return backend.loader.load_sd15_clip(sd)
 
 def load_clip_gguf(clip_path):
     from modules.gguf import gguf_clip_loader, GGMLOps
