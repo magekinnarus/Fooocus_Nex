@@ -95,8 +95,7 @@ class CLIP:
             with torch.no_grad():
                 c_std = cond.std().item()
                 c_mean = cond.mean().item()
-                print(f"DEBUG CLIP Out: Mean={c_mean:.4f}, Std={c_std:.4f}, Shape={cond.shape}")
-                print(f"DEBUG CLIP Values (first 5x5): \n{cond[0, :5, :5]}")
+                # DEBUG CLIP Values... (removed)
         finally:
             if load_device != offload_device:
                 self.patcher.model.to(offload_device)
@@ -181,9 +180,15 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
         # If they are different dicts, we load each. 
         # If they are the same (bundled), it still works.
         if sd_l is not None:
-            model.load_sd(sd_l)
+            if isinstance(sd_l, dict) and not any(k.startswith("clip") or k.startswith("cond") or "embedders." in k for k in sd_l.keys()):
+                model.load_sd(sd_l, force_type="l")
+            else:
+                model.load_sd(sd_l)
         if sd_g is not None and sd_g is not sd_l:
-            model.load_sd(sd_g)
+            if isinstance(sd_g, dict) and not any(k.startswith("clip") or k.startswith("cond") or "embedders." in k for k in sd_g.keys()):
+                model.load_sd(sd_g, force_type="g")
+            else:
+                model.load_sd(sd_g)
     
     return CLIP(model, tokenizer, load_device, offload_device)
 

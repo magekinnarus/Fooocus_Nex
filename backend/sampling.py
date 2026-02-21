@@ -175,17 +175,19 @@ def calc_cond_batch(model: Any, conds: List[List[Dict[str, Any]]], x_in: torch.T
 
         # Debug keys
         # print("Calc Cond Batch Keys:", c.keys(), "Batch Chunks:", batch_chunks)
-        if "c_crossattn" in c:
-            cc = c["c_crossattn"]
-            if cc.shape[0] >= 2:
-                cc0_std = cc[0].std().item()
-                cc1_std = cc[1].std().item()
-                cc_diff = (cc[0] - cc[1]).abs().mean().item()
-                print(f"Batch Cond Stats: C0 Std={cc0_std:.4f}, C1 Std={cc1_std:.4f}, L1 Diff={cc_diff:.4f}")
+        DEBUG_SAMPLING = False # Set to true to see CFG condition batch standard deviations
+        if DEBUG_SAMPLING:
+            if "c_crossattn" in c:
+                cc = c["c_crossattn"]
+                if cc.shape[0] >= 2:
+                    cc0_std = cc[0].std().item()
+                    cc1_std = cc[1].std().item()
+                    cc_diff = (cc[0] - cc[1]).abs().mean().item()
+                    print(f"Batch Cond Stats: C0 Std={cc0_std:.4f}, C1 Std={cc1_std:.4f}, L1 Diff={cc_diff:.4f}")
+                else:
+                    print(f"Single Cond Batch element: Std={cc.std().item():.4f}")
             else:
-                print(f"Single Cond Batch element: Std={cc.std().item():.4f}")
-        else:
-            print("WARNING: c_crossattn MISSING in Batch Conditioning!")
+                print("WARNING: c_crossattn MISSING in Batch Conditioning!")
 
         output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
 

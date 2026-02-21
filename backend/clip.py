@@ -575,6 +575,15 @@ class NexClipEncoder(nn.Module):
             
         pooled = output[2]
         
+        # Flatten chunks into sequence dimension: [B, 77, D] -> [1, B*77, D]
+        # B here represents the number of chunks for a SINGLE prompt. 
+        # (Assuming we are processing one prompt at a time, which `tokenize` does).
+        z = z.view(1, -1, z.shape[-1])
+        
+        # Pooled output should just take the first chunk's pooled representation?
+        # ComfyUI traditionally takes the pooled output of the first chunk for the ADM.
+        pooled = pooled[0:1]
+        
         if self.use_projection and self.text_projection is not None and pooled is not None:
              pooled = pooled.float().to(self.text_projection.device) @ self.text_projection.float()
              
@@ -639,15 +648,19 @@ class NexSDXLClipModel(nn.Module):
         # Output shape: [B, 77, 768 + 1280] = [B, 77, 2048]
         return torch.cat([l_out, g_out], dim=-1), g_pooled
 
-    def load_sd(self, sd):
+    def load_sd(self, sd, force_type=None):
         """
-        Heuristic loading into L and G.
+        Heuristic loading into L and G. If force_type is provided, bypasses heuristics.
         """
+        if force_type == "l":
+            return self.clip_l.load_sd(sd, normalization_fn=normalize_clip_l_keys), None
+        if force_type == "g":
+            return None, self.clip_g.load_sd(sd, normalization_fn=normalize_clip_g_keys)
+
         # Determine if it's CLIP-L or CLIP-G based on keys
         # or if it's a bundled SDXL checkpoint containing both.
-        
-        is_clip_g = any("embedders.1" in k or "clip_g" in k or "resblocks.30" in k for k in sd.keys())
-        is_clip_l = any("embedders.0" in k or "clip_l" in k or "cond_stage_model" in k for k in sd.keys())
+        is_clip_g = any("embedders.1" in k or "clip_g" in k or "resblocks.30" in k or "encoder.layers" in k for k in sd.keys())
+        is_clip_l = any("embedders.0" in k or "clip_l" in k or "cond_stage_model" in k or "text_model.encoder" in k for k in sd.keys())
         
         results_l = None
         results_g = None
