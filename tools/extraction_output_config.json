@@ -1,6 +1,0 @@
-{
-  "input": "H:\\webui_forge_cu121_torch21\\webui\\models\\Stable-diffusion\\quantization_target\\beretMixReal_v80.safetensors",
-  "output": "H:\\webui_forge_cu121_torch21\\webui\\models\\Stable-diffusion\\quantization_target",
-  "formats": ["Q8_0", "Q5_K_M", "Q4_K_M"],
-  "overwrite": true
-}
