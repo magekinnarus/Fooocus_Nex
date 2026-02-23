@@ -685,6 +685,124 @@ def vae_offload_device():
 def unload_all_models():
     free_memory(1e30, get_torch_device())
 
+def module_size(module):
+    module_mem = 0
+    sd = module.state_dict()
+    for k in sd:
+        t = sd[k]
+        module_mem += t.nelement() * t.element_size()
+    return module_mem
+
+def maximum_vram_for_weights(device=None):
+    return (get_total_memory(device) * 0.88 - minimum_inference_memory())
+
+def supports_fp8_compute(device=None):
+    if getattr(config, 'supports_fp8_compute', False):
+        return True
+
+    if not is_nvidia():
+        return False
+
+    props = torch.cuda.get_device_properties(device)
+    if props.major >= 9:
+        return True
+    if props.major < 8:
+        return False
+    if props.minor < 9:
+        return False
+
+    if torch_version_numeric < (2, 3):
+        return False
+
+    if any(platform.win32_ver()):
+        if torch_version_numeric < (2, 4):
+            return False
+
+    return True
+
+def unet_dtype(device=None, model_params=0, supported_dtypes=None, weight_dtype=None):
+    if supported_dtypes is None:
+        supported_dtypes = [torch.float16, torch.bfloat16, torch.float32]
+    if model_params < 0:
+        model_params = 1000000000000000000000
+    
+    if config.bf16_unet:
+        return torch.bfloat16
+    if config.fp16_unet:
+        return torch.float16
+    if config.fp8_e4m3fn_unet:
+        return torch.float8_e4m3fn
+    if config.fp8_e5m2_unet:
+        return torch.float8_e5m2
+    
+    fp8_dtype = None
+    if weight_dtype in FLOAT8_TYPES:
+        fp8_dtype = weight_dtype
+
+    if fp8_dtype is not None:
+        if supports_fp8_compute(device):
+            return fp8_dtype
+
+        free_model_memory = maximum_vram_for_weights(device)
+        if model_params * 2 > free_model_memory:
+            return fp8_dtype
+
+    if torch.float16 in supported_dtypes and should_use_fp16(device=device, model_params=model_params):
+        return torch.float16
+    if torch.bfloat16 in supported_dtypes and should_use_bf16(device, model_params=model_params):
+        return torch.bfloat16
+
+    for dt in supported_dtypes:
+        if dt == torch.float16 and should_use_fp16(device=device, model_params=model_params, manual_cast=True):
+            if torch.float16 in supported_dtypes:
+                return torch.float16
+        if dt == torch.bfloat16 and should_use_bf16(device, model_params=model_params, manual_cast=True):
+            if torch.bfloat16 in supported_dtypes:
+                return torch.bfloat16
+
+    return torch.float32
+
+def is_directml_enabled():
+    global directml_enabled
+    if 'directml_enabled' in globals() and directml_enabled:
+        return True
+    return False
+
+def device_supports_non_blocking(device):
+    if is_device_mps(device):
+        return False
+    if is_intel_xpu():
+        return True
+    if config.deterministic:
+        return False
+    if is_directml_enabled():
+        return False
+    return True
+
+def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False, stream=None):
+    if device is None or weight.device == device:
+        if not copy:
+            if dtype is None or weight.dtype == dtype:
+                return weight
+        if stream is not None:
+            with stream:
+                return weight.to(dtype=dtype, copy=copy)
+        return weight.to(dtype=dtype, copy=copy)
+
+    if stream is not None:
+        with stream:
+            r = torch.empty_like(weight, dtype=dtype, device=device)
+            r.copy_(weight, non_blocking=non_blocking)
+    else:
+        r = torch.empty_like(weight, dtype=dtype, device=device)
+        r.copy_(weight, non_blocking=non_blocking)
+    return r
+
+def cast_to_device(tensor, device, dtype, copy=False):
+    non_blocking = device_supports_non_blocking(device)
+    return cast_to(tensor, dtype=dtype, device=device, non_blocking=non_blocking, copy=copy)
+
+
 import threading
 
 class InterruptProcessingException(Exception):

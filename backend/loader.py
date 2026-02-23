@@ -8,7 +8,7 @@ from backend import resources, clip, patching, conditioning
 from ldm_patched.modules import model_base, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import torch.nn as nn
-import ldm_patched.modules.utils as utils
+from . import utils
 
 def heal_model_weights(model, name_prefix="Model"):
     """

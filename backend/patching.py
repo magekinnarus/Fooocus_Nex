@@ -10,10 +10,10 @@ from typing import Callable, Optional
 
 import torch
 
-import ldm_patched.modules.float
-import ldm_patched.modules.model_management
-import ldm_patched.modules.utils
-from ldm_patched.modules.comfy_types import UnetWrapperFunction
+from . import float_ops
+from . import resources
+from . import utils
+UnetWrapperFunction = Callable
 
 from backend.weight_ops import string_to_seed, wipe_lowvram_weight, move_weight_functions, calculate_weight, LowVramPatch, get_key_weight
 
@@ -70,7 +70,7 @@ class NexModelPatcher:
     def model_size(self):
         if self.size > 0:
             return self.size
-        self.size = ldm_patched.modules.model_management.module_size(self.model)
+        self.size = resources.module_size(self.model)
         return self.size
 
     def loaded_size(self):
@@ -216,7 +216,7 @@ class NexModelPatcher:
             if name in self.object_patches_backup:
                 return self.object_patches_backup[name]
             else:
-                return ldm_patched.modules.utils.get_attr(self.model, name)
+                return utils.get_attr(self.model, name)
 
     def model_patches_to(self, device):
         to = self.model_options["transformer_options"]
@@ -303,19 +303,19 @@ class NexModelPatcher:
     def patch_weight_to_device(self, key, device_to=None, inplace_update=False):
         inplace_update = self.weight_inplace_update or inplace_update
         weight, set_func, convert_func = get_key_weight(self.model, key)
-        target_dtype = ldm_patched.modules.model_management.unet_dtype(device=device_to, weight_dtype=weight.dtype)
+        target_dtype = resources.unet_dtype(device=device_to, weight_dtype=weight.dtype)
 
         if key not in self.patches:
             if device_to is not None or target_dtype != weight.dtype:
-                temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, device_to, target_dtype, copy=True)
+                temp_weight = resources.cast_to_device(weight, device_to, target_dtype, copy=True)
                 if convert_func is not None:
                     temp_weight = convert_func(temp_weight, inplace=True)
                 
                 if set_func is None:
                     if inplace_update:
-                        ldm_patched.modules.utils.copy_to_param(self.model, key, temp_weight)
+                        utils.copy_to_param(self.model, key, temp_weight)
                     else:
-                        ldm_patched.modules.utils.set_attr_param(self.model, key, temp_weight)
+                        utils.set_attr_param(self.model, key, temp_weight)
                 else:
                     set_func(temp_weight, inplace_update=inplace_update, seed=string_to_seed(key))
             return
@@ -324,7 +324,7 @@ class NexModelPatcher:
             self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
 
         if device_to is not None:
-            temp_weight = ldm_patched.modules.model_management.cast_to_device(weight, device_to, target_dtype, copy=True)
+            temp_weight = resources.cast_to_device(weight, device_to, target_dtype, copy=True)
         else:
             temp_weight = weight.to(target_dtype, copy=True)
 
@@ -333,11 +333,11 @@ class NexModelPatcher:
 
         out_weight = calculate_weight(self.patches[key], temp_weight, key, intermediate_dtype=target_dtype, original_weights=self.backup)
         if set_func is None:
-            out_weight = ldm_patched.modules.float.stochastic_rounding(out_weight, target_dtype, seed=string_to_seed(key))
+            out_weight = float_ops.stochastic_rounding(out_weight, target_dtype, seed=string_to_seed(key))
             if inplace_update:
-                ldm_patched.modules.utils.copy_to_param(self.model, key, out_weight)
+                utils.copy_to_param(self.model, key, out_weight)
             else:
-                ldm_patched.modules.utils.set_attr_param(self.model, key, out_weight)
+                utils.set_attr_param(self.model, key, out_weight)
         else:
             set_func(out_weight, inplace_update=inplace_update, seed=string_to_seed(key))
 
@@ -353,7 +353,7 @@ class NexModelPatcher:
                     skip = True # skip random weights in non leaf modules
                     break
             if not skip and (hasattr(m, "comfy_cast_weights") or len(params) > 0):
-                loading.append((ldm_patched.modules.model_management.module_size(m), n, m, params))
+                loading.append((resources.module_size(m), n, m, params))
         return loading
 
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
@@ -459,7 +459,7 @@ class NexModelPatcher:
     def patch_model(self, device_to=None, lowvram_model_memory=0, load_weights=True, force_patch_weights=False):
         with self.use_ejected():
             for k in self.object_patches:
-                old = ldm_patched.modules.utils.set_attr(self.model, k, self.object_patches[k])
+                old = utils.set_attr(self.model, k, self.object_patches[k])
                 if k not in self.object_patches_backup:
                     self.object_patches_backup[k] = old
 
@@ -487,9 +487,9 @@ class NexModelPatcher:
             for k in keys:
                 bk = self.backup[k]
                 if bk.inplace_update:
-                    ldm_patched.modules.utils.copy_to_param(self.model, k, bk.weight)
+                    utils.copy_to_param(self.model, k, bk.weight)
                 else:
-                    ldm_patched.modules.utils.set_attr_param(self.model, k, bk.weight)
+                    utils.set_attr_param(self.model, k, bk.weight)
 
             self.model.current_weight_patches_uuid = None
             self.backup.clear()
@@ -505,7 +505,7 @@ class NexModelPatcher:
 
         keys = list(self.object_patches_backup.keys())
         for k in keys:
-            ldm_patched.modules.utils.set_attr(self.model, k, self.object_patches_backup[k])
+            utils.set_attr(self.model, k, self.object_patches_backup[k])
 
         self.object_patches_backup.clear()
 
@@ -539,9 +539,9 @@ class NexModelPatcher:
                                 hooks_unpatched = True
 
                             if bk.inplace_update:
-                                ldm_patched.modules.utils.copy_to_param(self.model, key, bk.weight)
+                                utils.copy_to_param(self.model, key, bk.weight)
                             else:
-                                ldm_patched.modules.utils.set_attr_param(self.model, key, bk.weight)
+                                utils.set_attr_param(self.model, key, bk.weight)
                             self.backup.pop(key)
 
                     weight_key = "{}.weight".format(n)

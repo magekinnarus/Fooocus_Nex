@@ -1,9 +1,140 @@
-import ldm_patched.modules.utils
-import ldm_patched.modules.model_management
+
 import ldm_patched.modules.model_base
 import ldm_patched.modules.weight_adapter as weight_adapter
 import logging
 import torch
+
+UNET_MAP_ATTENTIONS = {
+    "proj_in.weight",
+    "proj_in.bias",
+    "proj_out.weight",
+    "proj_out.bias",
+    "norm.weight",
+    "norm.bias",
+}
+
+TRANSFORMER_BLOCKS = {
+    "norm1.weight",
+    "norm1.bias",
+    "norm2.weight",
+    "norm2.bias",
+    "norm3.weight",
+    "norm3.bias",
+    "attn1.to_q.weight",
+    "attn1.to_k.weight",
+    "attn1.to_v.weight",
+    "attn1.to_out.0.weight",
+    "attn1.to_out.0.bias",
+    "attn2.to_q.weight",
+    "attn2.to_k.weight",
+    "attn2.to_v.weight",
+    "attn2.to_out.0.weight",
+    "attn2.to_out.0.bias",
+    "ff.net.0.proj.weight",
+    "ff.net.0.proj.bias",
+    "ff.net.2.weight",
+    "ff.net.2.bias",
+}
+
+UNET_MAP_RESNET = {
+    "in_layers.2.weight": "conv1.weight",
+    "in_layers.2.bias": "conv1.bias",
+    "emb_layers.1.weight": "time_emb_proj.weight",
+    "emb_layers.1.bias": "time_emb_proj.bias",
+    "out_layers.3.weight": "conv2.weight",
+    "out_layers.3.bias": "conv2.bias",
+    "skip_connection.weight": "conv_shortcut.weight",
+    "skip_connection.bias": "conv_shortcut.bias",
+    "in_layers.0.weight": "norm1.weight",
+    "in_layers.0.bias": "norm1.bias",
+    "out_layers.0.weight": "norm2.weight",
+    "out_layers.0.bias": "norm2.bias",
+}
+
+UNET_MAP_BASIC = {
+    ("label_emb.0.0.weight", "class_embedding.linear_1.weight"),
+    ("label_emb.0.0.bias", "class_embedding.linear_1.bias"),
+    ("label_emb.0.2.weight", "class_embedding.linear_2.weight"),
+    ("label_emb.0.2.bias", "class_embedding.linear_2.bias"),
+    ("label_emb.0.0.weight", "add_embedding.linear_1.weight"),
+    ("label_emb.0.0.bias", "add_embedding.linear_1.bias"),
+    ("label_emb.0.2.weight", "add_embedding.linear_2.weight"),
+    ("label_emb.0.2.bias", "add_embedding.linear_2.bias"),
+    ("input_blocks.0.0.weight", "conv_in.weight"),
+    ("input_blocks.0.0.bias", "conv_in.bias"),
+    ("out.0.weight", "conv_norm_out.weight"),
+    ("out.0.bias", "conv_norm_out.bias"),
+    ("out.2.weight", "conv_out.weight"),
+    ("out.2.bias", "conv_out.bias"),
+    ("time_embed.0.weight", "time_embedding.linear_1.weight"),
+    ("time_embed.0.bias", "time_embedding.linear_1.bias"),
+    ("time_embed.2.weight", "time_embedding.linear_2.weight"),
+    ("time_embed.2.bias", "time_embedding.linear_2.bias")
+}
+
+def unet_to_diffusers(unet_config):
+    num_res_blocks = unet_config["num_res_blocks"]
+    channel_mult = unet_config["channel_mult"]
+    transformer_depth = unet_config["transformer_depth"][:]
+    transformer_depth_output = unet_config["transformer_depth_output"][:]
+    num_blocks = len(channel_mult)
+
+    transformers_mid = unet_config.get("transformer_depth_middle", None)
+
+    diffusers_unet_map = {}
+    for x in range(num_blocks):
+        n = 1 + (num_res_blocks[x] + 1) * x
+        for i in range(num_res_blocks[x]):
+            for b in UNET_MAP_RESNET:
+                diffusers_unet_map["down_blocks.{}.resnets.{}.{}".format(x, i, UNET_MAP_RESNET[b])] = "input_blocks.{}.0.{}".format(n, b)
+            num_transformers = transformer_depth.pop(0)
+            if num_transformers > 0:
+                for b in UNET_MAP_ATTENTIONS:
+                    diffusers_unet_map["down_blocks.{}.attentions.{}.{}".format(x, i, b)] = "input_blocks.{}.1.{}".format(n, b)
+                for t in range(num_transformers):
+                    for b in TRANSFORMER_BLOCKS:
+                        diffusers_unet_map["down_blocks.{}.attentions.{}.transformer_blocks.{}.{}".format(x, i, t, b)] = "input_blocks.{}.1.transformer_blocks.{}.{}".format(n, t, b)
+            n += 1
+        for k in ["weight", "bias"]:
+            diffusers_unet_map["down_blocks.{}.downsamplers.0.conv.{}".format(x, k)] = "input_blocks.{}.0.op.{}".format(n, k)
+
+    i = 0
+    for b in UNET_MAP_ATTENTIONS:
+        diffusers_unet_map["mid_block.attentions.{}.{}".format(i, b)] = "middle_block.1.{}".format(b)
+    for t in range(transformers_mid):
+        for b in TRANSFORMER_BLOCKS:
+            diffusers_unet_map["mid_block.attentions.{}.transformer_blocks.{}.{}".format(i, t, b)] = "middle_block.1.transformer_blocks.{}.{}".format(t, b)
+
+    for i, n in enumerate([0, 2]):
+        for b in UNET_MAP_RESNET:
+            diffusers_unet_map["mid_block.resnets.{}.{}".format(i, UNET_MAP_RESNET[b])] = "middle_block.{}.{}".format(n, b)
+
+    num_res_blocks = list(reversed(num_res_blocks))
+    for x in range(num_blocks):
+        n = (num_res_blocks[x] + 1) * x
+        l = num_res_blocks[x] + 1
+        for i in range(l):
+            c = 0
+            for b in UNET_MAP_RESNET:
+                diffusers_unet_map["up_blocks.{}.resnets.{}.{}".format(x, i, UNET_MAP_RESNET[b])] = "output_blocks.{}.0.{}".format(n, b)
+            c += 1
+            num_transformers = transformer_depth_output.pop()
+            if num_transformers > 0:
+                c += 1
+                for b in UNET_MAP_ATTENTIONS:
+                    diffusers_unet_map["up_blocks.{}.attentions.{}.{}".format(x, i, b)] = "output_blocks.{}.1.{}".format(n, b)
+                for t in range(num_transformers):
+                    for b in TRANSFORMER_BLOCKS:
+                        diffusers_unet_map["up_blocks.{}.attentions.{}.transformer_blocks.{}.{}".format(x, i, t, b)] = "output_blocks.{}.1.transformer_blocks.{}.{}".format(n, t, b)
+            if i == l - 1:
+                for k in ["weight", "bias"]:
+                    diffusers_unet_map["up_blocks.{}.upsamplers.0.conv.{}".format(x, k)] = "output_blocks.{}.{}.conv.{}".format(n, c, k)
+            n += 1
+
+    for k in UNET_MAP_BASIC:
+        diffusers_unet_map[k[1]] = k[0]
+
+    return diffusers_unet_map
 
 LORA_CLIP_MAP = {
     "mlp.fc1": "mlp_fc1",
@@ -163,7 +294,7 @@ def model_lora_keys_unet(model, key_map={}):
             else:
                 key_map["{}".format(k)] = k #generic lora format for not .weight without any weird key names
 
-    diffusers_keys = ldm_patched.modules.utils.unet_to_diffusers(model.model_config.unet_config)
+    diffusers_keys = unet_to_diffusers(model.model_config.unet_config)
     for k in diffusers_keys:
         if k.endswith(".weight"):
             unet_key = "diffusion_model.{}".format(diffusers_keys[k])
@@ -185,59 +316,11 @@ def model_lora_keys_unet(model, key_map={}):
                     key_lora = k[len("diffusion_model."):-len(".weight")].replace(".", "_")
                     key_map["lora_prior_unet_{}".format(key_lora)] = k
 
-    if hasattr(ldm_patched.modules.model_base, 'SD3') and isinstance(model, ldm_patched.modules.model_base.SD3): #Diffusers lora SD3
-        diffusers_keys = ldm_patched.modules.utils.mmdit_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
-        for k in diffusers_keys:
-            if k.endswith(".weight"):
-                to = diffusers_keys[k]
-                key_lora = "transformer.{}".format(k[:-len(".weight")]) #regular diffusers sd3 lora format
-                key_map[key_lora] = to
-
-                key_lora = "base_model.model.{}".format(k[:-len(".weight")]) #format for flash-sd3 lora and others?
-                key_map[key_lora] = to
-
-                key_lora = "lora_transformer_{}".format(k[:-len(".weight")].replace(".", "_")) #OneTrainer lora
-                key_map[key_lora] = to
-
-                key_lora = "lycoris_{}".format(k[:-len(".weight")].replace(".", "_")) #simpletuner lycoris format
-                key_map[key_lora] = to
-
-    if hasattr(ldm_patched.modules.model_base, 'AuraFlow') and isinstance(model, ldm_patched.modules.model_base.AuraFlow): #Diffusers lora AuraFlow
-        diffusers_keys = ldm_patched.modules.utils.auraflow_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
-        for k in diffusers_keys:
-            if k.endswith(".weight"):
-                to = diffusers_keys[k]
-                key_lora = "transformer.{}".format(k[:-len(".weight")]) #simpletrainer and probably regular diffusers lora format
-                key_map[key_lora] = to
-
-    if hasattr(ldm_patched.modules.model_base, 'PixArt') and isinstance(model, ldm_patched.modules.model_base.PixArt):
-        diffusers_keys = ldm_patched.modules.utils.pixart_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
-        for k in diffusers_keys:
-            if k.endswith(".weight"):
-                to = diffusers_keys[k]
-                key_lora = "transformer.{}".format(k[:-len(".weight")]) #default format
-                key_map[key_lora] = to
-
-                key_lora = "base_model.model.{}".format(k[:-len(".weight")]) #diffusers training script
-                key_map[key_lora] = to
-
-                key_lora = "unet.base_model.model.{}".format(k[:-len(".weight")]) #old reference peft script
-                key_map[key_lora] = to
-
     if hasattr(ldm_patched.modules.model_base, 'HunyuanDiT') and isinstance(model, ldm_patched.modules.model_base.HunyuanDiT):
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"):
                 key_lora = k[len("diffusion_model."):-len(".weight")]
                 key_map["base_model.model.{}".format(key_lora)] = k #official hunyuan lora format
-
-    if hasattr(ldm_patched.modules.model_base, 'Flux') and isinstance(model, ldm_patched.modules.model_base.Flux): #Diffusers lora Flux
-        diffusers_keys = ldm_patched.modules.utils.flux_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
-        for k in diffusers_keys:
-            if k.endswith(".weight"):
-                to = diffusers_keys[k]
-                key_map["transformer.{}".format(k[:-len(".weight")])] = to #simpletrainer and probably regular diffusers flux lora format
-                key_map["lycoris_{}".format(k[:-len(".weight")].replace(".", "_"))] = to #simpletrainer lycoris
-                key_map["lora_transformer_{}".format(k[:-len(".weight")].replace(".", "_"))] = to #onetrainer
 
     if hasattr(ldm_patched.modules.model_base, 'GenmoMochi') and isinstance(model, ldm_patched.modules.model_base.GenmoMochi):
         for k in sdk:
