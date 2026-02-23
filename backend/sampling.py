@@ -1,10 +1,8 @@
 import torch
-import torch.nn as nn
 import math
-import collections
 import logging
 from functools import partial
-from typing import Any, Callable, List, Dict, Optional, Union, Tuple, NamedTuple
+from typing import Any, Callable, List, Dict, Optional, Union, Tuple
 
 # Local imports
 from . import schedulers
@@ -214,16 +212,6 @@ class KSampler:
         return cfg_guider.sample(noise, latent_image, sampler_inst, sigmas, denoise_mask, callback, disable_pbar, seed)
 
 def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor, cond_scale: float, x: torch.Tensor, timestep: torch.Tensor, model_options: Dict[str, Any] = {}, cfg_pp: bool = False, adaptive_cfg: float = 0.0, diffusion_progress: float = 0.0) -> torch.Tensor:
-    # Debug Prediction Stats
-    if (getattr(cfg_function, "_step_count", 0) % 5 == 0):
-        with torch.no_grad():
-            c_std = cond_pred.std().item()
-            u_std = uncond_pred.std().item()
-            diff = (cond_pred - uncond_pred).abs().mean().item()
-            print(f"Step {getattr(cfg_function, '_step_count', 0)} CFG: Cond Std={c_std:.4f}, Uncond Std={u_std:.4f}, L1 Diff={diff:.4f}, Scale={cond_scale}")
-    
-    cfg_function._step_count = getattr(cfg_function, "_step_count", 0) + 1
-
     if "sampler_cfg_function" in model_options:
         args = {
             "cond_denoised": cond_pred, 

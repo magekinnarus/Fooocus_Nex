@@ -12,10 +12,8 @@ import torch
 
 import ldm_patched.modules.float
 import ldm_patched.modules.model_management
-import ldm_patched.modules.patcher_extension
 import ldm_patched.modules.utils
 from ldm_patched.modules.comfy_types import UnetWrapperFunction
-from ldm_patched.modules.patcher_extension import CallbacksMP, PatcherInjection, WrappersMP
 
 from backend.weight_ops import string_to_seed, wipe_lowvram_weight, move_weight_functions, calculate_weight, LowVramPatch, get_key_weight
 

@@ -1,9 +1,10 @@
 import torch
+import logging
 from typing import Any, Dict
 import gc
 from .defs import sdxl as sdxl_def
 from .defs import sd15 as sd15_def
-from backend import loader, resources, sampling, conditioning, decode, clip, patching
+from backend import resources, clip, patching, conditioning
 from ldm_patched.modules import model_base, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import torch.nn as nn
@@ -18,7 +19,7 @@ def heal_model_weights(model, name_prefix="Model"):
     for name, param in model.named_parameters():
         if not torch.isfinite(param).all():
             bad_params_count += 1
-            print(f"CRITICAL: Bad values in {name_prefix} parameter: {name}. HEALING...")
+            logging.warning(f"CRITICAL: Bad values in {name_prefix} parameter: {name}. HEALING...")
             with torch.no_grad():
                 if "weight" in name and ("layer_norm" in name or "layernorm" in name):
                      param.data.nan_to_num_(nan=1.0, posinf=1.0, neginf=-1.0)
@@ -26,7 +27,7 @@ def heal_model_weights(model, name_prefix="Model"):
                      param.data.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
     
     if bad_params_count > 0:
-        print(f"Healed {bad_params_count} parameters in {name_prefix}.")
+        logging.info(f"Healed {bad_params_count} parameters in {name_prefix}.")
 
 class EmbeddingFP32Wrapper(nn.Module):
     """
@@ -93,10 +94,6 @@ class CLIP:
             
         try:
             cond, pooled = self.cond_stage_model.encode_token_weights(tokens)
-            with torch.no_grad():
-                c_std = cond.std().item()
-                c_mean = cond.mean().item()
-                # DEBUG CLIP Values... (removed)
         finally:
             if load_device != offload_device:
                 self.patcher.model.to(offload_device)
@@ -176,7 +173,7 @@ def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
         return original_forward(x, timesteps, context=context, y=y, **kwargs)
         
     unet.forward = nex_patched_forward
-    print(f"[Nex] Quality: UNet patched for Timed ADM (scaler_end={adm_scaler_end})")
+    logging.info(f"[Nex] Quality: UNet patched for Timed ADM (scaler_end={adm_scaler_end})")
 
 def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):
     """
@@ -241,12 +238,12 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     """
     Loads SDXL components sequentially and clears raw data immediately.
     """
-    print(f"Loading SDXL checkpoint from: {ckpt_path}")
+    logging.info(f"Loading SDXL checkpoint from: {ckpt_path}")
     sd = utils.load_torch_file(ckpt_path)
     gc.collect()
 
     # VAE (fp32 default)
-    print("Extracting VAE...")
+    logging.info("Extracting VAE...")
     vae_sd = {}
     keys = list(sd.keys())
     for k in keys:
@@ -262,7 +259,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     gc.collect()
     
     # CLIP (fp16 default)
-    print("Extracting CLIP...")
+    logging.info("Extracting CLIP...")
     clip_l_sd = {}
     clip_g_sd = {}
     keys = list(sd.keys())
@@ -288,7 +285,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     gc.collect()
 
     # UNet (fp16 default)
-    print("Extracting UNet...")
+    logging.info("Extracting UNet...")
     unet_sd = {}
     keys = list(sd.keys())
     for k in keys:
@@ -300,13 +297,13 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
                 break
     
     if len(sd) > 0:
-        print(f"Remaining keys in checkpoint: {len(sd)}")
+        logging.info(f"Remaining keys in checkpoint: {len(sd)}")
     
-    print("Deleting original checkpoint storage...")
+    logging.debug("Deleting original checkpoint storage...")
     del sd
     gc.collect() 
 
-    print("Loading UNet Model...")
+    logging.info("Loading UNet Model...")
     unet = load_sdxl_unet(unet_sd, load_device=load_device, dtype=unet_dtype)
     del unet_sd
     gc.collect()
@@ -348,36 +345,19 @@ def load_sd15_clip(source, load_device=None, offload_device=None, dtype=None):
     
     tokenizer, encoder = clip.create_sd15_clip(sd)
     
-    # Wrap in CLIP container for compatibility
-    # CLIP container expects: cond_stage_model, tokenizer, patcher
-    # We need to adapt NexClipEncoder to behave like cond_stage_model for the CLIP container wrapper below?
-    # Actually, the CLIP container in loader.py (lines 61-108) calls:
-    #   self.tokenizer.tokenize_with_weights
-    #   self.cond_stage_model.clip_layer
-    #   self.cond_stage_model.reset_clip_layer
-    #   self.cond_stage_model.encode_token_weights
-    # Our NexClipEncoder and NexTokenizer implement these.
-    
-    # However, create_sd15_clip returns (tokenizer, encoder).
-    # We must patch encoder to be the cond_stage_model.
-    
-    cond_stage_model = encoder
-    
-    # Patcher needs a 'model' attribute on cond_stage_model usually?
-    # ModelPatcher takes 'model'. NexClipEncoder IS a module, so it works.
-    
-    return CLIP(cond_stage_model, tokenizer, load_device, offload_device)
+    # NexClipEncoder implements the cond_stage_model interface directly.
+    return CLIP(encoder, tokenizer, load_device, offload_device)
 
 def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     """
     Loads SD 1.5 components sequentially.
     """
-    print(f"Loading SD 1.5 checkpoint from: {ckpt_path}")
+    logging.info(f"Loading SD 1.5 checkpoint from: {ckpt_path}")
     sd = utils.load_torch_file(ckpt_path)
     gc.collect()
 
     # VAE (fp32)
-    print("Extracting VAE...")
+    logging.info("Extracting VAE...")
     vae_sd = {}
     keys = list(sd.keys())
     for k in keys:
@@ -393,7 +373,7 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     gc.collect()
     
     # CLIP (fp16)
-    print("Extracting CLIP...")
+    logging.info("Extracting CLIP...")
     clip_sd = {}
     keys = list(sd.keys())
     for k in keys:
@@ -410,40 +390,30 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     # Precision Injection (SD1.5 specific fix for NaN overflows)
     try:
         sd1_clip_model = clip.cond_stage_model
-        
-        # Helper to find the transformer (support NexClipEncoder vs SD1ClipModel)
         transformer = None
         
         if hasattr(sd1_clip_model, 'transformer'): 
-             # NexClipEncoder or direct CLIPTextModel
              transformer = sd1_clip_model.transformer
         elif hasattr(sd1_clip_model, 'clip_l'): 
-             # SD1ClipModel wrapper
              transformer = sd1_clip_model.clip_l.transformer
         elif hasattr(sd1_clip_model, 'clip'):
-             # Alternatve wrapper name
              transformer = sd1_clip_model.clip.transformer
              
-        # Further unwrap if needed (SD1ClipModel sometimes wraps CLIPTextModel inside)
-        if transformer is not None and hasattr(transformer, 'text_model'): # Transformers library or some wrappers
+        if transformer is not None and hasattr(transformer, 'text_model'):
              transformer = transformer.text_model
 
         if transformer is not None and hasattr(transformer, 'embeddings'):
            embeddings = transformer.embeddings
-           # Check if already wrapped to avoid double wrapping
            if not isinstance(embeddings, EmbeddingFP32Wrapper):
                transformer.embeddings = EmbeddingFP32Wrapper(embeddings)
-               # print(f"Applied Precision Injection to CLIP Embeddings.")
     except Exception as e:
-        print(f"FAILED to apply precision injection to CLIP: {e}")
-    except Exception as e:
-        print(f"FAILED to apply precision injection to CLIP: {e}")
+        logging.error(f"FAILED to apply precision injection to CLIP: {e}")
 
     del clip_sd
     gc.collect()
 
     # UNet (fp16)
-    print("Extracting UNet...")
+    logging.info("Extracting UNet...")
     unet_sd = {}
     keys = list(sd.keys())
     for k in keys:
@@ -455,13 +425,13 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
                 break
     
     if len(sd) > 0:
-        print(f"Remaining keys in checkpoint: {len(sd)}")
+        logging.info(f"Remaining keys in checkpoint: {len(sd)}")
     
-    print("Deleting original checkpoint storage...")
+    logging.debug("Deleting original checkpoint storage...")
     del sd
     gc.collect() 
 
-    print("Loading UNet Model...")
+    logging.info("Loading UNet Model...")
     unet = load_sd15_unet(unet_sd, load_device=load_device, dtype=unet_dtype)
     heal_model_weights(unet.model, "UNet")
     del unet_sd
