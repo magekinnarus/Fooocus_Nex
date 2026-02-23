@@ -1,9 +1,10 @@
 import torch
+from typing import Any, Dict
 import gc
 from .defs import sdxl as sdxl_def
 from .defs import sd15 as sd15_def
-from backend import loader, resources, sampling, conditioning, decode, clip
-from ldm_patched.modules import model_base, model_patcher, latent_formats, supported_models_base
+from backend import loader, resources, sampling, conditioning, decode, clip, patching
+from ldm_patched.modules import model_base, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import torch.nn as nn
 import ldm_patched.modules.utils as utils
@@ -62,7 +63,7 @@ class CLIP:
     def __init__(self, cond_stage_model, tokenizer, load_device, offload_device):
         self.cond_stage_model = cond_stage_model
         self.tokenizer = tokenizer
-        self.patcher = model_patcher.ModelPatcher(
+        self.patcher = patching.NexModelPatcher(
             self.cond_stage_model, 
             load_device=load_device, 
             offload_device=offload_device
@@ -110,7 +111,7 @@ class VAE:
         self.first_stage_model = first_stage_model
         # Use SD15 as default if not specified (backward compatibility)
         self.latent_format = latent_format or latent_formats.SD15()
-        self.patcher = model_patcher.ModelPatcher(
+        self.patcher = patching.NexModelPatcher(
             self.first_stage_model,
             load_device=load_device,
             offload_device=offload_device
@@ -127,7 +128,7 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
     offload_device = offload_device or resources.unet_offload_device()
     
     custom_operations = None
-    patcher_class = model_patcher.ModelPatcher
+    patcher_class = patching.NexModelPatcher
 
     if isinstance(source, str) and source.endswith(".gguf"):
         from modules.gguf.loader import gguf_sd_loader
@@ -155,6 +156,27 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
     model.diffusion_model.load_state_dict(sd, strict=False)
     
     return patcher_class(model, load_device=load_device, offload_device=offload_device)
+
+def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
+    """
+    Monkey-patches the UNet's forward pass to support Timed ADM.
+    """
+    if not quality:
+        return
+        
+    unet = unet_patcher.model.diffusion_model
+    adm_scaler_end = quality.get("adm_scaler_end", 0.3)
+    
+    original_forward = unet.forward
+    
+    def nex_patched_forward(x, timesteps, context=None, y=None, **kwargs):
+        if y is not None:
+             # timed_adm(y, timestep, model, adm_scaler_end)
+             y = conditioning.timed_adm(y, timesteps, unet_patcher.model, adm_scaler_end=adm_scaler_end)
+        return original_forward(x, timesteps, context=context, y=y, **kwargs)
+        
+    unet.forward = nex_patched_forward
+    print(f"[Nex] Quality: UNet patched for Timed ADM (scaler_end={adm_scaler_end})")
 
 def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):
     """
@@ -313,7 +335,7 @@ def load_sd15_unet(source, load_device=None, offload_device=None, dtype=None):
     model.diffusion_model.to(dtype)
     model.diffusion_model.load_state_dict(sd, strict=False)
     
-    return model_patcher.ModelPatcher(model, load_device=load_device, offload_device=offload_device)
+    return patching.NexModelPatcher(model, load_device=load_device, offload_device=offload_device)
 
 def load_sd15_clip(source, load_device=None, offload_device=None, dtype=None):
     """

@@ -4,14 +4,14 @@ import logging
 import collections
 # import ldm_patched.modules.sd as comfy_sd
 import ldm_patched.modules.utils as comfy_utils
-import ldm_patched.modules.model_patcher as comfy_model_patcher
+import backend.patching as patching
 import ldm_patched.modules.model_management as comfy_model_management
 
 from .ops import GGMLOps, move_patch_to_device
 from .loader import gguf_sd_loader
 from .dequant import is_quantized, is_torch_compatible
 
-class GGUFModelPatcher(comfy_model_patcher.ModelPatcher):
+class GGUFModelPatcher(patching.NexModelPatcher):
     patch_on_device = False
 
     def patch_weight_to_device(self, key, device_to=None, inplace_update=False):
@@ -20,7 +20,7 @@ class GGUFModelPatcher(comfy_model_patcher.ModelPatcher):
         weight = comfy_utils.get_attr(self.model, key)
 
         try:
-            from ldm_patched.modules.lora import calculate_weight
+            from backend.patching import calculate_weight
         except Exception:
             calculate_weight = self.calculate_weight
 
