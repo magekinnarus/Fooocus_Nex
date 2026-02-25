@@ -44,6 +44,7 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool, i
     get_str('sampler', 'Sampler', loaded_parameter_dict, results)
     get_str('scheduler', 'Scheduler', loaded_parameter_dict, results)
     get_str('vae', 'VAE', loaded_parameter_dict, results)
+    get_str('clip_model', 'Force CLIP', loaded_parameter_dict, results)
     get_seed('seed', 'Seed', loaded_parameter_dict, results)
     get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results, inpaint_mode)
     get_inpaint_method('inpaint_method', 'Inpaint Mode', loaded_parameter_dict, results)
@@ -288,6 +289,7 @@ class MetadataParser(ABC):
         self.base_model_hash: str = ''
         self.loras: list = []
         self.vae_name: str = ''
+        self.clip_model_name: str = ''
 
     @abstractmethod
     def get_scheme(self) -> MetadataScheme:
@@ -302,7 +304,7 @@ class MetadataParser(ABC):
         raise NotImplementedError
 
     def set_data(self, raw_prompt, full_prompt, raw_negative_prompt, full_negative_prompt, steps, base_model_name,
-                 loras, vae_name):
+                 loras, vae_name, clip_model_name):
         self.raw_prompt = raw_prompt
         self.full_prompt = full_prompt
         self.raw_negative_prompt = raw_negative_prompt
@@ -321,6 +323,7 @@ class MetadataParser(ABC):
                 lora_hash = sha256_from_cache(lora_path)
                 self.loras.append((Path(lora_name).stem, lora_weight, lora_hash))
         self.vae_name = Path(vae_name).stem
+        self.clip_model_name = Path(clip_model_name).stem if clip_model_name != 'None' else 'None'
 
 
 class A1111MetadataParser(MetadataParser):
@@ -473,6 +476,7 @@ class A1111MetadataParser(MetadataParser):
             self.fooocus_to_a1111['performance']: data['performance'],
             self.fooocus_to_a1111['scheduler']: scheduler,
             self.fooocus_to_a1111['vae']: Path(data['vae']).stem,
+            self.fooocus_to_a1111['clip_model']: Path(data.get('clip_model', 'None')).stem,
             # workaround for multiline prompts
             self.fooocus_to_a1111['raw_prompt']: self.raw_prompt,
             self.fooocus_to_a1111['raw_negative_prompt']: self.raw_negative_prompt,
@@ -554,6 +558,7 @@ class FooocusMetadataParser(MetadataParser):
 
 
         res['vae'] = self.vae_name
+        res['clip_model'] = self.clip_model_name
         res['loras'] = self.loras
 
         if modules.config.metadata_created_by != '':

@@ -591,6 +591,12 @@ default_clip_skip = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, int) and 1 <= x <= modules.flags.clip_skip_max,
     expected_type=int
 )
+default_clip = get_config_item_or_set_default(
+    key='default_clip',
+    default_value='None',
+    validator=lambda x: isinstance(x, str),
+    expected_type=str
+)
 default_overwrite_step = get_config_item_or_set_default(
     key='default_overwrite_step',
     default_value=-1,
@@ -758,6 +764,7 @@ possible_preset_keys = {
     "lora_downloads": "lora_downloads",
     "vae_downloads": "vae_downloads",
     "default_vae": "vae",
+    "default_clip": "clip_model",
     # "default_inpaint_method": "inpaint_method", # disabled so inpaint mode doesn't refresh after every preset change
     "default_inpaint_engine_version": "inpaint_engine_version",
 }

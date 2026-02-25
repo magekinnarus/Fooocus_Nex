@@ -33,9 +33,11 @@ class GGUFModelPatcher(patching.NexModelPatcher):
         else:
             inplace_update = self.weight_inplace_update or inplace_update
             if key not in self.backup:
-                self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(
-                    weight.to(device=self.offload_device, copy=inplace_update), inplace_update
-                )
+                # OPTIMIZATION: Avoid backup if not doing inplace update and already on offload device
+                if inplace_update or weight.device != self.offload_device:
+                    self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(
+                        weight.to(device=self.offload_device, copy=inplace_update), inplace_update
+                    )
 
             if device_to is not None:
                 temp_weight = comfy_model_management.cast_to_device(weight, device_to, torch.float32, copy=True)

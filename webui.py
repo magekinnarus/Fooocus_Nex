@@ -30,10 +30,10 @@ def get_task(*args):
     return worker.AsyncTask(args=args)
 
 def generate_clicked(task: worker.AsyncTask):
-    import ldm_patched.modules.model_management as model_management
+    import backend.resources as resources
 
-    with model_management.interrupt_processing_mutex:
-        model_management.interrupt_processing = False
+    with resources.interrupt_processing_mutex:
+        resources.interrupt_processing = False
     # outputs=[progress_html, progress_window, progress_gallery, gallery]
 
     if len(task.args) == 0:
@@ -72,8 +72,6 @@ def generate_clicked(task: worker.AsyncTask):
                     gr.update(visible=True, value=product), \
                     gr.update(visible=False)
             if flag == 'finish':
-                if not args_manager.args.disable_enhance_output_sorting:
-                    product = sort_enhance_images(product, task)
 
                 yield gr.update(visible=False), \
                     gr.update(visible=False), \
@@ -92,23 +90,6 @@ def generate_clicked(task: worker.AsyncTask):
     return
 
 
-def sort_enhance_images(images, task):
-    if not task.should_enhance or len(images) <= task.images_to_enhance_count:
-        return images
-
-    sorted_images = []
-    walk_index = task.images_to_enhance_count
-
-    for index, enhanced_img in enumerate(images[:task.images_to_enhance_count]):
-        sorted_images.append(enhanced_img)
-        if index not in task.enhance_stats:
-            continue
-        target_index = walk_index + task.enhance_stats[index]
-        if walk_index < len(images) and target_index <= len(images):
-            sorted_images += images[walk_index:target_index]
-        walk_index += task.enhance_stats[index]
-
-    return sorted_images
 
 
 def inpaint_mode_change(mode, inpaint_engine_version):
@@ -183,17 +164,17 @@ with shared.gradio_root:
                     stop_button = gr.Button(label="Stop", value="Stop", elem_classes='type_row_half', elem_id='stop_button', visible=False)
 
                     def stop_clicked(currentTask):
-                        import ldm_patched.modules.model_management as model_management
+                        import backend.resources as resources
                         currentTask.last_stop = 'stop'
                         if (currentTask.processing):
-                            model_management.interrupt_current_processing()
+                            resources.interrupt_current_processing()
                         return currentTask
 
                     def skip_clicked(currentTask):
-                        import ldm_patched.modules.model_management as model_management
+                        import backend.resources as resources
                         currentTask.last_stop = 'skip'
                         if (currentTask.processing):
-                            model_management.interrupt_current_processing()
+                            resources.interrupt_current_processing()
                         return currentTask
 
                     stop_button.click(stop_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False, _js='cancelGenerateForever')

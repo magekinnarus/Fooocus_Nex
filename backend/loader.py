@@ -8,7 +8,7 @@ from backend import resources, clip, patching, conditioning
 from ldm_patched.modules import model_base, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import torch.nn as nn
-from . import utils
+from . import utils, precision
 
 def heal_model_weights(model, name_prefix="Model"):
     """
@@ -70,6 +70,13 @@ class CLIP:
             offload_device=offload_device
         )
         self.layer_idx = None
+        self.fcs_cond_cache = {}
+
+    def clip_layer(self, layer_idx):
+        self.layer_idx = layer_idx
+
+    def add_patches(self, patches, weight):
+        return self.patcher.add_patches(patches, weight)
 
     def clone(self):
         n = CLIP(self.cond_stage_model, self.tokenizer, self.patcher.load_device, self.patcher.offload_device)
@@ -162,18 +169,59 @@ def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
         return
         
     unet = unet_patcher.model.diffusion_model
+    if hasattr(unet, "_nex_quality_patched"):
+        return
+    unet._nex_quality_patched = True
+
     adm_scaler_end = quality.get("adm_scaler_end", 0.3)
     
     original_forward = unet.forward
     
-    def nex_patched_forward(x, timesteps, context=None, y=None, **kwargs):
+    def nex_patched_forward(x, timesteps, context=None, y=None, control=None, transformer_options={}, **kwargs):
+        # Cast all inputs to model precision to prevent per-layer upcasting slowness and dtype mismatch errors
+        weight_dtype = unet.input_blocks[0][0].weight.dtype
+        x, timesteps, context, y, control = precision.cast_unet_inputs(x, timesteps, context, y, control, weight_dtype)
+
         if y is not None:
              # timed_adm(y, timestep, model, adm_scaler_end)
              y = conditioning.timed_adm(y, timesteps, unet_patcher.model, adm_scaler_end=adm_scaler_end)
-        return original_forward(x, timesteps, context=context, y=y, **kwargs)
+             
+        return original_forward(x, timesteps, context=context, y=y, control=control, transformer_options=transformer_options, **kwargs)
         
     unet.forward = nex_patched_forward
     logging.info(f"[Nex] Quality: UNet patched for Timed ADM (scaler_end={adm_scaler_end})")
+
+def patch_controlnet_for_quality(controlnet: Any, quality: Dict[str, Any]):
+    """
+    Monkey-patches ControlNet's forward pass to support Timed ADM and Softness.
+    """
+    if not quality:
+        return
+        
+    if hasattr(controlnet, "_nex_quality_patched"):
+        return
+    controlnet._nex_quality_patched = True
+
+    controlnet_softness = quality.get("controlnet_softness", 0.0)
+    
+    original_forward = controlnet.forward
+    
+    def nex_patched_forward(x, hint, timesteps, context, y=None, **kwargs):
+        # Timed ADM
+        if y is not None:
+             y = conditioning.timed_adm(y, timesteps, controlnet, adm_scaler_end=quality.get("adm_scaler_end", 0.3))
+             
+        outs = original_forward(x, hint, timesteps, context, y=y, **kwargs)
+        
+        # Softness
+        if controlnet_softness > 0 and isinstance(outs, list):
+            for i in range(len(outs)):
+                k = 1.0 - float(i) / (len(outs) - 1) if len(outs) > 1 else 1.0
+                outs[i] = outs[i] * (1.0 - controlnet_softness * k)
+        return outs
+        
+    controlnet.forward = nex_patched_forward
+    logging.info(f"[Nex] Quality: ControlNet patched (softness={controlnet_softness})")
 
 def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):
     """
@@ -251,7 +299,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                vae_sd[new_key] = sd.pop(k).clone()
+                vae_sd[new_key] = sd.pop(k)
                 break
     
     vae = load_vae(vae_sd, latent_format=latent_formats.SDXL())
@@ -268,7 +316,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                clip_l_sd[new_key] = sd.pop(k).clone()
+                clip_l_sd[new_key] = sd.pop(k)
                 break
         
         if k in sd: 
@@ -276,7 +324,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
                 if k.startswith(p):
                     new_key = k[len(p):]
                     if new_key.startswith("."): new_key = new_key[1:]
-                    clip_g_sd[new_key] = sd.pop(k).clone()
+                    clip_g_sd[new_key] = sd.pop(k)
                     break
                     
     clip = load_sdxl_clip(clip_l_sd, clip_g_sd, dtype=unet_dtype)
@@ -293,7 +341,7 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                unet_sd[new_key] = sd.pop(k).clone()
+                unet_sd[new_key] = sd.pop(k)
                 break
     
     if len(sd) > 0:
@@ -365,7 +413,7 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                vae_sd[new_key] = sd.pop(k).clone()
+                vae_sd[new_key] = sd.pop(k)
                 break
     
     vae = load_vae(vae_sd, latent_format=latent_formats.SD15())
@@ -381,7 +429,7 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                clip_sd[new_key] = sd.pop(k).clone()
+                clip_sd[new_key] = sd.pop(k)
                 break
                      
     clip = load_sd15_clip(clip_sd, dtype=unet_dtype)
@@ -421,7 +469,7 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             if k.startswith(p):
                 new_key = k[len(p):]
                 if new_key.startswith("."): new_key = new_key[1:]
-                unet_sd[new_key] = sd.pop(k).clone()
+                unet_sd[new_key] = sd.pop(k)
                 break
     
     if len(sd) > 0:

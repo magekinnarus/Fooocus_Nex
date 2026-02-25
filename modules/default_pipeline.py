@@ -4,8 +4,7 @@ import torch
 import modules.patch
 import modules.config
 import modules.flags
-import ldm_patched.modules.model_management
-import ldm_patched.modules.latent_formats
+from backend import resources, schedulers, lora
 import modules.inpaint_worker
 import extras.vae_interpose as vae_interpose
 
@@ -181,7 +180,7 @@ def prepare_text_encoder(async_call=True):
     if final_clip is None:
         return
 
-    ldm_patched.modules.model_management.load_models_gpu([final_clip.patcher])
+    resources.load_models_gpu([final_clip.patcher])
     return
 
 
@@ -235,11 +234,15 @@ def refresh_everything(base_model_name, loras,
     return
 
 
-refresh_everything(
-    base_model_name=modules.config.default_base_model_name,
-    loras=get_enabled_loras(modules.config.default_loras),
-    vae_name=modules.config.default_vae,
-)
+try:
+    refresh_everything(
+        base_model_name=modules.config.default_base_model_name,
+        loras=get_enabled_loras(modules.config.default_loras),
+        vae_name=modules.config.default_vae,
+    )
+except Exception as e:
+    print(f'[Nex Warning] Failed to load default model at startup: {e}')
+    print('[Nex Warning] The UI will launch without a model. Select one from Advanced > Models.')
 
 
 
@@ -247,14 +250,13 @@ refresh_everything(
 @torch.no_grad()
 @torch.inference_mode()
 def calculate_sigmas_all(sampler, model, scheduler, steps):
-    from ldm_patched.modules.samplers import calculate_sigmas_scheduler
-
     discard_penultimate_sigma = False
     if sampler in ['dpm_2', 'dpm_2_ancestral']:
         steps += 1
         discard_penultimate_sigma = True
 
-    sigmas = calculate_sigmas_scheduler(model, scheduler, steps)
+    model_sampling = model.get_model_object("model_sampling")
+    sigmas = schedulers.calculate_sigmas(model_sampling, scheduler, steps)
 
     if discard_penultimate_sigma:
         sigmas = torch.cat([sigmas[:-2], sigmas[-1:]])
@@ -281,7 +283,7 @@ def get_candidate_vae(steps, denoise=1.0):
 
 @torch.no_grad()
 @torch.inference_mode()
-def process_diffusion(positive_cond, negative_cond, steps, width, height, image_seed, callback, sampler_name, scheduler_name, latent=None, denoise=1.0, tiled=False, cfg_scale=7.0, disable_preview=False):
+def process_diffusion(positive_cond, negative_cond, steps, width, height, image_seed, callback, sampler_name, scheduler_name, latent=None, denoise=1.0, tiled=False, cfg_scale=7.0, disable_preview=False, quality=None):
     target_unet, target_vae, target_clip = final_unet, final_vae, final_clip
 
     if target_unet is None:
@@ -293,16 +295,9 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
     else:
         initial_latent = latent
 
-    minmax_sigmas = calculate_sigmas(sampler=sampler_name, scheduler=scheduler_name, model=final_unet.model, steps=steps, denoise=denoise)
-    sigma_min, sigma_max = minmax_sigmas[minmax_sigmas > 0].min(), minmax_sigmas.max()
-    sigma_min = float(sigma_min.cpu().numpy())
-    sigma_max = float(sigma_max.cpu().numpy())
-    print(f'[Sampler] sigma_min = {sigma_min}, sigma_max = {sigma_max}')
-
-    modules.patch.BrownianTreeNoiseSamplerPatched.global_init(
-        initial_latent['samples'].to(ldm_patched.modules.model_management.get_torch_device()),
-        sigma_min, sigma_max, seed=image_seed, cpu=False)
-
+    # Backend sampling handles noise internally. 
+    # BrownianTreeNoiseSamplerPatched monkey-patch is skipped.
+    
     sampled_latent = core.ksampler(
         model=target_unet,
         positive=positive_cond,
@@ -317,7 +312,8 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         scheduler=scheduler_name,
         previewer_start=0,
         previewer_end=steps,
-        disable_preview=disable_preview
+        disable_preview=disable_preview,
+        quality=quality
     )
     decoded_latent = core.decode_vae(vae=target_vae, latent_image=sampled_latent, tiled=tiled)
 

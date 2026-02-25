@@ -2,11 +2,9 @@ import os
 import einops
 import torch
 import numpy as np
-
-import ldm_patched.modules.model_management
 import ldm_patched.modules.model_detection
+from backend import loader, conditioning, decode, resources, sampling, precision
 import ldm_patched.modules.model_patcher
-import ldm_patched.modules.utils
 import ldm_patched.modules.controlnet
 import modules.sample_hijack
 import ldm_patched.modules.samplers
@@ -22,6 +20,8 @@ from modules.util import get_file_from_folder_list
 from ldm_patched.modules.lora import model_lora_keys_unet, model_lora_keys_clip
 from modules.config import path_embeddings
 from ldm_patched.contrib.external_model_advanced import ModelSamplingDiscrete, ModelSamplingContinuousEDM
+
+from backend import loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
 
 opEmptyLatentImage = EmptyLatentImage()
 opVAEDecode = VAEDecode()
@@ -93,33 +93,25 @@ class StableDiffusionModel:
         self.clip_with_lora = self.clip.clone() if self.clip is not None else None
 
         for lora_filename, weight in loras_to_load:
-            lora_unmatch = ldm_patched.modules.utils.load_torch_file(lora_filename, safe_load=False)
-            lora_unet, lora_unmatch = match_lora(lora_unmatch, self.lora_key_map_unet)
-            lora_clip, lora_unmatch = match_lora(lora_unmatch, self.lora_key_map_clip)
-
-            if len(lora_unmatch) > 12:
-                # model mismatch
-                continue
-
-            if len(lora_unmatch) > 0:
-                print(f'Loaded LoRA [{lora_filename}] for model [{self.filename}] '
-                      f'with unmatched keys {list(lora_unmatch.keys())}')
+            lora_sd = backend_utils.load_torch_file(lora_filename)
+            
+            # Map keys using backend functions
+            lora_keys_unet = lora.model_lora_keys_unet(self.unet.model)
+            lora_keys_clip = lora.model_lora_keys_clip(self.clip.cond_stage_model)
+            
+            # Load patches
+            lora_unet = lora.load_lora(lora_sd, lora_keys_unet, log_missing=False)
+            lora_clip = lora.load_lora(lora_sd, lora_keys_clip, log_missing=False)
 
             if self.unet_with_lora is not None and len(lora_unet) > 0:
                 loaded_keys = self.unet_with_lora.add_patches(lora_unet, weight)
                 print(f'Loaded LoRA [{lora_filename}] for UNet [{self.filename}] '
                       f'with {len(loaded_keys)} keys at weight {weight}.')
-                for item in lora_unet:
-                    if item not in loaded_keys:
-                        print("UNet LoRA key skipped: ", item)
 
             if self.clip_with_lora is not None and len(lora_clip) > 0:
                 loaded_keys = self.clip_with_lora.add_patches(lora_clip, weight)
                 print(f'Loaded LoRA [{lora_filename}] for CLIP [{self.filename}] '
                       f'with {len(loaded_keys)} keys at weight {weight}.')
-                for item in lora_clip:
-                    if item not in loaded_keys:
-                        print("CLIP LoRA key skipped: ", item)
 
 
 @torch.no_grad()
@@ -143,23 +135,68 @@ def apply_controlnet(positive, negative, control_net, image, strength, start_per
 
 @torch.no_grad()
 @torch.inference_mode()
-@torch.no_grad()
-@torch.inference_mode()
 def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
-    from modules.nex_loader import load_checkpoint
-    
-    unet, clip, vae, vae_filename, clip_vision = load_checkpoint(ckpt_filename, vae_filename=vae_filename)
+    # Check file existence first
+    if not os.path.isfile(ckpt_filename):
+        print(f'[Nex Error] Model file not found: {ckpt_filename}')
+        return StableDiffusionModel(filename=ckpt_filename)
 
+    basename = os.path.basename(ckpt_filename).lower()
+
+    unet = None
+    clip = None
+    vae = None
+
+    if basename.endswith('.gguf'):
+        # GGUF UNet-only file — load via backend GGUF path
+        # CLIP and VAE must be provided separately via UI dropdowns
+        print(f'[Nex] Loading GGUF UNet: {basename}')
+        try:
+            unet = loader.load_sdxl_unet(ckpt_filename)
+            print(f'[Nex] GGUF UNet loaded successfully.')
+            print(f'[Nex Warning] GGUF is UNet-only. Please select CLIP and VAE in the Models tab.')
+        except Exception as e:
+            print(f'[Nex Error] Failed to load GGUF UNet: {e}')
+    elif basename.startswith("xl_") or "sdxl" in basename or basename.startswith("xl-"):
+        unet, clip, vae = loader.load_sdxl_checkpoint(ckpt_filename)
+    else:
+        unet, clip, vae = loader.load_sd15_checkpoint(ckpt_filename)
+
+    is_sdxl_base = basename.endswith('.gguf') or basename.startswith("xl_") or "sdxl" in basename or basename.startswith("xl-")
+
+    # Support for separate CLIP if provided
     if clip_filename is not None and clip_filename != 'None':
         clip_filename_abs = get_file_from_folder_list(clip_filename, modules.config.paths_clips)
         if os.path.exists(clip_filename_abs):
-            print(f'Force CLIP loaded from: {clip_filename_abs}')
-            from modules.nex_loader import load_standalone_clip
-            clip_forced = load_standalone_clip(clip_filename_abs, embedding_directory=path_embeddings)
-            if clip_forced is not None:
-                clip = clip_forced
+            try:
+                if is_sdxl_base:
+                    # GGUF and SDXL use the same CLIP loader pattern
+                    clip = loader.load_sdxl_clip(clip_filename_abs, clip_filename_abs)
+                else:
+                    clip = loader.load_sd15_clip(clip_filename_abs)
+                print(f'[Nex] Force CLIP loaded: {clip_filename}')
+            except Exception as e:
+                print(f'[Nex Error] Failed to load Force CLIP [{clip_filename}]: {e}')
 
-    return StableDiffusionModel(unet=unet, clip=clip, vae=vae, clip_vision=clip_vision, filename=ckpt_filename, vae_filename=vae_filename)
+    # Support for separate VAE if provided
+    if vae_filename is not None and vae_filename != 'None':
+        vae_filename_abs = get_file_from_folder_list(vae_filename, modules.config.path_vae)
+        if os.path.exists(vae_filename_abs):
+            try:
+                vae = loader.load_vae(vae_filename_abs)
+                print(f'[Nex] External VAE loaded: {vae_filename}')
+            except Exception as e:
+                print(f'[Nex Error] Failed to load VAE [{vae_filename}]: {e}')
+
+    # Warn about missing components
+    if unet is None:
+        print(f'[Nex Warning] No UNet loaded. Generation will not work.')
+    if clip is None:
+        print(f'[Nex Warning] No CLIP loaded. Please select a CLIP model in Advanced > Models.')
+    if vae is None:
+        print(f'[Nex Warning] No VAE loaded. Please select a VAE in Advanced > Models.')
+
+    return StableDiffusionModel(unet=unet, clip=clip, vae=vae, filename=ckpt_filename, vae_filename=vae_filename)
 
 
 @torch.no_grad()
@@ -171,19 +208,20 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
 @torch.no_grad()
 @torch.inference_mode()
 def decode_vae(vae, latent_image, tiled=False):
-    if tiled:
-        return opVAEDecodeTiled.decode(samples=latent_image, vae=vae, tile_size=512)[0]
-    else:
-        return opVAEDecode.decode(samples=latent_image, vae=vae)[0]
+    device = resources.get_torch_device()
+    with precision.autocast_context(device):
+        return decode.decode_latent(vae, latent_image["samples"], tiled=tiled)
 
 
 @torch.no_grad()
 @torch.inference_mode()
 def encode_vae(vae, pixels, tiled=False):
-    if tiled:
-        return opVAEEncodeTiled.encode(pixels=pixels, vae=vae, tile_size=512)[0]
-    else:
-        return opVAEEncode.encode(pixels=pixels, vae=vae)[0]
+    device = resources.get_torch_device()
+    with precision.autocast_context(device):
+        if tiled:
+            return opVAEEncodeTiled.encode(pixels=pixels, vae=vae, tile_size=512)[0]
+        else:
+            return opVAEEncode.encode(pixels=pixels, vae=vae)[0]
 
 
 @torch.no_grad()
@@ -250,14 +288,14 @@ def get_previewer(model):
         del sd
         VAE_approx_model.eval()
 
-        if ldm_patched.modules.model_management.should_use_fp16():
+        if resources.should_use_fp16():
             VAE_approx_model.half()
             VAE_approx_model.current_type = torch.float16
         else:
             VAE_approx_model.float()
             VAE_approx_model.current_type = torch.float32
 
-        VAE_approx_model.to(ldm_patched.modules.model_management.get_torch_device())
+        VAE_approx_model.to(resources.get_torch_device())
         VAE_approx_models[vae_approx_filename] = VAE_approx_model
 
     @torch.no_grad()
@@ -278,60 +316,49 @@ def get_previewer(model):
 def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sampler_name='dpmpp_2m_sde_gpu',
              scheduler='karras', denoise=1.0, disable_noise=False, start_step=None, last_step=None,
              force_full_denoise=False, callback_function=None,
-             previewer_start=None, previewer_end=None, sigmas=None, noise_mean=None, disable_preview=False):
+             previewer_start=None, previewer_end=None, sigmas=None, noise_mean=None, disable_preview=False,
+             quality=None):
 
-    if sigmas is not None:
-        sigmas = sigmas.clone().to(ldm_patched.modules.model_management.get_torch_device())
-
-    latent_image = latent["samples"]
-
+    device = resources.get_torch_device()
+    latent_image = latent["samples"].to(device)
+    
+    # Prep noise
     if disable_noise:
-        noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device="cpu")
+        noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device)
     else:
-        batch_inds = latent["batch_index"] if "batch_index" in latent else None
-        noise = ldm_patched.modules.sample.prepare_noise(latent_image, seed, batch_inds)
+        torch.manual_seed(seed)
+        noise = torch.randn(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device)
 
-    if isinstance(noise_mean, torch.Tensor):
-        noise = noise + noise_mean - torch.mean(noise, dim=1, keepdim=True)
-
-    noise_mask = None
-    if "noise_mask" in latent:
-        noise_mask = latent["noise_mask"]
-
-    previewer = get_previewer(model)
-
-    if previewer_start is None:
-        previewer_start = 0
-
-    if previewer_end is None:
-        previewer_end = steps
-
-    def callback(step, x0, x, total_steps):
-        ldm_patched.modules.model_management.throw_exception_if_processing_interrupted()
-        y = None
-        if previewer is not None and not disable_preview:
-            y = previewer(x0, previewer_start + step, previewer_end)
+    # Setup Previewer
+    previewer = get_previewer(model) if not disable_preview else None
+    
+    def wrapped_callback(step, x0, x, total_steps, denoised=None):
+        preview_image = None
+        if previewer is not None and denoised is not None:
+            preview_image = previewer(denoised, step, total_steps)
         if callback_function is not None:
-            callback_function(previewer_start + step, x0, x, previewer_end, y)
+            callback_function(step, x0, x, total_steps, preview_image)
 
-    disable_pbar = False
-    # 
-    # 
-    ldm_patched.modules.samplers.sample = modules.sample_hijack.sample_hacked
-
-    samples = ldm_patched.modules.sample.sample(model,
-                                                noise, steps, cfg, sampler_name, scheduler,
-                                                positive, negative, latent_image,
-                                                denoise=denoise, disable_noise=disable_noise,
-                                                start_step=start_step,
-                                                last_step=last_step,
-                                                force_full_denoise=force_full_denoise, noise_mask=noise_mask,
-                                                callback=callback,
-                                                disable_pbar=disable_pbar, seed=seed, sigmas=sigmas)
+    # Route through backend sampling
+    with precision.autocast_context(device):
+        samples = sampling.sample_sdxl(
+            model,
+            noise,
+            positive,
+            negative,
+            cfg=cfg,
+            steps=steps,
+            sampler_name=sampler_name,
+            scheduler=scheduler,
+            denoise=denoise,
+            seed=seed,
+            latent_image=latent_image,
+            callback=wrapped_callback,
+            model_options={"quality": quality or {}}
+        )
 
     out = latent.copy()
     out["samples"] = samples
-
     return out
 
 

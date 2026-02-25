@@ -321,7 +321,9 @@ class NexModelPatcher:
             return
 
         if key not in self.backup:
-            self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
+            # OPTIMIZATION: Only backup if we are doing an inplace update or if the weight is not already on the offload device
+            if inplace_update or weight.device != self.offload_device:
+                self.backup[key] = collections.namedtuple('Dimension', ['weight', 'inplace_update'])(weight.to(device=self.offload_device, copy=inplace_update), inplace_update)
 
         if device_to is not None:
             temp_weight = resources.cast_to_device(weight, device_to, target_dtype, copy=True)

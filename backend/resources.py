@@ -11,6 +11,8 @@ import sys
 import platform
 import weakref
 import gc
+import time
+import os
 
 class VRAMState(Enum):
     DISABLED = 0    # No vram present: no need to move models to vram
@@ -284,7 +286,7 @@ def mac_version():
     except:
         return None
 
-total_vram = get_total_memory(get_torch_device()) / (1024 * 1024)
+total_vram = float(get_total_memory(get_torch_device())) / (1024 * 1024)
 total_ram = psutil.virtual_memory().total / (1024 * 1024)
 logging.info("Total VRAM {:0.0f} MB, total RAM {:0.0f} MB".format(total_vram, total_ram))
 
@@ -467,13 +469,19 @@ def extra_reserved_memory():
     res = 400 * 1024 * 1024
     if any(platform.win32_ver()):
         res = 600 * 1024 * 1024
-        if total_vram > (15 * 1024):
+        # OPTIMIZATION: Reduce reserve on low-VRAM cards to maximize resident space
+        if total_vram < 4096:
+            res = 250 * 1024 * 1024
+        elif total_vram > (15 * 1024):
             res += 100 * 1024 * 1024
     if config.reserve_vram is not None:
         res = config.reserve_vram * 1024 * 1024 * 1024
     return res
 
 def minimum_inference_memory():
+    # OPTIMIZATION: More aggressive for 3GB cards
+    if total_vram < 4096:
+        return (1024 * 1024 * 1024) * 0.4 + extra_reserved_memory()
     return (1024 * 1024 * 1024) * 0.8 + extra_reserved_memory()
 
 def free_memory(memory_required, device, keep_loaded=[]):
@@ -543,7 +551,14 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             models_to_load.append(loaded)
         else:
             models_to_load.append(loaded_model)
+    
+    load_device = get_torch_device()
+    models_to_load = [m for m in models_to_load if m.model.current_loaded_device() != load_device or force_patch_weights]
+    
+    if len(models_to_load) == 0:
+        return
 
+    start_time = time.time()
     for loaded_model in models_to_load:
         to_unload = []
         for i in range(len(current_loaded_models)):
@@ -574,6 +589,9 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             loaded_memory = loaded_model.model_loaded_memory()
             current_free_mem = get_free_memory(torch_dev) + loaded_memory
             lowvram_model_memory = max(128 * 1024 * 1024, (current_free_mem - minimum_memory_required), min(current_free_mem * MIN_WEIGHT_MEMORY_RATIO, current_free_mem - minimum_inference_memory()))
+            if total_vram < 4096:
+                # Grant more headroom for quantized UNet
+                lowvram_model_memory = max(lowvram_model_memory, 256 * 1024 * 1024)
             lowvram_model_memory = max(0.1, lowvram_model_memory - loaded_memory)
 
         if vram_set_state == VRAMState.NO_VRAM:
@@ -581,6 +599,10 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
 
         loaded_model.model_load(lowvram_model_memory, force_patch_weights=force_patch_weights)
         current_loaded_models.insert(0, loaded_model)
+
+    load_time = time.time() - start_time
+    logging.info(f"Nex Model Loading Time: {load_time:.2f} seconds")
+    return load_time
 
 def cleanup_models_gc():
     do_gc = False
@@ -694,7 +716,7 @@ def module_size(module):
     return module_mem
 
 def maximum_vram_for_weights(device=None):
-    return (get_total_memory(device) * 0.88 - minimum_inference_memory())
+    return (float(get_total_memory(device)) * 0.88 - minimum_inference_memory())
 
 def supports_fp8_compute(device=None):
     if getattr(config, 'supports_fp8_compute', False):

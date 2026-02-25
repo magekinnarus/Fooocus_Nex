@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Dict, Optional, Union, Tuple
 # Local imports
 from . import schedulers
 from . import k_diffusion
+from . import precision
 
 # Re-export key constants for registration
 SCHEDULER_NAMES = schedulers.SCHEDULER_NAMES
@@ -73,7 +74,7 @@ class KSAMPLER(Sampler):
         k_callback = None
         total_steps = len(sigmas) - 1
         if callback is not None:
-            k_callback = lambda x: callback(x["i"], x["denoised"], x["x"], total_steps)
+            k_callback = lambda x: callback(x["i"], x["denoised"], x["x"], total_steps, x.get("denoised", None))
 
         samples = self.sampler_function(model_k, noise, sigmas, extra_args=extra_args, callback=k_callback, disable=disable_pbar, **self.extra_options)
         samples = model_wrap.inner_model.model_sampling.inverse_noise_scaling(sigmas[-1], samples)
@@ -166,6 +167,11 @@ class KSampler:
         self.denoise = denoise
         self.model_options = model_options
         self.quality = model_options.get("quality", {})
+        
+        # Apply quality patches to UNet (Timed ADM, precision casting)
+        from . import loader
+        loader.patch_unet_for_quality(self.model, self.quality)
+
         self.set_steps(steps, denoise)
 
     def calculate_sigmas(self, steps: int) -> torch.Tensor:
@@ -209,7 +215,8 @@ class KSampler:
         cfg_guider.set_cfg(cfg, cfg_pp=cfg_pp)
         cfg_guider.set_quality(self.quality)
         
-        return cfg_guider.sample(noise, latent_image, sampler_inst, sigmas, denoise_mask, callback, disable_pbar, seed)
+        with precision.autocast_context(self.device):
+            return cfg_guider.sample(noise, latent_image, sampler_inst, sigmas, denoise_mask, callback, disable_pbar, seed)
 
 def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor, cond_scale: float, x: torch.Tensor, timestep: torch.Tensor, model_options: Dict[str, Any] = {}, cfg_pp: bool = False, adaptive_cfg: float = 0.0, diffusion_progress: float = 0.0) -> torch.Tensor:
     if "sampler_cfg_function" in model_options:
@@ -376,7 +383,13 @@ class CFGGuider:
         for k in self.original_conds:
             self.conds[k] = [c.copy() for c in self.original_conds[k]]
 
+        # Load model to GPU before inference
+        from . import resources
+        resources.load_models_gpu([self.model_patcher])
+
         if self.inner_model is None:
             self.inner_model = self.model_patcher.model
+
+        self.conds = process_conds(self.inner_model, noise, self.conds, self.inner_model.get_dtype(), latent_image=latent_image, denoise_mask=denoise_mask, seed=seed)
             
         return sampler.sample(self, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
