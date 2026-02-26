@@ -181,7 +181,7 @@ class KSampler:
             discard_penultimate_sigma = True
         
         model_sampling = self.model.get_model_object("model_sampling")
-        sigmas = schedulers.calculate_sigmas(model_sampling, self.scheduler, steps)
+        sigmas = schedulers.calculate_sigmas(model_sampling, self.scheduler, steps, model=self.model.model)
         
         if discard_penultimate_sigma:
             sigmas = torch.cat([sigmas[:-2], sigmas[-1:]])

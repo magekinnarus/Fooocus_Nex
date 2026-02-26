@@ -3,7 +3,7 @@
 import os
 import torch
 import ldm_patched.controlnet.cldm
-import ldm_patched.k_diffusion.sampling
+import backend.k_diffusion as k_diffusion_sampling
 import ldm_patched.ldm.modules.attention
 import ldm_patched.ldm.modules.diffusionmodules.model
 import ldm_patched.ldm.modules.diffusionmodules.openaimodel
@@ -12,13 +12,12 @@ import ldm_patched.modules.args_parser
 import ldm_patched.modules.model_base
 import ldm_patched.modules.model_management
 import ldm_patched.modules.model_patcher
-import ldm_patched.modules.samplers
 import ldm_patched.modules.sd
 import ldm_patched.modules.sd1_clip
 import ldm_patched.modules.clip_vision
 import ldm_patched.modules.ops as ops
 
-from modules.ops import use_patched_ops
+from backend.ops import use_patched_ops
 
 
 def patched_encode_token_weights(self, token_weight_pairs):

@@ -3,9 +3,9 @@ import torch
 import logging
 import collections
 # import ldm_patched.modules.sd as comfy_sd
-import ldm_patched.modules.utils as comfy_utils
-import backend.patching as patching
-import ldm_patched.modules.model_management as comfy_model_management
+from ldm_patched.modules import utils as comfy_utils
+from .. import patching
+from ldm_patched.modules import model_management as comfy_model_management
 
 from .ops import GGMLOps, move_patch_to_device
 from .loader import gguf_sd_loader

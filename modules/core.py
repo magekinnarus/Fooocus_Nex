@@ -6,22 +6,197 @@ import ldm_patched.modules.model_detection
 from backend import loader, conditioning, decode, resources, sampling, precision
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.controlnet
-import modules.sample_hijack
-import ldm_patched.modules.samplers
 import ldm_patched.modules.latent_formats
 
 from ldm_patched.modules.sd import load_checkpoint_guess_config
-from ldm_patched.contrib.external import VAEDecode, EmptyLatentImage, VAEEncode, VAEEncodeTiled, VAEDecodeTiled, \
-    ControlNetApplyAdvanced
-from ldm_patched.contrib.external_freelunch import FreeU_V2
-from ldm_patched.modules.sample import prepare_mask
-from modules.lora import match_lora
+import math
+import json
+import ldm_patched.modules.model_management
+import ldm_patched.modules.model_sampling
+import ldm_patched.modules.sd
+import ldm_patched.modules.latent_formats
+
 from modules.util import get_file_from_folder_list
-from ldm_patched.modules.lora import model_lora_keys_unet, model_lora_keys_clip
-from modules.config import path_embeddings
-from ldm_patched.contrib.external_model_advanced import ModelSamplingDiscrete, ModelSamplingContinuousEDM
+from backend.lora import match_lora, model_lora_keys_unet, model_lora_keys_clip
+import modules.config
 
 from backend import loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
+
+# Inlined from ldm_patched.contrib.external
+class VAEDecode:
+    def decode(self, vae, samples):
+        return (vae.decode(samples["samples"]), )
+
+class VAEDecodeTiled:
+    def decode(self, vae, samples, tile_size):
+        return (vae.decode_tiled(samples["samples"], tile_x=tile_size // 8, tile_y=tile_size // 8, ), )
+
+def vae_encode_crop_pixels(pixels):
+    x = (pixels.shape[1] // 8) * 8
+    y = (pixels.shape[2] // 8) * 8
+    if pixels.shape[1] != x or pixels.shape[2] != y:
+        x_offset = (pixels.shape[1] % 8) // 2
+        y_offset = (pixels.shape[2] % 8) // 2
+        pixels = pixels[:, x_offset:x + x_offset, y_offset:y + y_offset, :]
+    return pixels
+
+class VAEEncode:
+    def encode(self, vae, pixels):
+        pixels = vae_encode_crop_pixels(pixels)
+        t = vae.encode(pixels[:,:,:,:3])
+        return ({"samples":t}, )
+
+class VAEEncodeTiled:
+    def encode(self, vae, pixels, tile_size):
+        pixels = vae_encode_crop_pixels(pixels)
+        t = vae.encode_tiled(pixels[:,:,:,:3], tile_x=tile_size, tile_y=tile_size, )
+        return ({"samples":t}, )
+
+class EmptyLatentImage:
+    def __init__(self):
+        self.device = ldm_patched.modules.model_management.intermediate_device()
+
+    def generate(self, width, height, batch_size=1):
+        latent = torch.zeros([batch_size, 4, height // 8, width // 8], device=self.device)
+        return ({"samples":latent}, )
+
+class ControlNetApplyAdvanced:
+    def apply_controlnet(self, positive, negative, control_net, image, strength, start_percent, end_percent):
+        if strength == 0:
+            return (positive, negative)
+
+        control_hint = image.movedim(-1,1)
+        cnets = {}
+
+        out = []
+        for conditioning in [positive, negative]:
+            c = []
+            for t in conditioning:
+                d = t[1].copy()
+
+                prev_cnet = d.get('control', None)
+                if prev_cnet in cnets:
+                    c_net = cnets[prev_cnet]
+                else:
+                    c_net = control_net.copy().set_cond_hint(control_hint, strength, (start_percent, end_percent))
+                    c_net.set_previous_controlnet(prev_cnet)
+                    cnets[prev_cnet] = c_net
+
+                d['control'] = c_net
+                d['control_apply_to_uncond'] = False
+                n = [t[0], d]
+                c.append(n)
+            out.append(c)
+        return (out[0], out[1])
+
+# Inlined from ldm_patched.contrib.external_freelunch
+def Fourier_filter(x, threshold, scale):
+    # FFT
+    x_freq = torch.fft.fftn(x.float(), dim=(-2, -1))
+    x_freq = torch.fft.fftshift(x_freq, dim=(-2, -1))
+
+    B, C, H, W = x_freq.shape
+    mask = torch.ones((B, C, H, W), device=x.device)
+
+    crow, ccol = H // 2, W //2
+    mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
+    x_freq = x_freq * mask
+
+    # IFFT
+    x_freq = torch.fft.ifftshift(x_freq, dim=(-2, -1))
+    x_filtered = torch.fft.ifftn(x_freq, dim=(-2, -1)).real
+
+    return x_filtered.to(x.dtype)
+
+class FreeU_V2:
+    def patch(self, model, b1, b2, s1, s2):
+        model_channels = model.model.model_config.unet_config["model_channels"]
+        scale_dict = {model_channels * 4: (b1, s1), model_channels * 2: (b2, s2)}
+        on_cpu_devices = {}
+
+        def output_block_patch(h, hsp, transformer_options):
+            scale = scale_dict.get(h.shape[1], None)
+            if scale is not None:
+                hidden_mean = h.mean(1).unsqueeze(1)
+                B = hidden_mean.shape[0]
+                hidden_max, _ = torch.max(hidden_mean.view(B, -1), dim=-1, keepdim=True)
+                hidden_min, _ = torch.min(hidden_mean.view(B, -1), dim=-1, keepdim=True)
+                hidden_mean = (hidden_mean - hidden_min.unsqueeze(2).unsqueeze(3)) / (hidden_max - hidden_min).unsqueeze(2).unsqueeze(3)
+
+                h[:,:h.shape[1] // 2] = h[:,:h.shape[1] // 2] * ((scale[0] - 1 ) * hidden_mean + 1)
+
+                if hsp.device not in on_cpu_devices:
+                    try:
+                        hsp = Fourier_filter(hsp, threshold=1, scale=scale[1])
+                    except:
+                        print("Device", hsp.device, "does not support the torch.fft functions used in the FreeU node, switching to CPU.")
+                        on_cpu_devices[hsp.device] = True
+                        hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
+                else:
+                    hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
+
+            return h, hsp
+
+        m = model.clone()
+        m.set_model_output_block_patch(output_block_patch)
+        return (m, )
+
+# Inlined from ldm_patched.contrib.external_model_advanced
+def rescale_zero_terminal_snr_sigmas(sigmas):
+    alphas_cumprod = 1 / ((sigmas * sigmas) + 1)
+    alphas_bar_sqrt = alphas_cumprod.sqrt()
+    alphas_bar_sqrt_0 = alphas_bar_sqrt[0].clone()
+    alphas_bar_sqrt_T = alphas_bar_sqrt[-1].clone()
+    alphas_bar_sqrt -= (alphas_bar_sqrt_T)
+    alphas_bar_sqrt *= alphas_bar_sqrt_0 / (alphas_bar_sqrt_0 - alphas_bar_sqrt_T)
+    alphas_bar = alphas_bar_sqrt**2
+    alphas_bar[-1] = 4.8973451890853435e-08
+    return ((1 - alphas_bar) / alphas_bar) ** 0.5
+
+class ModelSamplingDiscrete:
+    def patch(self, model, sampling, zsnr):
+        m = model.clone()
+        sampling_base = ldm_patched.modules.model_sampling.ModelSamplingDiscrete
+        if sampling == "eps":
+            sampling_type = ldm_patched.modules.model_sampling.EPS
+        elif sampling == "v_prediction":
+            sampling_type = ldm_patched.modules.model_sampling.V_PREDICTION
+        else:
+            raise NotImplementedError(f"Sampling type {sampling} not inlined.")
+
+        class ModelSamplingAdvanced(sampling_base, sampling_type):
+            pass
+
+        model_sampling = ModelSamplingAdvanced(model.model.model_config)
+        if zsnr:
+            model_sampling.set_sigmas(rescale_zero_terminal_snr_sigmas(model_sampling.sigmas))
+
+        m.add_object_patch("model_sampling", model_sampling)
+        return (m, )
+
+class ModelSamplingContinuousEDM:
+    def patch(self, model, sampling, sigma_max, sigma_min):
+        m = model.clone()
+        latent_format = None
+        sigma_data = 1.0
+        if sampling == "eps":
+            sampling_type = ldm_patched.modules.model_sampling.EPS
+        elif sampling == "v_prediction":
+            sampling_type = ldm_patched.modules.model_sampling.V_PREDICTION
+        elif sampling == "edm_playground_v2.5":
+            sampling_type = ldm_patched.modules.model_sampling.EDM
+            sigma_data = 0.5
+            latent_format = ldm_patched.modules.latent_formats.SDXL_Playground_2_5()
+
+        class ModelSamplingAdvanced(ldm_patched.modules.model_sampling.ModelSamplingContinuousEDM, sampling_type):
+            pass
+
+        model_sampling = ModelSamplingAdvanced(model.model.model_config)
+        model_sampling.set_parameters(sigma_min, sigma_max, sigma_data)
+        m.add_object_patch("model_sampling", model_sampling)
+        if latent_format is not None:
+            m.add_object_patch("latent_format", latent_format)
+        return (m, )
 
 opEmptyLatentImage = EmptyLatentImage()
 opVAEDecode = VAEDecode()
@@ -32,6 +207,7 @@ opControlNetApplyAdvanced = ControlNetApplyAdvanced()
 opFreeU = FreeU_V2()
 opModelSamplingDiscrete = ModelSamplingDiscrete()
 opModelSamplingContinuousEDM = ModelSamplingContinuousEDM()
+
 
 
 class StableDiffusionModel:

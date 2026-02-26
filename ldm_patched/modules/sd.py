@@ -17,7 +17,7 @@ from . import sd2_clip
 from . import sdxl_clip
 
 import ldm_patched.modules.model_patcher
-import ldm_patched.modules.lora
+import backend.lora
 import ldm_patched.t2ia.adapter
 import ldm_patched.modules.supported_models_base
 import ldm_patched.taesd.taesd
@@ -55,11 +55,11 @@ def load_clip_weights(model, sd):
 def load_lora_for_models(model, clip, lora, strength_model, strength_clip):
     key_map = {}
     if model is not None:
-        key_map = ldm_patched.modules.lora.model_lora_keys_unet(model.model, key_map)
+        key_map = backend.lora.model_lora_keys_unet(model.model, key_map)
     if clip is not None:
-        key_map = ldm_patched.modules.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+        key_map = backend.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
 
-    loaded = ldm_patched.modules.lora.load_lora(lora, key_map)
+    loaded = backend.lora.load_lora(lora, key_map)
     if model is not None:
         new_modelpatcher = model.clone()
         k = new_modelpatcher.add_patches(loaded, strength_model)

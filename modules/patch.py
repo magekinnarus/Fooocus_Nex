@@ -4,22 +4,20 @@ import time
 import math
 import ldm_patched.modules.model_base
 import ldm_patched.modules.model_management
-import modules.anisotropic as anisotropic
+import backend.anisotropic as anisotropic
 import ldm_patched.ldm.modules.attention
-import ldm_patched.k_diffusion.sampling
+import backend.k_diffusion as k_diffusion_sampling
 import modules.inpaint_worker as inpaint_worker
 import ldm_patched.ldm.modules.diffusionmodules.model
 import ldm_patched.modules.sd
 import ldm_patched.modules.model_patcher
-import ldm_patched.modules.samplers
 import ldm_patched.modules.args_parser
 import warnings
 import safetensors.torch
-import ldm_patched.modules.lora
+import backend.lora
 import modules.constants as constants
 
-from ldm_patched.modules.samplers import calc_cond_uncond_batch
-from ldm_patched.k_diffusion.sampling import BatchedBrownianTree
+from backend.k_diffusion import BatchedBrownianTree
 
 
 # The global patches have been replaced by native backend calls.
@@ -34,37 +32,6 @@ def round_to_64(x):
     return h
 
 
-def patched_KSamplerX0Inpaint_forward(self, x, sigma, uncond, cond, cond_scale, denoise_mask, model_options={}, seed=None):
-    if inpaint_worker.current_task is not None:
-        latent_processor = self.inner_model.inner_model.process_latent_in
-        inpaint_latent = latent_processor(inpaint_worker.current_task.latent).to(x)
-        inpaint_mask = inpaint_worker.current_task.latent_mask.to(x)
-
-        if getattr(self, 'energy_generator', None) is None:
-            # avoid bad results by using different seeds.
-            self.energy_generator = torch.Generator(device='cpu').manual_seed((seed + 1) % constants.MAX_SEED)
-
-        energy_sigma = sigma.reshape([sigma.shape[0]] + [1] * (len(x.shape) - 1))
-        current_energy = torch.randn(
-            x.size(), dtype=x.dtype, generator=self.energy_generator, device="cpu").to(x) * energy_sigma
-        x = x * inpaint_mask + (inpaint_latent + current_energy) * (1.0 - inpaint_mask)
-
-        out = self.inner_model(x, sigma,
-                               cond=cond,
-                               uncond=uncond,
-                               cond_scale=cond_scale,
-                               model_options=model_options,
-                               seed=seed)
-
-        out = out * inpaint_mask + inpaint_latent * (1.0 - inpaint_mask)
-    else:
-        out = self.inner_model(x, sigma,
-                               cond=cond,
-                               uncond=uncond,
-                               cond_scale=cond_scale,
-                               model_options=model_options,
-                               seed=seed)
-    return out
 
 
 def patched_cldm_forward(self, x, hint, timesteps, context, y=None, **kwargs):
@@ -144,8 +111,6 @@ def patch_all():
 
     patch_all_precision()
     patch_all_clip()
-
-    ldm_patched.modules.samplers.KSamplerX0Inpaint.forward = patched_KSamplerX0Inpaint_forward
 
     warnings.filterwarnings(action='ignore', module='torchsde')
 

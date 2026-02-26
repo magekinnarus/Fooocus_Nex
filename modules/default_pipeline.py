@@ -10,7 +10,6 @@ import extras.vae_interpose as vae_interpose
 
 
 from ldm_patched.modules.model_base import SDXL
-from modules.sample_hijack import clip_separate
 from modules.util import get_file_from_folder_list, get_enabled_loras
 
 

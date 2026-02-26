@@ -5,6 +5,19 @@ import scipy.stats
 from typing import Any, Callable, List, Optional, Union, NamedTuple
 from functools import partial
 
+def loglinear_interp(t_steps, num_steps):
+    xs = numpy.linspace(0, 1, len(t_steps))
+    ys = numpy.log(t_steps[::-1])
+    new_xs = numpy.linspace(0, 1, num_steps)
+    new_ys = numpy.interp(new_xs, xs, ys)
+    interped_ys = numpy.exp(new_ys)[::-1].copy()
+    return interped_ys
+
+NOISE_LEVELS = {
+    "SD1": [14.6146412293, 6.4745760956, 3.8636745985, 2.6946151520, 1.8841921177, 1.3943805092, 0.9642583904, 0.6523686016, 0.3977456272, 0.1515232662, 0.0291671582],
+    "SDXL": [14.6146412293, 6.3184485287, 3.7681790315, 2.1811480769, 1.3405244945, 0.8620721141, 0.5550693289, 0.3798540708, 0.2332364134, 0.1114188177, 0.0291671582],
+}
+
 def simple_scheduler(model_sampling: Any, steps: int) -> torch.Tensor:
     s = model_sampling
     sigs = []
@@ -109,6 +122,27 @@ def get_sigmas_exponential(n: int, sigma_min: float, sigma_max: float, device: U
     sigmas = torch.linspace(math.log(sigma_max), math.log(sigma_min), n, device=device).exp()
     return append_zero(sigmas)
 
+def turbo_scheduler(model_sampling: Any, steps: int, **kwargs) -> torch.Tensor:
+    start_step = 0
+    timesteps = torch.flip(torch.arange(1, 11) * 100 - 1, (0,))[start_step:start_step + steps]
+    sigmas = model_sampling.sigma(timesteps)
+    sigmas = torch.cat([sigmas, sigmas.new_zeros([1])])
+    return sigmas
+
+def align_your_steps_scheduler(model_sampling: Any, steps: int, **kwargs) -> torch.Tensor:
+    model = kwargs.get("model", None)
+    model_type = "SDXL"
+    if model is not None and hasattr(model, "latent_format"):
+        model_type = 'SDXL' if model.latent_format.__class__.__name__ == 'SDXL' else 'SD1'
+        
+    sigmas = NOISE_LEVELS[model_type][:]
+    if (steps + 1) != len(sigmas):
+        sigmas = loglinear_interp(sigmas, steps + 1)
+        
+    sigmas = sigmas[-(steps + 1):]
+    sigmas[-1] = 0
+    return torch.FloatTensor(sigmas)
+
 class SchedulerHandler(NamedTuple):
     handler: Callable[..., torch.Tensor]
     use_ms: bool = True
@@ -123,6 +157,8 @@ SCHEDULER_HANDLERS = {
     "normal": SchedulerHandler(normal_scheduler),
     "linear_quadratic": SchedulerHandler(linear_quadratic_schedule),
     "kl_optimal": SchedulerHandler(kl_optimal_scheduler, use_ms=False),
+    "turbo": SchedulerHandler(turbo_scheduler),
+    "align_your_steps": SchedulerHandler(align_your_steps_scheduler),
 }
 
 SCHEDULER_NAMES = list(SCHEDULER_HANDLERS.keys())
@@ -130,12 +166,12 @@ SCHEDULER_NAMES = list(SCHEDULER_HANDLERS.keys())
 def scheduler_names() -> List[str]:
     return list(SCHEDULER_HANDLERS.keys())
 
-def calculate_sigmas(model_sampling: Any, scheduler_name: str, steps: int) -> torch.Tensor:
+def calculate_sigmas(model_sampling: Any, scheduler_name: str, steps: int, model: Any = None) -> torch.Tensor:
     if scheduler_name not in SCHEDULER_HANDLERS:
         raise ValueError(f"Unknown scheduler: {scheduler_name}")
     
     handler = SCHEDULER_HANDLERS[scheduler_name]
     if handler.use_ms:
-        return handler.handler(model_sampling, steps)
+        return handler.handler(model_sampling, steps, model=model)
     else:
         return handler.handler(steps, float(model_sampling.sigma_min), float(model_sampling.sigma_max))

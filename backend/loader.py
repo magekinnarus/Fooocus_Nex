@@ -135,9 +135,9 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
     patcher_class = patching.NexModelPatcher
 
     if isinstance(source, str) and source.endswith(".gguf"):
-        from modules.gguf.loader import gguf_sd_loader
-        from modules.gguf.ops import GGMLOps
-        from modules.gguf.patcher import GGUFModelPatcher
+        from backend.gguf.loader import gguf_sd_loader
+        from backend.gguf.ops import GGMLOps
+        from backend.gguf.patcher import GGUFModelPatcher
         
         sd = gguf_sd_loader(source)
         custom_operations = GGMLOps

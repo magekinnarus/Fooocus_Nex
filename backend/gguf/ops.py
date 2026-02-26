@@ -3,8 +3,8 @@ import gguf
 import torch
 import logging
 
-import ldm_patched.modules.ops as comfy_ops
-import ldm_patched.modules.model_management as comfy_model_management
+from ldm_patched.modules import ops as comfy_ops
+from ldm_patched.modules import model_management as comfy_model_management
 from .dequant import dequantize_tensor, is_quantized
 
 def chained_hasattr(obj, chained_attr):

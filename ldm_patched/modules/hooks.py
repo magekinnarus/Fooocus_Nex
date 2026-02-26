@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ldm_patched.modules.model_patcher import ModelPatcher, PatcherInjection
     from ldm_patched.modules.model_base import BaseModel
     from ldm_patched.modules.sd import CLIP
-import ldm_patched.modules.lora
+import backend.lora
 import ldm_patched.modules.model_management
 import ldm_patched.modules.patcher_extension
 # from node_helpers import conditioning_set_values # Removed for Fooocus compatibility
@@ -174,10 +174,10 @@ class WeightHook(Hook):
         if self.need_weight_init:
             key_map = {}
             if target == EnumWeightTarget.Clip:
-                key_map = ldm_patched.modules.lora.model_lora_keys_clip(model.model, key_map)
+                key_map = backend.lora.model_lora_keys_clip(model.model, key_map)
             else:
-                key_map = ldm_patched.modules.lora.model_lora_keys_unet(model.model, key_map)
-            weights = ldm_patched.modules.lora.load_lora(self.weights, key_map, log_missing=False)
+                key_map = backend.lora.model_lora_keys_unet(model.model, key_map)
+            weights = backend.lora.load_lora(self.weights, key_map, log_missing=False)
         else:
             if target == EnumWeightTarget.Clip:
                 weights = self.weights_clip
@@ -649,14 +649,14 @@ def load_hook_lora_for_models(model: ModelPatcher, clip: CLIP, lora: dict[str, t
                               strength_model: float, strength_clip: float):
     key_map = {}
     if model is not None:
-        key_map = ldm_patched.modules.lora.model_lora_keys_unet(model.model, key_map)
+        key_map = backend.lora.model_lora_keys_unet(model.model, key_map)
     if clip is not None:
-        key_map = ldm_patched.modules.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+        key_map = backend.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
 
     hook_group = HookGroup()
     hook = WeightHook()
     hook_group.add(hook)
-    loaded: dict[str] = ldm_patched.modules.lora.load_lora(lora, key_map)
+    loaded: dict[str] = backend.lora.load_lora(lora, key_map)
     if model is not None:
         new_modelpatcher = model.clone()
         k = new_modelpatcher.add_hook_patches(hook=hook, patches=loaded, strength_patch=strength_model)

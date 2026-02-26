@@ -30,7 +30,7 @@ import torch
 
 import ldm_patched.modules.float
 import ldm_patched.modules.hooks
-import ldm_patched.modules.lora
+import backend.weight_ops
 import ldm_patched.modules.model_management
 import ldm_patched.modules.patcher_extension
 import ldm_patched.modules.utils
@@ -1033,8 +1033,8 @@ class ModelPatcher:
         return self.model.device
 
     def calculate_weight(self, patches, weight, key, intermediate_dtype=torch.float32):
-        logging.warning("The ModelPatcher.calculate_weight function is deprecated, please use: ldm_patched.modules.lora.calculate_weight instead")
-        return ldm_patched.modules.lora.calculate_weight(patches, weight, key, intermediate_dtype=intermediate_dtype)
+        logging.warning("The ModelPatcher.calculate_weight function is deprecated, please use: backend.weight_ops.calculate_weight instead")
+        return backend.weight_ops.calculate_weight(patches, weight, key, intermediate_dtype=intermediate_dtype)
 
     def cleanup(self):
         self.clean_hooks()
@@ -1349,7 +1349,7 @@ class ModelPatcher:
         if convert_func is not None:
             temp_weight = convert_func(temp_weight, inplace=True)
 
-        out_weight = ldm_patched.modules.lora.calculate_weight(combined_patches[key],
+        out_weight = backend.weight_ops.calculate_weight(combined_patches[key],
                                                  temp_weight,
                                                  key, intermediate_dtype=target_dtype, original_weights=original_weights)
         del original_weights[key]
