@@ -28,12 +28,6 @@ args_parser.parser.add_argument("--disable-metadata", action='store_true',
 args_parser.parser.add_argument("--disable-preset-download", action='store_true',
                                 help="Disables downloading models for presets", default=False)
 
-args_parser.parser.add_argument("--disable-enhance-output-sorting", action='store_true',
-                                help="Disables enhance output sorting for final image gallery.")
-
-args_parser.parser.add_argument("--enable-auto-describe-image", action='store_true',
-                                help="Enables automatic description of uov and enhance image when prompt is empty", default=False)
-
 args_parser.parser.add_argument("--always-download-new-model", action='store_true',
                                 help="Always download newer models", default=False)
 

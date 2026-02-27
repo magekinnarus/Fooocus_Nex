@@ -169,7 +169,7 @@ def get_dir_or_set_default(key, default_value, as_array=False, make_directory=Fa
             for d in v:
                 makedirs_with_log(d)
         if all([os.path.exists(d) and os.path.isdir(d) for d in v]):
-            return v
+            return v if as_array else v[0]
 
     if v is not None:
         print(f'Failed to load config key: {json.dumps({key:v})} is invalid or does not exist; will use {json.dumps({key:default_value})} instead.')
@@ -220,8 +220,6 @@ else:
 
 
 path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
-path_safety_checker = get_dir_or_set_default('path_safety_checker', '../models/safety_checker/')
-path_sam = get_dir_or_set_default('path_sam', '../models/sam/')
 path_outputs = get_path_output()
 
 
@@ -287,22 +285,15 @@ temp_path_cleanup_on_launch = get_config_item_or_set_default(
     expected_type=bool
 )
 default_base_model_name = default_model = get_config_item_or_set_default(
-    key='default_model',
-    default_value='model.safetensors',
+    key='Selected_model',
+    default_value='None',
     validator=lambda x: isinstance(x, str),
     expected_type=str
 )
 
 if getattr(args_manager.args, 'skip_model_load', False):
-    print("Skipping model load: Forcing default_model to None")
+    print("Skipping model load: Forcing Selected_model to None")
     default_base_model_name = default_model = 'None'
-
-previous_default_models = get_config_item_or_set_default(
-    key='previous_default_models',
-    default_value=[],
-    validator=lambda x: isinstance(x, list) and all(isinstance(k, str) for k in x),
-    expected_type=list
-)
 default_loras_min_weight = get_config_item_or_set_default(
     key='default_loras_min_weight',
     default_value=-2,
@@ -422,12 +413,6 @@ default_performance = get_config_item_or_set_default(
 )
 default_image_prompt_checkbox = get_config_item_or_set_default(
     key='default_image_prompt_checkbox',
-    default_value=False,
-    validator=lambda x: isinstance(x, bool),
-    expected_type=bool
-)
-default_enhance_checkbox = get_config_item_or_set_default(
-    key='default_enhance_checkbox',
     default_value=False,
     validator=lambda x: isinstance(x, bool),
     expected_type=bool
@@ -616,56 +601,6 @@ example_inpaint_prompts = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, list) and all(isinstance(v, str) for v in x),
     expected_type=list
 )
-example_enhance_detection_prompts = get_config_item_or_set_default(
-    key='example_enhance_detection_prompts',
-    default_value=[
-        'face', 'eye', 'mouth', 'hair', 'hand', 'body'
-    ],
-    validator=lambda x: isinstance(x, list) and all(isinstance(v, str) for v in x),
-    expected_type=list
-)
-default_enhance_tabs = get_config_item_or_set_default(
-    key='default_enhance_tabs',
-    default_value=3,
-    validator=lambda x: isinstance(x, int) and 1 <= x <= 5,
-    expected_type=int
-)
-default_enhance_uov_method = get_config_item_or_set_default(
-    key='default_enhance_uov_method',
-    default_value=modules.flags.disabled,
-    validator=lambda x: x in modules.flags.uov_list,
-    expected_type=int
-)
-default_enhance_uov_processing_order = get_config_item_or_set_default(
-    key='default_enhance_uov_processing_order',
-    default_value=modules.flags.enhancement_uov_before,
-    validator=lambda x: x in modules.flags.enhancement_uov_processing_order,
-    expected_type=int
-)
-default_enhance_uov_prompt_type = get_config_item_or_set_default(
-    key='default_enhance_uov_prompt_type',
-    default_value=modules.flags.enhancement_uov_prompt_type_original,
-    validator=lambda x: x in modules.flags.enhancement_uov_prompt_types,
-    expected_type=int
-)
-default_sam_max_detections = get_config_item_or_set_default(
-    key='default_sam_max_detections',
-    default_value=0,
-    validator=lambda x: isinstance(x, int) and 0 <= x <= 10,
-    expected_type=int
-)
-default_black_out_nsfw = get_config_item_or_set_default(
-    key='default_black_out_nsfw',
-    default_value=False,
-    validator=lambda x: isinstance(x, bool),
-    expected_type=bool
-)
-default_save_only_final_enhanced_image = get_config_item_or_set_default(
-    key='default_save_only_final_enhanced_image',
-    default_value=False,
-    validator=lambda x: isinstance(x, bool),
-    expected_type=bool
-)
 default_save_metadata_to_images = get_config_item_or_set_default(
     key='default_save_metadata_to_images',
     default_value=False,
@@ -686,7 +621,6 @@ metadata_created_by = get_config_item_or_set_default(
 )
 
 example_inpaint_prompts = [[x] for x in example_inpaint_prompts]
-example_enhance_detection_prompts = [[x] for x in example_enhance_detection_prompts]
 
 default_invert_mask_checkbox = get_config_item_or_set_default(
     key='default_invert_mask_checkbox',
@@ -702,12 +636,6 @@ default_inpaint_mask_model = get_config_item_or_set_default(
     expected_type=str
 )
 
-default_enhance_inpaint_mask_model = get_config_item_or_set_default(
-    key='default_enhance_inpaint_mask_model',
-    default_value='sam',
-    validator=lambda x: x in modules.flags.inpaint_mask_models,
-    expected_type=str
-)
 
 default_inpaint_mask_cloth_category = get_config_item_or_set_default(
     key='default_inpaint_mask_cloth_category',
@@ -716,32 +644,13 @@ default_inpaint_mask_cloth_category = get_config_item_or_set_default(
     expected_type=str
 )
 
-default_inpaint_mask_sam_model = get_config_item_or_set_default(
-    key='default_inpaint_mask_sam_model',
-    default_value='vit_b',
-    validator=lambda x: x in modules.flags.inpaint_mask_sam_model,
-    expected_type=str
-)
 
-default_describe_apply_prompts_checkbox = get_config_item_or_set_default(
-    key='default_describe_apply_prompts_checkbox',
-    default_value=True,
-    validator=lambda x: isinstance(x, bool),
-    expected_type=bool
-)
-default_describe_content_type = get_config_item_or_set_default(
-    key='default_describe_content_type',
-    default_value=[modules.flags.describe_type_photo],
-    validator=lambda x: all(k in modules.flags.describe_types for k in x),
-    expected_type=list
-)
 
 config_dict["default_loras"] = default_loras = default_loras[:default_max_lora_number] + [[True, 'None', 1.0] for _ in range(default_max_lora_number - len(default_loras))]
 
 # mapping config to meta parameter
 possible_preset_keys = {
-    "default_model": "base_model",
-    "previous_default_models": "previous_default_models",
+    "Selected_model": "base_model",
     "default_loras_min_weight": "default_loras_min_weight",
     "default_loras_max_weight": "default_loras_max_weight",
     "default_loras": "<processed>",
@@ -962,53 +871,8 @@ def downloading_upscale_model():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_upscaler_s409985e5.bin',
         model_dir=path_upscale_models,
-        file_name='fooocus_upscaler_s409985e5.bin'
+        file_name='fooocus_upscaler_s409985e5.bin',
     )
     return os.path.join(path_upscale_models, 'fooocus_upscaler_s409985e5.bin')
 
-def downloading_safety_checker_model():
-    load_file_from_url(
-        url='https://huggingface.co/mashb1t/misc/resolve/main/stable-diffusion-safety-checker.bin',
-        model_dir=path_safety_checker,
-        file_name='stable-diffusion-safety-checker.bin'
-    )
-    return os.path.join(path_safety_checker, 'stable-diffusion-safety-checker.bin')
 
-
-def download_sam_model(sam_model: str) -> str:
-    match sam_model:
-        case 'vit_b':
-            return downloading_sam_vit_b()
-        case 'vit_l':
-            return downloading_sam_vit_l()
-        case 'vit_h':
-            return downloading_sam_vit_h()
-        case _:
-            raise ValueError(f"sam model {sam_model} does not exist.")
-
-
-def downloading_sam_vit_b():
-    load_file_from_url(
-        url='https://huggingface.co/mashb1t/misc/resolve/main/sam_vit_b_01ec64.pth',
-        model_dir=path_sam,
-        file_name='sam_vit_b_01ec64.pth'
-    )
-    return os.path.join(path_sam, 'sam_vit_b_01ec64.pth')
-
-
-def downloading_sam_vit_l():
-    load_file_from_url(
-        url='https://huggingface.co/mashb1t/misc/resolve/main/sam_vit_l_0b3195.pth',
-        model_dir=path_sam,
-        file_name='sam_vit_l_0b3195.pth'
-    )
-    return os.path.join(path_sam, 'sam_vit_l_0b3195.pth')
-
-
-def downloading_sam_vit_h():
-    load_file_from_url(
-        url='https://huggingface.co/mashb1t/misc/resolve/main/sam_vit_h_4b8939.pth',
-        model_dir=path_sam,
-        file_name='sam_vit_h_4b8939.pth'
-    )
-    return os.path.join(path_sam, 'sam_vit_h_4b8939.pth')

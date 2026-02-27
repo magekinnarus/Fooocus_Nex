@@ -89,58 +89,6 @@ class ControlNetApplyAdvanced:
             out.append(c)
         return (out[0], out[1])
 
-# Inlined from ldm_patched.contrib.external_freelunch
-def Fourier_filter(x, threshold, scale):
-    # FFT
-    x_freq = torch.fft.fftn(x.float(), dim=(-2, -1))
-    x_freq = torch.fft.fftshift(x_freq, dim=(-2, -1))
-
-    B, C, H, W = x_freq.shape
-    mask = torch.ones((B, C, H, W), device=x.device)
-
-    crow, ccol = H // 2, W //2
-    mask[..., crow - threshold:crow + threshold, ccol - threshold:ccol + threshold] = scale
-    x_freq = x_freq * mask
-
-    # IFFT
-    x_freq = torch.fft.ifftshift(x_freq, dim=(-2, -1))
-    x_filtered = torch.fft.ifftn(x_freq, dim=(-2, -1)).real
-
-    return x_filtered.to(x.dtype)
-
-class FreeU_V2:
-    def patch(self, model, b1, b2, s1, s2):
-        model_channels = model.model.model_config.unet_config["model_channels"]
-        scale_dict = {model_channels * 4: (b1, s1), model_channels * 2: (b2, s2)}
-        on_cpu_devices = {}
-
-        def output_block_patch(h, hsp, transformer_options):
-            scale = scale_dict.get(h.shape[1], None)
-            if scale is not None:
-                hidden_mean = h.mean(1).unsqueeze(1)
-                B = hidden_mean.shape[0]
-                hidden_max, _ = torch.max(hidden_mean.view(B, -1), dim=-1, keepdim=True)
-                hidden_min, _ = torch.min(hidden_mean.view(B, -1), dim=-1, keepdim=True)
-                hidden_mean = (hidden_mean - hidden_min.unsqueeze(2).unsqueeze(3)) / (hidden_max - hidden_min).unsqueeze(2).unsqueeze(3)
-
-                h[:,:h.shape[1] // 2] = h[:,:h.shape[1] // 2] * ((scale[0] - 1 ) * hidden_mean + 1)
-
-                if hsp.device not in on_cpu_devices:
-                    try:
-                        hsp = Fourier_filter(hsp, threshold=1, scale=scale[1])
-                    except:
-                        print("Device", hsp.device, "does not support the torch.fft functions used in the FreeU node, switching to CPU.")
-                        on_cpu_devices[hsp.device] = True
-                        hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
-                else:
-                    hsp = Fourier_filter(hsp.cpu(), threshold=1, scale=scale[1]).to(hsp.device)
-
-            return h, hsp
-
-        m = model.clone()
-        m.set_model_output_block_patch(output_block_patch)
-        return (m, )
-
 # Inlined from ldm_patched.contrib.external_model_advanced
 def rescale_zero_terminal_snr_sigmas(sigmas):
     alphas_cumprod = 1 / ((sigmas * sigmas) + 1)
@@ -204,7 +152,6 @@ opVAEEncode = VAEEncode()
 opVAEDecodeTiled = VAEDecodeTiled()
 opVAEEncodeTiled = VAEEncodeTiled()
 opControlNetApplyAdvanced = ControlNetApplyAdvanced()
-opFreeU = FreeU_V2()
 opModelSamplingDiscrete = ModelSamplingDiscrete()
 opModelSamplingContinuousEDM = ModelSamplingContinuousEDM()
 
@@ -277,7 +224,9 @@ class StableDiffusionModel:
             
             # Load patches
             lora_unet = lora.load_lora(lora_sd, lora_keys_unet, log_missing=False)
-            lora_clip = lora.load_lora(lora_sd, lora_keys_clip, log_missing=False)
+            lora_clip = []
+            if self.clip is not None:
+                lora_clip = lora.load_lora(lora_sd, lora_keys_clip, log_missing=False)
 
             if self.unet_with_lora is not None and len(lora_unet) > 0:
                 loaded_keys = self.unet_with_lora.add_patches(lora_unet, weight)
@@ -288,12 +237,6 @@ class StableDiffusionModel:
                 loaded_keys = self.clip_with_lora.add_patches(lora_clip, weight)
                 print(f'Loaded LoRA [{lora_filename}] for CLIP [{self.filename}] '
                       f'with {len(loaded_keys)} keys at weight {weight}.')
-
-
-@torch.no_grad()
-@torch.inference_mode()
-def apply_freeu(model, b1, b2, s1, s2):
-    return opFreeU.patch(model=model, b1=b1, b2=b2, s1=s1, s2=s2)[0]
 
 
 @torch.no_grad()
@@ -381,23 +324,14 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
     return opEmptyLatentImage.generate(width=width, height=height, batch_size=batch_size)[0]
 
 
-@torch.no_grad()
 @torch.inference_mode()
 def decode_vae(vae, latent_image, tiled=False):
-    device = resources.get_torch_device()
-    with precision.autocast_context(device):
-        return decode.decode_latent(vae, latent_image["samples"], tiled=tiled)
+    return vae.decode(latent_image["samples"], tiled=tiled)
 
 
-@torch.no_grad()
 @torch.inference_mode()
-def encode_vae(vae, pixels, tiled=False):
-    device = resources.get_torch_device()
-    with precision.autocast_context(device):
-        if tiled:
-            return opVAEEncodeTiled.encode(pixels=pixels, vae=vae, tile_size=512)[0]
-        else:
-            return opVAEEncode.encode(pixels=pixels, vae=vae)[0]
+def encode_vae(vae, pixels):
+    return vae.encode(pixels)
 
 
 @torch.no_grad()
@@ -410,7 +344,7 @@ def encode_vae_inpaint(vae, pixels, mask):
     w = mask.round()[..., None]
     pixels = pixels * (1 - w) + 0.5 * w
 
-    latent = vae.encode(pixels)
+    latent = vae.encode(pixels)['samples']
     B, C, H, W = latent.shape
 
     latent_mask = mask[:, None, :, :]

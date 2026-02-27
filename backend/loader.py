@@ -121,6 +121,14 @@ class VAE:
             offload_device=offload_device
         )
 
+    def decode(self, samples, tiled=False, tile_size=64):
+        from . import decode
+        return decode.decode_latent(self, samples, tiled=tiled, tile_size=tile_size)
+
+    def encode(self, pixels):
+        from . import encode
+        return encode.encode_pixels(self, pixels)
+
 # --- SDXL Support ---
 
 def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):

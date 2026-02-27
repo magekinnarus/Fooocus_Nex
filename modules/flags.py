@@ -1,4 +1,6 @@
 from enum import IntEnum, Enum
+from backend.sampling import SAMPLER_NAMES
+from backend.schedulers import SCHEDULER_NAMES
 
 disabled = 'Disabled'
 enabled = 'Enabled'
@@ -10,13 +12,6 @@ upscale_fast = 'Upscale (Fast 2x)'
 
 uov_list = [disabled, subtle_variation, strong_variation, upscale_15, upscale_2, upscale_fast]
 
-enhancement_uov_before = "Before First Enhancement"
-enhancement_uov_after = "After Last Enhancement"
-enhancement_uov_processing_order = [enhancement_uov_before, enhancement_uov_after]
-
-enhancement_uov_prompt_type_original = 'Original Prompts'
-enhancement_uov_prompt_type_last_filled = 'Last Filled Enhancement Prompts'
-enhancement_uov_prompt_types = [enhancement_uov_prompt_type_original, enhancement_uov_prompt_type_last_filled]
 
 CIVITAI_NO_KARRAS = ["euler", "euler_ancestral", "heun", "dpm_fast", "dpm_adaptive", "ddim", "uni_pc"]
 
@@ -55,9 +50,6 @@ SAMPLERS = KSAMPLER | SAMPLER_EXTRA
 
 KSAMPLER_NAMES = list(KSAMPLER.keys())
 
-SCHEDULER_NAMES = ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform", "lcm", "turbo", "align_your_steps", "tcd", "edm_playground_v2.5"]
-SAMPLER_NAMES = KSAMPLER_NAMES + list(SAMPLER_EXTRA.keys())
-
 sampler_list = SAMPLER_NAMES
 scheduler_list = SCHEDULER_NAMES
 
@@ -67,7 +59,7 @@ default_vae = 'Default (model)'
 
 
 default_input_image_tab = 'uov_tab'
-input_image_tab_ids = ['uov_tab', 'ip_tab', 'inpaint_tab', 'describe_tab', 'enhance_tab', 'metadata_tab']
+input_image_tab_ids = ['uov_tab', 'ip_tab', 'inpaint_tab', 'metadata_tab']
 
 cn_ip = "ImagePrompt"
 cn_ip_face = "FaceSwap"
@@ -83,9 +75,8 @@ default_parameters = {
 
 output_formats = ['png', 'jpeg', 'webp']
 
-inpaint_mask_models = ['u2net', 'u2netp', 'u2net_human_seg', 'u2net_cloth_seg', 'silueta', 'isnet-general-use', 'isnet-anime', 'sam']
+inpaint_mask_models = ['u2net', 'u2netp', 'u2net_human_seg', 'u2net_cloth_seg', 'silueta', 'isnet-general-use', 'isnet-anime']
 inpaint_mask_cloth_category = ['full', 'upper', 'lower']
-inpaint_mask_sam_model = ['vit_b', 'vit_l', 'vit_h']
 
 inpaint_engine_versions = ['None', 'v1', 'v2.5', 'v2.6']
 inpaint_option_default = 'Inpaint or Outpaint (default)'
@@ -93,9 +84,6 @@ inpaint_option_detail = 'Improve Detail (face, hand, eyes, etc.)'
 inpaint_option_modify = 'Modify Content (add objects, change background, etc.)'
 inpaint_options = [inpaint_option_default, inpaint_option_detail, inpaint_option_modify]
 
-describe_type_photo = 'Photograph'
-describe_type_anime = 'Art/Anime'
-describe_types = [describe_type_photo, describe_type_anime]
 
 sdxl_aspect_ratios = [
     '704*1408', '704*1344', '768*1344', '768*1280', '832*1216', '832*1152',
@@ -108,12 +96,10 @@ sdxl_aspect_ratios = [
 
 class MetadataScheme(Enum):
     FOOOCUS = 'fooocus'
-    A1111 = 'a1111'
 
 
 metadata_scheme = [
     (f'{MetadataScheme.FOOOCUS.value} (json)', MetadataScheme.FOOOCUS.value),
-    (f'{MetadataScheme.A1111.value} (plain text)', MetadataScheme.A1111.value),
 ]
 
 

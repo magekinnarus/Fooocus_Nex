@@ -8,7 +8,7 @@ if exist "venv\Scripts\activate.bat" (
     exit /b
 )
 
-python launch.py --skip-model-load %*
+python launch.py %*
 
 echo.
 echo Fooocus closed.

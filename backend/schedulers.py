@@ -18,7 +18,7 @@ NOISE_LEVELS = {
     "SDXL": [14.6146412293, 6.3184485287, 3.7681790315, 2.1811480769, 1.3405244945, 0.8620721141, 0.5550693289, 0.3798540708, 0.2332364134, 0.1114188177, 0.0291671582],
 }
 
-def simple_scheduler(model_sampling: Any, steps: int) -> torch.Tensor:
+def simple_scheduler(model_sampling: Any, steps: int, **kwargs) -> torch.Tensor:
     s = model_sampling
     sigs = []
     ss = len(s.sigmas) / steps
@@ -27,7 +27,7 @@ def simple_scheduler(model_sampling: Any, steps: int) -> torch.Tensor:
     sigs += [0.0]
     return torch.FloatTensor(sigs)
 
-def ddim_scheduler(model_sampling: Any, steps: int) -> torch.Tensor:
+def ddim_scheduler(model_sampling: Any, steps: int, **kwargs) -> torch.Tensor:
     s = model_sampling
     sigs = []
     x = 1
@@ -44,7 +44,7 @@ def ddim_scheduler(model_sampling: Any, steps: int) -> torch.Tensor:
     sigs = sigs[::-1]
     return torch.FloatTensor(sigs)
 
-def normal_scheduler(model_sampling: Any, steps: int, sgm: bool = False, floor: bool = False) -> torch.Tensor:
+def normal_scheduler(model_sampling: Any, steps: int, sgm: bool = False, floor: bool = False, **kwargs) -> torch.Tensor:
     s = model_sampling
     start = s.timestep(s.sigma_max)
     end = s.timestep(s.sigma_min)
@@ -68,7 +68,7 @@ def normal_scheduler(model_sampling: Any, steps: int, sgm: bool = False, floor: 
 
     return torch.FloatTensor(sigs)
 
-def beta_scheduler(model_sampling: Any, steps: int, alpha: float = 0.6, beta: float = 0.6) -> torch.Tensor:
+def beta_scheduler(model_sampling: Any, steps: int, alpha: float = 0.6, beta: float = 0.6, **kwargs) -> torch.Tensor:
     total_timesteps = (len(model_sampling.sigmas) - 1)
     ts = 1 - numpy.linspace(0, 1, steps, endpoint=False)
     ts = numpy.rint(scipy.stats.beta.ppf(ts, alpha, beta) * total_timesteps)
@@ -82,7 +82,7 @@ def beta_scheduler(model_sampling: Any, steps: int, alpha: float = 0.6, beta: fl
     sigs.append(0.0)
     return torch.FloatTensor(sigs)
 
-def linear_quadratic_schedule(model_sampling: Any, steps: int, threshold_noise: float = 0.025, linear_steps: Optional[int] = None) -> torch.Tensor:
+def linear_quadratic_schedule(model_sampling: Any, steps: int, threshold_noise: float = 0.025, linear_steps: Optional[int] = None, **kwargs) -> torch.Tensor:
     if steps == 1:
         sigma_schedule = [1.0, 0.0]
     else:
