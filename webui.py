@@ -14,6 +14,7 @@ import modules.gradio_hijack as grh
 import modules.style_sorter as style_sorter
 import modules.meta_parser
 import modules.ui_components.metadata_ui as metadata_ui
+import modules.ui_components.settings_panel as settings_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -304,39 +305,20 @@ with shared.gradio_root:
 
         with gr.Column(scale=1, visible=True) as advanced_column:
             with gr.Tab(label='Settings'):
+                settings_panel_result = settings_panel.build_settings_tab()
                 if not args_manager.args.disable_preset_selection:
-                    preset_selection = gr.Dropdown(label='Preset',
-                                                   choices=modules.config.available_presets,
-                                                   value=args_manager.args.preset if args_manager.args.preset else "initial",
-                                                   interactive=True)
+                    preset_selection = settings_panel_result['preset_selection']
+                performance_selection = settings_panel_result['performance_selection']
+                aspect_ratios_selection = settings_panel_result['aspect_ratios_selection']
+                image_number = settings_panel_result['image_number']
+                output_format = settings_panel_result['output_format']
+                negative_prompt = settings_panel_result['negative_prompt']
+                seed_random = settings_panel_result['seed_random']
+                image_seed = settings_panel_result['image_seed']
+                history_link = settings_panel_result['history_link']
 
-                performance_selection = gr.Radio(label='Performance',
-                                                 choices=flags.Performance.values(),
-                                                 value=modules.config.default_performance,
-                                                 elem_classes=['performance_selection'])
-
-                with gr.Accordion(label='Aspect Ratios', open=False, elem_id='aspect_ratios_accordion') as aspect_ratios_accordion:
-                    aspect_ratios_selection = gr.Radio(label='Aspect Ratios', show_label=False,
-                                                       choices=modules.config.available_aspect_ratios_labels,
-                                                       value=modules.config.default_aspect_ratio,
-                                                       info='width × height',
-                                                       elem_classes='aspect_ratios')
-
-                    aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
-                    shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
-
-                image_number = gr.Slider(label='Image Number', minimum=1, maximum=modules.config.default_max_image_number, step=1, value=modules.config.default_image_number)
-
-                output_format = gr.Radio(label='Output Format',
-                                         choices=flags.OutputFormat.list(),
-                                         value=modules.config.default_output_format)
-
-                negative_prompt = gr.Textbox(label='Negative Prompt', show_label=True, placeholder="Type prompt here.",
-                                             info='Describing what you do not want to see.', lines=2,
-                                             elem_id='negative_prompt',
-                                             value=modules.config.default_prompt_negative)
-                seed_random = gr.Checkbox(label='Random', value=True)
-                image_seed = gr.Textbox(label='Seed', value=0, max_lines=1, visible=False) # workaround for https://github.com/gradio-app/gradio/issues/5354
+                aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
+                shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, _js='(x)=>{refresh_aspect_ratios_label(x);}')
 
                 def random_checked(r):
                     return gr.update(visible=not r)
@@ -362,7 +344,6 @@ with shared.gradio_root:
 
                     return gr.update(value=f'<a href="file={get_current_html_path(output_format)}" target="_blank">\U0001F4DA History Log</a>')
 
-                history_link = gr.HTML()
                 shared.gradio_root.load(update_history_link, outputs=history_link, queue=False, show_progress=False)
 
             with gr.Tab(label='Styles', elem_classes=['style_selections_tab']):
