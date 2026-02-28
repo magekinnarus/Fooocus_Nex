@@ -385,53 +385,57 @@ with shared.gradio_root:
                 advanced_panel_result = advanced_panel.build_advanced_tab()
                 guidance_scale = advanced_panel_result['guidance_scale']
                 sharpness = advanced_panel_result['sharpness']
-                adm_scaler_positive = advanced_panel_result['adm_scaler_positive']
-                adm_scaler_negative = advanced_panel_result['adm_scaler_negative']
-                adm_scaler_end = advanced_panel_result['adm_scaler_end']
-                adaptive_cfg = advanced_panel_result['adaptive_cfg']
-                clip_skip = advanced_panel_result['clip_skip']
-                sampler_name = advanced_panel_result['sampler_name']
-                scheduler_name = advanced_panel_result['scheduler_name']
-                generate_image_grid = advanced_panel_result['generate_image_grid']
-                overwrite_step = advanced_panel_result['overwrite_step']
-                overwrite_width = advanced_panel_result['overwrite_width']
-                overwrite_height = advanced_panel_result['overwrite_height']
-                overwrite_vary_strength = advanced_panel_result['overwrite_vary_strength']
-                overwrite_upscale_strength = advanced_panel_result['overwrite_upscale_strength']
-                disable_preview = advanced_panel_result['disable_preview']
-                disable_intermediate_results = advanced_panel_result['disable_intermediate_results']
-                disable_seed_increment = advanced_panel_result['disable_seed_increment']
-                read_wildcards_in_order = advanced_panel_result['read_wildcards_in_order']
-                if not args_manager.args.disable_metadata:
-                    save_metadata_to_images = advanced_panel_result['save_metadata_to_images']
-                    metadata_scheme = advanced_panel_result['metadata_scheme']
 
-            with gr.Tab(label='Control'):
-                control_panel_result = control_panel.build_control_tab()
-                debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
-                skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
-                mixing_image_prompt_and_vary_upscale = control_panel_result['mixing_image_prompt_and_vary_upscale']
-                mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
-                controlnet_softness = control_panel_result['controlnet_softness']
-                canny_low_threshold = control_panel_result['canny_low_threshold']
-                canny_high_threshold = control_panel_result['canny_high_threshold']
+                with gr.Column(visible=True) as dev_tools:
+                    with gr.Tab(label='Debug Tools'):
+                        debug_panel_result = advanced_panel.build_debug_tab()
+                        adm_scaler_positive = debug_panel_result['adm_scaler_positive']
+                        adm_scaler_negative = debug_panel_result['adm_scaler_negative']
+                        adm_scaler_end = debug_panel_result['adm_scaler_end']
+                        adaptive_cfg = debug_panel_result['adaptive_cfg']
+                        clip_skip = debug_panel_result['clip_skip']
+                        sampler_name = debug_panel_result['sampler_name']
+                        scheduler_name = debug_panel_result['scheduler_name']
+                        generate_image_grid = debug_panel_result['generate_image_grid']
+                        overwrite_step = debug_panel_result['overwrite_step']
+                        overwrite_width = debug_panel_result['overwrite_width']
+                        overwrite_height = debug_panel_result['overwrite_height']
+                        overwrite_vary_strength = debug_panel_result['overwrite_vary_strength']
+                        overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
+                        disable_preview = debug_panel_result['disable_preview']
+                        disable_intermediate_results = debug_panel_result['disable_intermediate_results']
+                        disable_seed_increment = debug_panel_result['disable_seed_increment']
+                        read_wildcards_in_order = debug_panel_result['read_wildcards_in_order']
+                        if not args_manager.args.disable_metadata:
+                            save_metadata_to_images = debug_panel_result['save_metadata_to_images']
+                            metadata_scheme = debug_panel_result['metadata_scheme']
 
-            with gr.Tab(label='Inpaint'):
-                inpaint_panel_result = inpaint_panel.build_inpaint_tab(
-                    inpaint_advanced_masking_checkbox, invert_mask_checkbox,
-                    inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image
-                )
-                debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
-                inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
-                inpaint_engine = inpaint_panel_result['inpaint_engine']
-                inpaint_strength = inpaint_panel_result['inpaint_strength']
-                inpaint_respective_field = inpaint_panel_result['inpaint_respective_field']
-                inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
-                inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
+                    with gr.Tab(label='Control'):
+                        control_panel_result = control_panel.build_control_tab()
+                        debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
+                        skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
+                        mixing_image_prompt_and_vary_upscale = control_panel_result['mixing_image_prompt_and_vary_upscale']
+                        mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
+                        controlnet_softness = control_panel_result['controlnet_softness']
+                        canny_low_threshold = control_panel_result['canny_low_threshold']
+                        canny_high_threshold = control_panel_result['canny_high_threshold']
 
-                inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                 inpaint_strength, inpaint_respective_field,
-                                 inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate]
+                    with gr.Tab(label='Inpaint'):
+                        inpaint_panel_result = inpaint_panel.build_inpaint_tab(
+                            inpaint_advanced_masking_checkbox, invert_mask_checkbox,
+                            inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image
+                        )
+                        debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
+                        inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
+                        inpaint_engine = inpaint_panel_result['inpaint_engine']
+                        inpaint_strength = inpaint_panel_result['inpaint_strength']
+                        inpaint_respective_field = inpaint_panel_result['inpaint_respective_field']
+                        inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
+                        inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
+
+                        inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
+                                         inpaint_strength, inpaint_respective_field,
+                                         inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate]
 
 
 

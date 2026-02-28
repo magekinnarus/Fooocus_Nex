@@ -5,41 +5,47 @@ import args_manager
 
 def build_advanced_tab():
     """
-    Builds the Advanced tab: guidance, sharpness, ADM, sampler, scheduler, etc.
+    Builds the Advanced tab components.
     
     Returns:
         dict: Gradio components mapping name to instance.
     """
     results = {}
 
-    with gr.Row():
-        results['guidance_scale'] = gr.Slider(
-            label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
-            value=modules.config.default_cfg_scale,
-            info='Higher value means following prompt more strictly.'
-        )
-        results['sharpness'] = gr.Slider(
-            label='Image Sharpness', minimum=0.0, maximum=30.0, step=0.01,
-            value=modules.config.default_sample_sharpness,
-            info='Higher value means sharper edges.'
-        )
+    results['guidance_scale'] = gr.Slider(
+        label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
+        value=modules.config.default_cfg_scale,
+        info='Higher value means following prompt more strictly.'
+    )
+    results['sharpness'] = gr.Slider(
+        label='Image Sharpness', minimum=0.0, maximum=30.0, step=0.01,
+        value=modules.config.default_sample_sharpness,
+        info='Higher value means sharper edges.'
+    )
 
-    with gr.Row():
-        results['adm_scaler_positive'] = gr.Slider(
-            label='ADM Guidance Positive', minimum=0.0, maximum=3.0, step=0.01,
-            value=modules.config.default_adms[0],
-            info='Positive ADM Guidance.'
-        )
-        results['adm_scaler_negative'] = gr.Slider(
-            label='ADM Guidance Negative', minimum=0.0, maximum=3.0, step=0.01,
-            value=modules.config.default_adms[1],
-            info='Negative ADM Guidance.'
-        )
-        results['adm_scaler_end'] = gr.Slider(
-            label='ADM Guidance End At Step', minimum=0.0, maximum=1.0, step=0.01,
-            value=modules.config.default_adms[2],
-            info='ADM Guidance End At Step.'
-        )
+    return results
+
+def build_debug_tab():
+    """
+    Builds the Debug Tools tab contents.
+    """
+    results = {}
+
+    results['adm_scaler_positive'] = gr.Slider(
+        label='Positive ADM Guidance Scaler', minimum=0.1, maximum=3.0, step=0.001,
+        value=1.5,
+        info='The scaler multiplied to positive ADM (use 1.0 to disable). '
+    )
+    results['adm_scaler_negative'] = gr.Slider(
+        label='Negative ADM Guidance Scaler', minimum=0.1, maximum=3.0, step=0.001,
+        value=0.8,
+        info='The scaler multiplied to negative ADM (use 1.0 to disable). '
+    )
+    results['adm_scaler_end'] = gr.Slider(
+        label='ADM Guidance End At Step', minimum=0.0, maximum=1.0, step=0.001,
+        value=0.3,
+        info='When to end the guidance from positive/negative ADM. '
+    )
 
     results['adaptive_cfg'] = gr.Slider(
         label='CFG Mimicking from TSNR', minimum=1.0, maximum=30.0, step=0.01,
