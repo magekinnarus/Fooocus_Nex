@@ -105,7 +105,9 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     # Outpaint is handled before calling this in the original code, but we keep it here for modularity if needed
     # or just assume it was called.
     
-    inpaint_worker.current_task = inpaint_worker.InpaintWorker(
+    from modules.pipeline.inpaint import InpaintPipeline
+    inpaint = InpaintPipeline()
+    ctx = inpaint.prepare(
         image=inpaint_image,
         mask=inpaint_mask,
         use_fill=denoising_strength > 0.99,
@@ -114,54 +116,37 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     
     if task_state.debugging_inpaint_preprocessor:
         if yield_result_callback:
-            yield_result_callback(task_state, inpaint_worker.current_task.visualize_mask_processing(), 100, do_not_show_finished_images=True)
+            yield_result_callback(task_state, [ctx.interested_fill, ctx.interested_mask, ctx.interested_image], 100, do_not_show_finished_images=True)
         raise EarlyReturnException
 
-    if progressbar_callback:
-        task_state.current_progress += 1
-        progressbar_callback(task_state, task_state.current_progress, 'VAE Inpaint encoding ...')
-    
-    inpaint_pixel_fill = core.numpy_to_pytorch(inpaint_worker.current_task.interested_fill)
-    inpaint_pixel_image = core.numpy_to_pytorch(inpaint_worker.current_task.interested_image)
-    inpaint_pixel_mask = core.numpy_to_pytorch(inpaint_worker.current_task.interested_mask)
-    
     candidate_vae, candidate_vae_swap = pipeline.get_candidate_vae(
         steps=task_state.steps,
         denoise=denoising_strength
     )
-    latent_inpaint, latent_mask = core.encode_vae_inpaint(
-        mask=inpaint_pixel_mask,
+    
+    ctx = inpaint.encode(
+        context=ctx,
         vae=candidate_vae,
-        pixels=inpaint_pixel_image)
+        vae_swap=candidate_vae_swap,
+        progressbar_callback=progressbar_callback,
+        task_state=task_state
+    )
     
-    latent_swap = None
-    if candidate_vae_swap is not None:
-        if progressbar_callback:
-            task_state.current_progress += 1
-            progressbar_callback(task_state, task_state.current_progress, 'VAE SD15 encoding ...')
-        latent_swap = core.encode_vae(vae=candidate_vae_swap, pixels=inpaint_pixel_fill)['samples']
-    
-    if progressbar_callback:
-        task_state.current_progress += 1
-        progressbar_callback(task_state, task_state.current_progress, 'VAE encoding ...')
-    
-    latent_fill = core.encode_vae(vae=candidate_vae, pixels=inpaint_pixel_fill)['samples']
-    inpaint_worker.current_task.load_latent(latent_fill=latent_fill, latent_mask=latent_mask, latent_swap=latent_swap)
+    task_state.inpaint_context = ctx
     
     if inpaint_parameterized:
-        pipeline.final_unet = inpaint_worker.current_task.patch(
-            inpaint_head_model_path=inpaint_head_model_path,
-            inpaint_latent=latent_inpaint,
-            inpaint_latent_mask=latent_mask,
-            model=pipeline.final_unet
+        pipeline.final_unet = inpaint.patch_model(
+            context=ctx,
+            unet=pipeline.final_unet,
+            head_model_path=inpaint_head_model_path
         )
     
     if not inpaint_disable_initial_latent:
-        task_state.initial_latent = {'samples': latent_fill}
+        task_state.initial_latent = {'samples': ctx.latent_fill}
     
-    B, C, H, W = latent_fill.shape
+    B, C, H, W = ctx.latent_fill.shape
     task_state.height, task_state.width = H * 8, W * 8
-    final_height, final_width = inpaint_worker.current_task.image.shape[:2]
+    final_height, final_width = ctx.original_image.shape[:2]
     print(f'Final resolution is {str((final_width, final_height))}, latent is {str((task_state.width, task_state.height))}.')
 
 

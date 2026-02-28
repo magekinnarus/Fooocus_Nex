@@ -20,6 +20,7 @@ from modules.pipeline import (
     apply_image_input,
     apply_control_nets,
     apply_vary,
+    apply_outpaint,
     apply_upscale,
     apply_inpaint,
     process_task,
@@ -200,7 +201,8 @@ def handler(async_task: AsyncTask):
 
     if 'inpaint' in s.goals:
         try:
-            apply_inpaint(s, res['inpaint_head_model_path'], res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
+            inpaint_image, inpaint_mask = apply_outpaint(s, res['inpaint_image'], res['inpaint_mask'])
+            apply_inpaint(s, res['inpaint_head_model_path'], inpaint_image, inpaint_mask, progressbar, yield_result)
         except EarlyReturnException:
             return
 

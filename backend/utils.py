@@ -148,7 +148,7 @@ def load_torch_file(ckpt, device=None):
     if ckpt.lower().endswith(".safetensors"):
         return safetensors.torch.load_file(ckpt, device=device.type)
     else:
-        raise ValueError(f"Unsupported file format: {ckpt}. Only .safetensors is supported.")
+        return torch.load(ckpt, map_location=device, weights_only=True)
 
 def set_attr(obj, attr, value):
     attrs = attr.split(".")

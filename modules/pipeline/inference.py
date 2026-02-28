@@ -87,8 +87,10 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
     
     del positive_cond, negative_cond  # Save memory
     
-    if inpaint_worker.current_task is not None:
-        imgs = [inpaint_worker.current_task.post_process(x) for x in imgs]
+    if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
+        from modules.pipeline.inpaint import InpaintPipeline
+        inpaint = InpaintPipeline()
+        imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
     
     current_progress = int(preparation_steps + (100 - preparation_steps) / float(all_steps) * task_state.steps)
     

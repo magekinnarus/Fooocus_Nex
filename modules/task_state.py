@@ -86,6 +86,7 @@ class TaskState:
     width: int = 1024
     height: int = 1024
     use_expansion: bool = False
+    inpaint_context: object = None
     use_style: bool = True
 
     def __post_init__(self):
