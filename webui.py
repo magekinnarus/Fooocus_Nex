@@ -15,6 +15,8 @@ import modules.style_sorter as style_sorter
 import modules.meta_parser
 import modules.ui_components.metadata_ui as metadata_ui
 import modules.ui_components.settings_panel as settings_panel
+import modules.ui_components.styles_panel as styles_panel
+import modules.ui_components.models_panel as models_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -347,20 +349,10 @@ with shared.gradio_root:
                 shared.gradio_root.load(update_history_link, outputs=history_link, queue=False, show_progress=False)
 
             with gr.Tab(label='Styles', elem_classes=['style_selections_tab']):
-                style_sorter.try_load_sorted_styles(
-                    style_names=legal_style_names,
-                    default_selected=modules.config.default_styles)
-
-                style_search_bar = gr.Textbox(show_label=False, container=False,
-                                              placeholder="\U0001F50E Type here to search styles ...",
-                                              value="",
-                                              label='Search Styles')
-                style_selections = gr.CheckboxGroup(show_label=False, container=False,
-                                                    choices=copy.deepcopy(style_sorter.all_styles),
-                                                    value=copy.deepcopy(modules.config.default_styles),
-                                                    label='Selected Styles',
-                                                    elem_classes=['style_selections'])
-                gradio_receiver_style_selections = gr.Textbox(elem_id='gradio_receiver_style_selections', visible=False)
+                styles_panel_result = styles_panel.build_styles_tab()
+                style_search_bar = styles_panel_result['style_search_bar']
+                style_selections = styles_panel_result['style_selections']
+                gradio_receiver_style_selections = styles_panel_result['gradio_receiver_style_selections']
 
                 shared.gradio_root.load(lambda: gr.update(choices=copy.deepcopy(style_sorter.all_styles)),
                                         outputs=style_selections)
@@ -380,30 +372,12 @@ with shared.gradio_root:
                     lambda: None, _js='()=>{refresh_style_localization();}')
 
             with gr.Tab(label='Models'):
-                with gr.Group():
-                    with gr.Row():
-                        base_model = gr.Dropdown(label='Base Model', choices=modules.config.model_filenames, value=modules.config.default_base_model_name, show_label=True)
-                        vae_model = gr.Dropdown(label='VAE', choices=[modules.flags.default_vae] + modules.config.vae_filenames, value=modules.config.default_vae, show_label=True)
-
-                    clip_model = gr.Dropdown(label='Force CLIP', choices=['None'] + modules.config.clip_filenames, value='None', show_label=True)
-
-                with gr.Group():
-                    lora_ctrls = []
-
-                    for i, (enabled, filename, weight) in enumerate(modules.config.default_loras):
-                        with gr.Row():
-                            lora_enabled = gr.Checkbox(label='Enable', value=enabled,
-                                                       elem_classes=['lora_enable', 'min_check'], scale=1)
-                            lora_model = gr.Dropdown(label=f'LoRA {i + 1}',
-                                                     choices=['None'] + modules.config.lora_filenames, value=filename,
-                                                     elem_classes='lora_model', scale=5)
-                            lora_weight = gr.Slider(label='Weight', minimum=modules.config.default_loras_min_weight,
-                                                    maximum=modules.config.default_loras_max_weight, step=0.01, value=weight,
-                                                    elem_classes='lora_weight', scale=5)
-                            lora_ctrls += [lora_enabled, lora_model, lora_weight]
-
-                with gr.Row():
-                    refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button')
+                models_panel_result = models_panel.build_models_tab()
+                base_model = models_panel_result['base_model']
+                vae_model = models_panel_result['vae_model']
+                clip_model = models_panel_result['clip_model']
+                lora_ctrls = models_panel_result['lora_ctrls']
+                refresh_files = models_panel_result['refresh_files']
             with gr.Tab(label='Advanced'):
                 guidance_scale = gr.Slider(label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
                                            value=modules.config.default_cfg_scale,

@@ -105,7 +105,7 @@ class ModelSamplingDiscrete:
     def patch(self, model, sampling, zsnr):
         m = model.clone()
         sampling_base = ldm_patched.modules.model_sampling.ModelSamplingDiscrete
-        if sampling == "eps":
+        if sampling in ["eps", "lcm", "tcd"]:
             sampling_type = ldm_patched.modules.model_sampling.EPS
         elif sampling == "v_prediction":
             sampling_type = ldm_patched.modules.model_sampling.V_PREDICTION
