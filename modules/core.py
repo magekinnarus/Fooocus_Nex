@@ -3,7 +3,7 @@ import einops
 import torch
 import numpy as np
 import ldm_patched.modules.model_detection
-from backend import loader, conditioning, decode, resources, sampling, precision
+from backend import loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.controlnet
 import ldm_patched.modules.latent_formats
@@ -20,16 +20,22 @@ from modules.util import get_file_from_folder_list
 from backend.lora import match_lora, model_lora_keys_unet, model_lora_keys_clip
 import modules.config
 
-from backend import loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
-
 # Inlined from ldm_patched.contrib.external
 class VAEDecode:
     def decode(self, vae, samples):
-        return (vae.decode(samples["samples"]), )
+        resources.load_models_gpu([vae.patcher])
+        result = (vae.decode(samples["samples"]), )
+        vae.patcher.detach()
+        resources.soft_empty_cache()
+        return result
 
 class VAEDecodeTiled:
     def decode(self, vae, samples, tile_size):
-        return (vae.decode_tiled(samples["samples"], tile_x=tile_size // 8, tile_y=tile_size // 8, ), )
+        resources.load_models_gpu([vae.patcher])
+        result = (vae.decode_tiled(samples["samples"], tile_x=tile_size // 8, tile_y=tile_size // 8, ), )
+        vae.patcher.detach()
+        resources.soft_empty_cache()
+        return result
 
 def vae_encode_crop_pixels(pixels):
     x = (pixels.shape[1] // 8) * 8
@@ -42,15 +48,23 @@ def vae_encode_crop_pixels(pixels):
 
 class VAEEncode:
     def encode(self, vae, pixels):
+        resources.load_models_gpu([vae.patcher])
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode(pixels[:,:,:,:3])
-        return ({"samples":t}, )
+        result = ({"samples":t}, )
+        vae.patcher.detach()
+        resources.soft_empty_cache()
+        return result
 
 class VAEEncodeTiled:
     def encode(self, vae, pixels, tile_size):
+        resources.load_models_gpu([vae.patcher])
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode_tiled(pixels[:,:,:,:3], tile_x=tile_size, tile_y=tile_size, )
-        return ({"samples":t}, )
+        result = ({"samples":t}, )
+        vae.patcher.detach()
+        resources.soft_empty_cache()
+        return result
 
 class EmptyLatentImage:
     def __init__(self):
@@ -326,12 +340,20 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
 
 @torch.inference_mode()
 def decode_vae(vae, latent_image, tiled=False):
-    return vae.decode(latent_image["samples"], tiled=tiled)
+    resources.load_models_gpu([vae.patcher])
+    result = vae.decode(latent_image["samples"], tiled=tiled)
+    vae.patcher.detach()
+    resources.soft_empty_cache()
+    return result
 
 
 @torch.inference_mode()
 def encode_vae(vae, pixels):
-    return vae.encode(pixels)
+    resources.load_models_gpu([vae.patcher])
+    result = vae.encode(pixels)
+    vae.patcher.detach()
+    resources.soft_empty_cache()
+    return result
 
 
 @torch.no_grad()
@@ -431,7 +453,11 @@ def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sa
 
     device = resources.get_torch_device()
     latent_image = latent["samples"].to(device)
-    
+
+    denoise_mask = latent.get("noise_mask", None)
+    if denoise_mask is not None:
+        denoise_mask = denoise_mask.to(device)
+
     # Prep noise
     if disable_noise:
         noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device=device)
@@ -450,22 +476,23 @@ def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sa
             callback_function(step, x0, x, total_steps, preview_image)
 
     # Route through backend sampling
-    with precision.autocast_context(device):
-        samples = sampling.sample_sdxl(
-            model,
-            noise,
-            positive,
-            negative,
-            cfg=cfg,
-            steps=steps,
-            sampler_name=sampler_name,
-            scheduler=scheduler,
-            denoise=denoise,
-            seed=seed,
-            latent_image=latent_image,
-            callback=wrapped_callback,
-            model_options={"quality": quality or {}}
-        )
+    # NOTE: autocast is already applied inside KSampler.sample() — no need to wrap here.
+    samples = sampling.sample_sdxl(
+        model,
+        noise,
+        positive,
+        negative,
+        cfg=cfg,
+        steps=steps,
+        sampler_name=sampler_name,
+        scheduler=scheduler,
+        denoise=denoise,
+        seed=seed,
+        latent_image=latent_image,
+        denoise_mask=denoise_mask,
+        callback=wrapped_callback,
+        model_options={"quality": quality or {}}
+    )
 
     out = latent.copy()
     out["samples"] = samples

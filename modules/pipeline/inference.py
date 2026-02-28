@@ -3,7 +3,6 @@ import torch
 import modules.core as core
 import modules.default_pipeline as pipeline
 import modules.flags as flags
-import modules.inpaint_worker as inpaint_worker
 import backend.resources as resources
 import backend.loader as loader
 from modules.pipeline.output import save_and_log, yield_result
@@ -22,6 +21,12 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
         progress_val = int(preparation_steps + task_state.callback_steps)
         status_text = f'Sampling step {step + 1}/{total_steps}, image {current_task_id + 1}/{total_count} ...'
         
+        if y is not None and hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
+            # y is a numpy array (H, W, 3) from the previewer
+            from modules.pipeline.inpaint import InpaintPipeline
+            inpaint = InpaintPipeline()
+            y = inpaint.stitch(task_state.inpaint_context, y)
+            
         task_state.yields.append(['preview', (progress_val, status_text, y)])
 
     return callback

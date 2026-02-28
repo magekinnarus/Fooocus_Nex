@@ -9,34 +9,83 @@ from modules.core import numpy_to_pytorch
 import modules.core as core
 import modules.default_pipeline as pipeline
 
+import modules.flags as flags
+
+
 @dataclass
 class InpaintContext:
     """Carries all state between inpaint stages. No globals."""
-    original_image: np.ndarray      # Full original image for final compositing
-    original_mask: np.ndarray       # Full original mask
-    interested_area: tuple           # (a, b, c, d) bounding box
-    interested_image: np.ndarray     # Cropped + upscaled region
-    interested_fill: np.ndarray      # Fill version for latent init
-    interested_mask: np.ndarray      # Processed mask for encoding
-    context_mask: np.ndarray         # Full-image soft mask for color correction
-    
-    latent_fill: torch.Tensor = None        # Encoded fill latent
-    latent_mask: torch.Tensor = None        # Downsampled latent-space mask
-    latent_swap: torch.Tensor = None        # SD1.5 swap latent (if applicable)
-    inpaint_head_feature: torch.Tensor = None
+    original_image: np.ndarray       # Full original image for final compositing
+    original_mask: np.ndarray        # Full original mask (0=keep, 255=regenerate)
+    bb: tuple                        # (y1, y2, x1, x2) bounding box in original image coords
+    bb_image: np.ndarray             # Cropped region resized to SDXL resolution
+    bb_mask: np.ndarray              # Cropped mask resized to SDXL resolution
+    target_w: int                    # SDXL-snapped width
+    target_h: int                    # SDXL-snapped height
+    blend_mask: np.ndarray           # Full-image morphological gradient for stitching
 
-class InpaintHead(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.head = torch.nn.Parameter(torch.empty(size=(320, 5, 3, 3), device='cpu'))
-
-    def __call__(self, x):
-        x = torch.nn.functional.pad(x, (1, 1, 1, 1), "replicate")
-        return torch.nn.functional.conv2d(input=x, weight=self.head)
 
 class InpaintPipeline:
+    SDXL_RESOLUTIONS = [(int(s.split('*')[0]), int(s.split('*')[1])) for s in flags.sdxl_aspect_ratios]
+
     def __init__(self):
-        self._inpaint_head_model = None
+        pass
+
+    def snap_to_sdxl_resolution(self, w, h):
+        target_ratio = w / h
+        best = min(self.SDXL_RESOLUTIONS, key=lambda r: abs(r[0]/r[1] - target_ratio))
+        return best
+
+    def _expand_canvas(self, image, y1, y2, x1, x2):
+        H, W, C = image.shape
+        ey1, ey2, ex1, ex2 = y1, y2, x1, x2
+        
+        # Calculate overflow
+        oy1 = max(0, -y1)
+        oy2 = max(0, y2 - H)
+        ox1 = max(0, -x1)
+        ox2 = max(0, x2 - W)
+        
+        if oy1 == 0 and oy2 == 0 and ox1 == 0 and ox2 == 0:
+            return image[y1:y2, x1:x2], (0, y2-y1, 0, x2-x1)
+            
+        # Create expanded canvas
+        canvas_h = y2 - y1
+        canvas_w = x2 - x1
+        canvas = np.zeros((canvas_h, canvas_w, C), dtype=image.dtype)
+        
+        # Copy original image part
+        iy1, iy2 = max(0, y1), min(H, y2)
+        ix1, ix2 = max(0, x1), min(W, x2)
+        cy1, cy2 = iy1 - y1, iy2 - y1
+        cx1, cx2 = ix1 - x1, ix2 - x1
+        canvas[cy1:cy2, cx1:cx2] = image[iy1:iy2, ix1:ix2]
+        
+        # Edge replication for overflow
+        if oy1 > 0: canvas[:cy1, cx1:cx2] = canvas[cy1:cy1+1, cx1:cx2]
+        if oy2 > 0: canvas[cy2:, cx1:cx2] = canvas[cy2-1:cy2, cx1:cx2]
+        if ox1 > 0: canvas[:, :cx1] = canvas[:, cx1:cx1+1]
+        if ox2 > 0: canvas[:, cx2:] = canvas[:, cx2-1:cx2]
+        
+        # Apply pixelation to overflow regions
+        def pixelate(slice_idx, block_size):
+            block_size = max(4, block_size)
+            h, w, c = slice_idx.shape
+            if h > 0 and w > 0:
+                is_single_channel = (c == 1)
+                small = cv2.resize(slice_idx, (max(1, w // block_size), max(1, h // block_size)), interpolation=cv2.INTER_NEAREST)
+                large = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+                if is_single_channel and large.ndim == 2:
+                    large = large[:, :, None]
+                return large
+            return slice_idx
+
+        if oy1 > 0: canvas[:cy1, :] = pixelate(canvas[:cy1, :], oy1 // 16)
+        if oy2 > 0: canvas[cy2:, :] = pixelate(canvas[cy2:, :], oy2 // 16)
+        if ox1 > 1: canvas[:, :cx1] = pixelate(canvas[:, :cx1], ox1 // 16) # ox1 > 1 to avoid single pixel strips
+        if ox2 > 1: canvas[:, cx2:] = pixelate(canvas[:, cx2:], ox2 // 16)
+        
+        return canvas, (cy1, cy2, cx1, cx2)
 
     def _box_blur(self, x, k):
         kernel_size = 2 * k + 1
@@ -53,167 +102,116 @@ class InpaintPipeline:
             x_int16 = np.maximum(maxed, x_int16)
         return np.clip(x_int16, 0, 255).astype(np.uint8)
 
-    def _up255(self, x, t=0):
-        y = np.zeros_like(x).astype(np.uint8)
-        y[x > t] = 255
-        return y
-
-    def _regulate_abcd(self, x, a, b, c, d):
-        H, W = x.shape[:2]
-        return int(max(0, min(a, H))), int(max(0, min(b, H))), int(max(0, min(c, W))), int(max(0, min(d, W)))
-
-    def _compute_initial_abcd(self, x):
-        indices = np.where(x)
-        if len(indices[0]) == 0:
-            return 0, x.shape[0], 0, x.shape[1]
-        a, b, c, d = np.min(indices[0]), np.max(indices[0]), np.min(indices[1]), np.max(indices[1])
-        abp, abm = (b + a) // 2, (b - a) // 2
-        cdp, cdm = (d + c) // 2, (d - c) // 2
-        l = int(max(abm, cdm) * 1.15)
-        a, b, c, d = abp - l, abp + l + 1, cdp - l, cdp + l + 1
-        return self._regulate_abcd(x, a, b, c, d)
-
-    def _solve_abcd(self, x, a, b, c, d, k):
-        k = float(k)
-        H, W = x.shape[:2]
-        if k >= 1.0:
-            return 0, H, 0, W
-        while True:
-            if b - a >= H * k and d - c >= W * k:
-                break
-            add_h = (b - a) < (d - c) or d - c == W
-            if b - a == H: add_h = False
-            if add_h: a, b = a - 1, b + 1
-            else: c, d = c - 1, d + 1
-            a, b, c, d = self._regulate_abcd(x, a, b, c, d)
-        return a, b, c, d
-
-    def _fooocus_fill(self, image, mask):
-        current_image = image.copy()
-        area = np.where(mask < 127)
-        store = image[area]
-        for k, repeats in [(512, 2), (256, 2), (128, 4), (64, 4), (33, 8), (15, 8), (5, 16), (3, 16)]:
-            for _ in range(repeats):
-                current_image = self._box_blur(current_image, k)
-                current_image[area] = store
-        return current_image
-
-    def prepare(self, image, mask, k=0.618, use_fill=True) -> InpaintContext:
-        """Bounding Box computation -> crop -> upscale -> mask processing -> fill."""
-        a, b, c, d = self._compute_initial_abcd(mask > 0)
-        a, b, c, d = self._solve_abcd(mask, a, b, c, d, k=k)
-
-        interested_mask = mask[a:b, c:d]
-        interested_image = image[a:b, c:d]
-
-        # Super resolution if too small
-        if get_image_shape_ceil(interested_image) <= 512:
-            print(f'[InpaintPipeline] Image is too small ({interested_image.shape}), applying AI upscaling ...')
-            interested_image = perform_upscale(interested_image)
+    def prepare(self, image, mask, extend_factor=1.2) -> InpaintContext:
+        """Native-AR Bounding Box algorithm."""
+        # 1. Find tight bounding box
+        mask_indices = np.where(mask > 127)
+        if len(mask_indices[0]) == 0:
+            # Fallback if no mask: use center square
+            H, W = image.shape[:2]
+            side = min(H, W)
+            y1, y2 = (H - side) // 2, (H + side) // 2
+            x1, x2 = (W - side) // 2, (W + side) // 2
         else:
-            print(f'[InpaintPipeline] Image shape is {interested_image.shape}, skipping AI upscaling.')
-
-        # Resize to make images ready for diffusion
-        interested_image = set_image_shape_ceil(interested_image, 1024)
-        H, W, _ = interested_image.shape
-
-        # Process mask
-        processed_mask = self._up255(resample_image(interested_mask, W, H), t=127)
-
-        # Compute filling
-        interested_fill = interested_image.copy()
-        if use_fill:
-            interested_fill = self._fooocus_fill(interested_image, processed_mask)
-
-        # Soft pixels for stitching
-        context_mask = self._morphological_open(mask)
-
+            y1, y2 = np.min(mask_indices[0]), np.max(mask_indices[0])
+            x1, x2 = np.min(mask_indices[1]), np.max(mask_indices[1])
+        
+        # 2. Expand BB by extend_factor
+        bb_h, bb_w = y2 - y1, x2 - x1
+        center_y, center_x = (y1 + y2) // 2, (x1 + x2) // 2
+        
+        new_h = int(bb_h * extend_factor)
+        new_w = int(bb_w * extend_factor)
+        
+        # 3. Snap to SDXL resolution
+        target_w, target_h = self.snap_to_sdxl_resolution(new_w, new_h)
+        target_ratio = target_w / target_h
+        
+        # 4. Adjust BB to match snapped aspect ratio
+        if new_w / new_h > target_ratio:
+            # BB is wider than target ratio -> grow height
+            new_h = int(new_w / target_ratio)
+        else:
+            # BB is taller than target ratio -> grow width
+            new_w = int(new_h * target_ratio)
+            
+        y1, y2 = center_y - new_h // 2, center_y + (new_h + 1) // 2
+        x1, x2 = center_x - new_w // 2, center_x + (new_w + 1) // 2
+        
+        # 5. Handle expansion and cropping
+        bb_image, _ = self._expand_canvas(image, y1, y2, x1, x2)
+        bb_mask, _ = self._expand_canvas(mask[:, :, None] if mask.ndim == 2 else mask, y1, y2, x1, x2)
+        bb_mask = bb_mask[:, :, 0]
+        
+        # 6. Resize to target resolution
+        bb_image = resample_image(bb_image, target_w, target_h)
+        bb_mask = resample_image(bb_mask, target_w, target_h)
+        
+        # 7. Generate blend mask
+        blend_mask = self._morphological_open(mask)
+        
         return InpaintContext(
             original_image=image,
             original_mask=mask,
-            interested_area=(a, b, c, d),
-            interested_image=interested_image,
-            interested_fill=interested_fill,
-            interested_mask=processed_mask,
-            context_mask=context_mask
+            bb=(y1, y2, x1, x2),
+            bb_image=bb_image,
+            bb_mask=bb_mask,
+            target_w=target_w,
+            target_h=target_h,
+            blend_mask=blend_mask
         )
 
-    def encode(self, context: InpaintContext, vae, vae_swap=None, progressbar_callback=None, task_state=None) -> InpaintContext:
-        """VAE encode interested region + fill -> populate context latents."""
-        inpaint_pixel_fill = numpy_to_pytorch(context.interested_fill)
-        inpaint_pixel_image = numpy_to_pytorch(context.interested_image)
-        inpaint_pixel_mask = numpy_to_pytorch(context.interested_mask)
-
-        if progressbar_callback and task_state:
-            task_state.current_progress += 1
-            progressbar_callback(task_state, task_state.current_progress, 'VAE Inpaint encoding ...')
-
-        latent_inpaint, latent_mask = core.encode_vae_inpaint(
-            mask=inpaint_pixel_mask,
-            vae=vae,
-            pixels=inpaint_pixel_image
-        )
-
-        latent_swap = None
-        if vae_swap is not None:
-            if progressbar_callback and task_state:
-                task_state.current_progress += 1
-                progressbar_callback(task_state, task_state.current_progress, 'VAE SD15 encoding ...')
-            latent_swap = core.encode_vae(vae=vae_swap, pixels=inpaint_pixel_fill)['samples']
-
-        if progressbar_callback and task_state:
-            task_state.current_progress += 1
-            progressbar_callback(task_state, task_state.current_progress, 'VAE encoding ...')
-
-        latent_fill = core.encode_vae(vae=vae, pixels=inpaint_pixel_fill)['samples']
+    def encode(self, context: InpaintContext, vae) -> dict:
+        """VAE encode BB image and generate latent-space denoise_mask."""
+        from backend import resources
         
-        context.latent_fill = latent_fill
-        context.latent_mask = latent_mask
-        context.latent_inpaint = latent_inpaint
-        context.latent_swap = latent_swap
-        return context
-
-    def patch_model(self, context: InpaintContext, unet, head_model_path) -> torch.nn.Module:
-        """Apply inpaint head feature patch to UNet."""
-        if self._inpaint_head_model == None:
-            self._inpaint_head_model = InpaintHead()
-            sd = torch.load(head_model_path, map_location='cpu', weights_only=True)
-            self._inpaint_head_model.load_state_dict(sd)
+        # 1. BB Image to tensor
+        pixels = numpy_to_pytorch(context.bb_image)
         
-        feed = torch.cat([
-            context.latent_mask,
-            unet.model.process_latent_in(context.latent_inpaint)
-        ], dim=1)
-
-        self._inpaint_head_model.to(device=feed.device, dtype=feed.dtype)
-        inpaint_head_feature = self._inpaint_head_model(feed)
-
-        def input_block_patch(h, transformer_options):
-            if transformer_options["block"][1] == 0:
-                h = h + inpaint_head_feature.to(h)
-            return h
-
-        m = unet.clone()
-        m.set_model_input_block_patch(input_block_patch)
-        return m
+        # 2. VAE encode with lifecycle management
+        resources.load_models_gpu([vae.patcher])
+        latent = core.encode_vae(vae=vae, pixels=pixels)['samples']
+        vae.patcher.detach()
+        resources.soft_empty_cache()
+        
+        # 3. Create denoise_mask in latent space
+        mask = torch.from_numpy(context.bb_mask).float() / 255.0
+        mask = mask[None, None, :, :] # (1, 1, H, W)
+        
+        # Max pool to 1/8 resolution
+        denoise_mask = torch.nn.functional.max_pool2d(mask, kernel_size=8)
+        
+        # Threshold to binary (1.0 = regenerate, 0.0 = freeze)
+        denoise_mask = (denoise_mask > 0.5).float()
+        
+        return {'samples': latent, 'noise_mask': denoise_mask}
 
     def stitch(self, context: InpaintContext, generated_image) -> np.ndarray:
-        """Rescale generated BB -> paste into original -> color correct."""
-        a, b, c, d = context.interested_area
+        """Preserve Fooocus's superior morphological blending."""
+        y1, y2, x1, x2 = context.bb
+        target_w, target_h = x2 - x1, y2 - y1
         
-        # FIX: explicitly use original BB dimensions to avoid 256x256 bug
-        target_width = d - c
-        target_height = b - a
+        # 1. Resize back to original BB dimensions
+        content = resample_image(generated_image, target_w, target_h)
         
-        print(f"[InpaintPipeline] Stitching back to {target_width}x{target_height}")
-        
-        content = resample_image(generated_image, target_width, target_height)
+        # 2. Hard-paste into a full-size canvas of the original image
         result = context.original_image.copy()
-        result[a:b, c:d] = content
         
-        # Color correction
+        # Handle cases where BB might be slightly outside bounds (should be clamped by _expand_canvas but safety first)
+        H, W = result.shape[:2]
+        iy1, iy2 = max(0, y1), min(H, y2)
+        ix1, ix2 = max(0, x1), min(W, x2)
+        
+        # If BB was expanded, slice content correctly
+        content_y1, content_y2 = iy1 - y1, iy2 - y1
+        content_x1, content_x2 = ix1 - x1, ix2 - x1
+        
+        result[iy1:iy2, ix1:ix2] = content[content_y1:content_y2, content_x1:content_x2]
+        
+        # 3. Apply morphological gradient blend at full-image resolution
         fg = result.astype(np.float32)
         bg = context.original_image.astype(np.float32)
-        w = context.context_mask[:, :, None].astype(np.float32) / 255.0
-        y = fg * w + bg * (1 - w)
+        w = context.blend_mask[:, :, None].astype(np.float32) / 255.0
+        
+        y = fg * w + bg * (1.0 - w)
         return y.clip(0, 255).astype(np.uint8)

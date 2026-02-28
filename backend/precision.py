@@ -24,16 +24,18 @@ def cast_unet_inputs(x, timesteps, context=None, y=None, control=None, weight_dt
     """
     Casts UNet inputs to the specified weight_dtype or detects it from x.
     This prevents per-layer upcasting slowness and dtype mismatch errors.
+    Modifies the `control` object IN-PLACE to preserve list exhaustion behavior
+    required by `openaimodel.py`.
     """
     if weight_dtype is None:
-        # If not provided, we don't cast (or we could try to detect from a sample weight, 
-        # but usually it's passed from the loader/patcher context)
-        return x, timesteps, context, y, control
+        if hasattr(x, "dtype"):
+            weight_dtype = x.dtype
+        else:
+            return x, timesteps, context, y, control
 
-    # Cast all inputs to model precision
     if hasattr(x, "to"):
         x = x.to(weight_dtype)
-    
+        
     if timesteps is not None and hasattr(timesteps, "to"):
         timesteps = timesteps.to(weight_dtype)
         
@@ -42,9 +44,17 @@ def cast_unet_inputs(x, timesteps, context=None, y=None, control=None, weight_dt
         
     if y is not None and hasattr(y, "to"):
         y = y.to(weight_dtype)
-        
-    if control is not None:
+
+    if control is not None and isinstance(control, dict):
+        # CRITICAL: Modify lists IN-PLACE. The UNet (`openaimodel.py`) consumes
+        # these tensors using `.pop()`. Recreating the lists here would leave the
+        # original lists fully populated, causing ControlNet to re-apply exponentially
+        # over diffusion steps and bloating VRAM.
         for k in control:
-            control[k] = [c.to(weight_dtype) if hasattr(c, "to") else c for c in control[k]]
+            if isinstance(control[k], list):
+                for i in range(len(control[k])):
+                    c = control[k][i]
+                    if hasattr(c, "to"):
+                        control[k][i] = c.to(weight_dtype)
 
     return x, timesteps, context, y, control

@@ -8,7 +8,7 @@ from backend import resources, clip, patching, conditioning
 from ldm_patched.modules import model_base, latent_formats, supported_models_base
 from ldm_patched.ldm.models.autoencoder import AutoencoderKL, AutoencodingEngine
 import torch.nn as nn
-from . import utils, precision
+from . import utils
 
 def heal_model_weights(model, name_prefix="Model"):
     """
@@ -186,9 +186,9 @@ def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
     original_forward = unet.forward
     
     def nex_patched_forward(x, timesteps, context=None, y=None, control=None, transformer_options={}, **kwargs):
-        # Cast all inputs to model precision to prevent per-layer upcasting slowness and dtype mismatch errors
-        weight_dtype = unet.input_blocks[0][0].weight.dtype
-        x, timesteps, context, y, control = precision.cast_unet_inputs(x, timesteps, context, y, control, weight_dtype)
+        # NOTE: cast_unet_inputs is NOT needed here. model_base.apply_model() already
+        # casts x, context, y, and extra_conds to the correct dtype before calling
+        # this function. Adding .to() calls here was pure overhead (~2 calls per step × steps).
 
         if y is not None:
              # timed_adm(y, timestep, model, adm_scaler_end)

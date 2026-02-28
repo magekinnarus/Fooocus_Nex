@@ -3,7 +3,6 @@ import modules.config as config
 import modules.core as core
 import modules.default_pipeline as pipeline
 import modules.flags as flags
-import modules.inpaint_worker as inpaint_worker
 import extras.preprocessors as preprocessors
 import extras.ip_adapter as ip_adapter
 import extras.face_crop as face_crop
@@ -110,44 +109,34 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     ctx = inpaint.prepare(
         image=inpaint_image,
         mask=inpaint_mask,
-        use_fill=denoising_strength > 0.99,
-        k=inpaint_respective_field
+        extend_factor=1.2 # Standard context expansion
     )
     
     if task_state.debugging_inpaint_preprocessor:
         if yield_result_callback:
-            yield_result_callback(task_state, [ctx.interested_fill, ctx.interested_mask, ctx.interested_image], 100, do_not_show_finished_images=True)
+            # Show the BB image and mask for debugging
+            yield_result_callback(task_state, [ctx.bb_image, ctx.bb_mask], 100, do_not_show_finished_images=True)
         raise EarlyReturnException
 
-    candidate_vae, candidate_vae_swap = pipeline.get_candidate_vae(
+    candidate_vae, _ = pipeline.get_candidate_vae(
         steps=task_state.steps,
         denoise=denoising_strength
     )
     
-    ctx = inpaint.encode(
-        context=ctx,
-        vae=candidate_vae,
-        vae_swap=candidate_vae_swap,
-        progressbar_callback=progressbar_callback,
-        task_state=task_state
-    )
+    # New encode returns ComfyUI latent dict: {'samples': ..., 'noise_mask': ...}
+    latent_dict = inpaint.encode(ctx, candidate_vae)
     
     task_state.inpaint_context = ctx
-    
-    if inpaint_parameterized:
-        pipeline.final_unet = inpaint.patch_model(
-            context=ctx,
-            unet=pipeline.final_unet,
-            head_model_path=inpaint_head_model_path
-        )
+    task_state.width = ctx.target_w
+    task_state.height = ctx.target_h
     
     if not inpaint_disable_initial_latent:
-        task_state.initial_latent = {'samples': ctx.latent_fill}
+        task_state.initial_latent = latent_dict
+        
+    task_state.denoising_strength = denoising_strength
     
-    B, C, H, W = ctx.latent_fill.shape
-    task_state.height, task_state.width = H * 8, W * 8
     final_height, final_width = ctx.original_image.shape[:2]
-    print(f'Final resolution is {str((final_width, final_height))}, latent is {str((task_state.width, task_state.height))}.')
+    print(f'Inpaint setup: BB resolution {ctx.target_w}x{ctx.target_h}, Original resolution {final_width}x{final_height}.')
 
 
 def apply_upscale(task_state, progressbar_callback=None):

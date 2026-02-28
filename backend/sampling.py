@@ -35,7 +35,7 @@ class KSamplerX0Inpaint:
             if "denoise_mask_function" in model_options:
                 denoise_mask = model_options["denoise_mask_function"](sigma, denoise_mask, extra_options={"model": self.inner_model, "sigmas": self.sigmas})
             latent_mask = 1. - denoise_mask
-            x = x * denoise_mask + self.inner_model.inner_model.scale_latent_inpaint(x=x, sigma=sigma, noise=self.noise, latent_image=self.latent_image) * latent_mask
+            x = x * denoise_mask + self.inner_model.inner_model.model_sampling.noise_scaling(sigma, self.noise, self.latent_image) * latent_mask
         
         out = self.inner_model(x, sigma, model_options=model_options, seed=seed)
         

@@ -7,7 +7,6 @@ import ldm_patched.modules.model_management
 import backend.anisotropic as anisotropic
 import ldm_patched.ldm.modules.attention
 import backend.k_diffusion as k_diffusion_sampling
-import modules.inpaint_worker as inpaint_worker
 import ldm_patched.ldm.modules.diffusionmodules.model
 import ldm_patched.modules.sd
 import ldm_patched.modules.model_patcher

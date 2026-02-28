@@ -5,7 +5,6 @@ import modules.patch
 import modules.config
 import modules.flags
 from backend import resources, schedulers, lora
-import modules.inpaint_worker
 import extras.vae_interpose as vae_interpose
 
 
@@ -71,9 +70,13 @@ def refresh_base_model(name, vae_name=None, clip_name=None):
 
     model_base = core.load_model(filename, vae_filename, clip_name)
     model_base.clip_filename = clip_name
+    
+    # Only print if we actually performed a load (check above handled the early return)
     print(f'Base model loaded: {model_base.filename}')
-    print(f'VAE loaded: {model_base.vae_filename}')
-    print(f'Force CLIP: {clip_name}')
+    if model_base.vae_filename:
+        print(f'VAE loaded: {model_base.vae_filename}')
+    if clip_name:
+        print(f'Force CLIP: {clip_name}')
     return
 
 
