@@ -17,6 +17,9 @@ import modules.ui_components.metadata_ui as metadata_ui
 import modules.ui_components.settings_panel as settings_panel
 import modules.ui_components.styles_panel as styles_panel
 import modules.ui_components.models_panel as models_panel
+import modules.ui_components.advanced_panel as advanced_panel
+import modules.ui_components.control_panel as control_panel
+import modules.ui_components.inpaint_panel as inpaint_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -379,142 +382,56 @@ with shared.gradio_root:
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
             with gr.Tab(label='Advanced'):
-                guidance_scale = gr.Slider(label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
-                                           value=modules.config.default_cfg_scale,
-                                           info='Higher value means style is cleaner, vivider, and more artistic.')
-                sharpness = gr.Slider(label='Image Sharpness', minimum=0.0, maximum=30.0, step=0.001,
-                                      value=modules.config.default_sample_sharpness,
-                                      info='Higher value means image and texture are sharper.')
-                gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/117" target="_blank">\U0001F4D4 Documentation</a>')
-                with gr.Column(visible=True) as dev_tools:
-                    with gr.Tab(label='Debug Tools'):
-                        adm_scaler_positive = gr.Slider(label='Positive ADM Guidance Scaler', minimum=0.1, maximum=3.0,
-                                                        step=0.001, value=1.5, info='The scaler multiplied to positive ADM (use 1.0 to disable). ')
-                        adm_scaler_negative = gr.Slider(label='Negative ADM Guidance Scaler', minimum=0.1, maximum=3.0,
-                                                        step=0.001, value=0.8, info='The scaler multiplied to negative ADM (use 1.0 to disable). ')
-                        adm_scaler_end = gr.Slider(label='ADM Guidance End At Step', minimum=0.0, maximum=1.0,
-                                                   step=0.001, value=0.3,
-                                                   info='When to end the guidance from positive/negative ADM. ')
+                advanced_panel_result = advanced_panel.build_advanced_tab()
+                guidance_scale = advanced_panel_result['guidance_scale']
+                sharpness = advanced_panel_result['sharpness']
+                adm_scaler_positive = advanced_panel_result['adm_scaler_positive']
+                adm_scaler_negative = advanced_panel_result['adm_scaler_negative']
+                adm_scaler_end = advanced_panel_result['adm_scaler_end']
+                adaptive_cfg = advanced_panel_result['adaptive_cfg']
+                clip_skip = advanced_panel_result['clip_skip']
+                sampler_name = advanced_panel_result['sampler_name']
+                scheduler_name = advanced_panel_result['scheduler_name']
+                generate_image_grid = advanced_panel_result['generate_image_grid']
+                overwrite_step = advanced_panel_result['overwrite_step']
+                overwrite_width = advanced_panel_result['overwrite_width']
+                overwrite_height = advanced_panel_result['overwrite_height']
+                overwrite_vary_strength = advanced_panel_result['overwrite_vary_strength']
+                overwrite_upscale_strength = advanced_panel_result['overwrite_upscale_strength']
+                disable_preview = advanced_panel_result['disable_preview']
+                disable_intermediate_results = advanced_panel_result['disable_intermediate_results']
+                disable_seed_increment = advanced_panel_result['disable_seed_increment']
+                read_wildcards_in_order = advanced_panel_result['read_wildcards_in_order']
+                if not args_manager.args.disable_metadata:
+                    save_metadata_to_images = advanced_panel_result['save_metadata_to_images']
+                    metadata_scheme = advanced_panel_result['metadata_scheme']
 
+            with gr.Tab(label='Control'):
+                control_panel_result = control_panel.build_control_tab()
+                debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
+                skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
+                mixing_image_prompt_and_vary_upscale = control_panel_result['mixing_image_prompt_and_vary_upscale']
+                mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
+                controlnet_softness = control_panel_result['controlnet_softness']
+                canny_low_threshold = control_panel_result['canny_low_threshold']
+                canny_high_threshold = control_panel_result['canny_high_threshold']
 
-                        adaptive_cfg = gr.Slider(label='CFG Mimicking from TSNR', minimum=1.0, maximum=30.0, step=0.01,
-                                                 value=modules.config.default_cfg_tsnr,
-                                                 info='Enabling Fooocus\'s implementation of CFG mimicking for TSNR '
-                                                      '(effective when real CFG > mimicked CFG).')
-                        clip_skip = gr.Slider(label='CLIP Skip', minimum=1, maximum=flags.clip_skip_max, step=1,
-                                                 value=modules.config.default_clip_skip,
-                                                 info='Bypass CLIP layers to avoid overfitting (use 1 to not skip any layers, 2 is recommended).')
-                        sampler_name = gr.Dropdown(label='Sampler', choices=flags.sampler_list,
-                                                   value=modules.config.default_sampler)
-                        scheduler_name = gr.Dropdown(label='Scheduler', choices=flags.scheduler_list,
-                                                     value=modules.config.default_scheduler)
+            with gr.Tab(label='Inpaint'):
+                inpaint_panel_result = inpaint_panel.build_inpaint_tab(
+                    inpaint_advanced_masking_checkbox, invert_mask_checkbox,
+                    inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image
+                )
+                debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
+                inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
+                inpaint_engine = inpaint_panel_result['inpaint_engine']
+                inpaint_strength = inpaint_panel_result['inpaint_strength']
+                inpaint_respective_field = inpaint_panel_result['inpaint_respective_field']
+                inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
+                inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
 
-                        generate_image_grid = gr.Checkbox(label='Generate Image Grid for Each Batch',
-                                                          info='(Experimental) This may cause performance problems on some computers and certain internet conditions.',
-                                                          value=False)
-
-                        overwrite_step = gr.Slider(label='Forced Overwrite of Sampling Step',
-                                                   minimum=-1, maximum=200, step=1,
-                                                   value=modules.config.default_overwrite_step,
-                                                   info='Set as -1 to disable. For developer debugging.')
-                        overwrite_width = gr.Slider(label='Forced Overwrite of Generating Width',
-                                                    minimum=-1, maximum=2048, step=1, value=-1,
-                                                    info='Set as -1 to disable. For developer debugging. '
-                                                         'Results will be worse for non-standard numbers that SDXL is not trained on.')
-                        overwrite_height = gr.Slider(label='Forced Overwrite of Generating Height',
-                                                     minimum=-1, maximum=2048, step=1, value=-1,
-                                                     info='Set as -1 to disable. For developer debugging. '
-                                                          'Results will be worse for non-standard numbers that SDXL is not trained on.')
-                        overwrite_vary_strength = gr.Slider(label='Forced Overwrite of Denoising Strength of "Vary"',
-                                                            minimum=-1, maximum=1.0, step=0.001, value=-1,
-                                                            info='Set as negative number to disable. For developer debugging.')
-                        overwrite_upscale_strength = gr.Slider(label='Forced Overwrite of Denoising Strength of "Upscale"',
-                                                               minimum=-1, maximum=1.0, step=0.001,
-                                                               value=modules.config.default_overwrite_upscale,
-                                                               info='Set as negative number to disable. For developer debugging.')
-
-                        disable_preview = gr.Checkbox(label='Disable Preview', value=False,
-                                                      info='Disable preview during generation.')
-                        disable_intermediate_results = gr.Checkbox(label='Disable Intermediate Results',
-                                                      value=flags.Performance.has_restricted_features(modules.config.default_performance),
-                                                      info='Disable intermediate results during generation, only show final gallery.')
-
-                        disable_seed_increment = gr.Checkbox(label='Disable seed increment',
-                                                             info='Disable automatic seed increment when image number is > 1.',
-                                                             value=False)
-                        read_wildcards_in_order = gr.Checkbox(label="Read wildcards in order", value=False)
-
-
-                        if not args_manager.args.disable_metadata:
-                            save_metadata_to_images = gr.Checkbox(label='Save Metadata to Images', value=modules.config.default_save_metadata_to_images,
-                                                                  info='Adds parameters to generated images allowing manual regeneration.')
-                            metadata_scheme = gr.Radio(label='Metadata Scheme', choices=flags.metadata_scheme, value=modules.config.default_metadata_scheme,
-                                                       info='Image Prompt parameters are not included. Use png and a1111 for compatibility with Civitai.',
-                                                       visible=modules.config.default_save_metadata_to_images)
-
-                            save_metadata_to_images.change(lambda x: gr.update(visible=x), inputs=[save_metadata_to_images], outputs=[metadata_scheme],
-                                                           queue=False, show_progress=False)
-
-                    with gr.Tab(label='Control'):
-                        debugging_cn_preprocessor = gr.Checkbox(label='Debug Preprocessors', value=False,
-                                                                info='See the results from preprocessors.')
-                        skipping_cn_preprocessor = gr.Checkbox(label='Skip Preprocessors', value=False,
-                                                               info='Do not preprocess images. (Inputs are already canny/depth/cropped-face/etc.)')
-
-                        mixing_image_prompt_and_vary_upscale = gr.Checkbox(label='Mixing Image Prompt and Vary/Upscale',
-                                                                           value=False)
-                        mixing_image_prompt_and_inpaint = gr.Checkbox(label='Mixing Image Prompt and Inpaint',
-                                                                      value=False)
-
-                        controlnet_softness = gr.Slider(label='Softness of ControlNet', minimum=0.0, maximum=1.0,
-                                                        step=0.001, value=0.25,
-                                                        info='Similar to the Control Mode in A1111 (use 0.0 to disable). ')
-
-                        with gr.Tab(label='Canny'):
-                            canny_low_threshold = gr.Slider(label='Canny Low Threshold', minimum=1, maximum=255,
-                                                            step=1, value=64)
-                            canny_high_threshold = gr.Slider(label='Canny High Threshold', minimum=1, maximum=255,
-                                                             step=1, value=128)
-
-                    with gr.Tab(label='Inpaint'):
-                        debugging_inpaint_preprocessor = gr.Checkbox(label='Debug Inpaint Preprocessing', value=False)
-                        inpaint_disable_initial_latent = gr.Checkbox(label='Disable initial latent in inpaint', value=False)
-                        inpaint_engine = gr.Dropdown(label='Inpaint Engine',
-                                                     value=modules.config.default_inpaint_engine_version,
-                                                     choices=flags.inpaint_engine_versions,
-                                                     info='Version of Fooocus inpaint model. If set, use performance Quality or Speed (no performance LoRAs) for best results.')
-                        inpaint_strength = gr.Slider(label='Inpaint Denoising Strength',
-                                                     minimum=0.0, maximum=1.0, step=0.001, value=1.0,
-                                                     info='Same as the denoising strength in A1111 inpaint. '
-                                                          'Only used in inpaint, not used in outpaint. '
-                                                          '(Outpaint always use 1.0)')
-                        inpaint_respective_field = gr.Slider(label='Inpaint Respective Field',
-                                                             minimum=0.0, maximum=1.0, step=0.001, value=0.618,
-                                                             info='The area to inpaint. '
-                                                                  'Value 0 is same as "Only Masked" in A1111. '
-                                                                  'Value 1 is same as "Whole Image" in A1111. '
-                                                                  'Only used in inpaint, not used in outpaint. '
-                                                                  '(Outpaint always use 1.0)')
-                        inpaint_erode_or_dilate = gr.Slider(label='Mask Erode or Dilate',
-                                                            minimum=-64, maximum=64, step=1, value=0,
-                                                            info='Positive value will make white area in the mask larger, '
-                                                                 'negative value will make white area smaller. '
-                                                                 '(default is 0, always processed before any mask invert)')
-
-                        inpaint_mask_color = gr.ColorPicker(label='Inpaint brush color', value='#FFFFFF', elem_id='inpaint_brush_color')
-
-                        inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                         inpaint_strength, inpaint_respective_field,
-                                         inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate]
-
-                        inpaint_advanced_masking_checkbox.change(lambda x: [gr.update(visible=x)] * 2,
-                                                                 inputs=inpaint_advanced_masking_checkbox,
-                                                                 outputs=[inpaint_mask_image, inpaint_mask_generation_col],
-                                                                 queue=False, show_progress=False)
-
-                        inpaint_mask_color.change(lambda x: gr.update(brush_color=x), inputs=inpaint_mask_color,
-                                                  outputs=inpaint_input_image,
-                                                  queue=False, show_progress=False)
+                inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
+                                 inpaint_strength, inpaint_respective_field,
+                                 inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate]
 
 
 
