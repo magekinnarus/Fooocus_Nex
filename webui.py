@@ -3,6 +3,7 @@ import random
 import os
 import json
 import time
+import numpy as np
 import shared
 import modules.config
 import fooocus_version
@@ -102,15 +103,14 @@ def generate_clicked(task: worker.AsyncTask):
 def inpaint_mode_change(mode, inpaint_engine_version):
     assert mode in modules.flags.inpaint_options
 
-    # inpaint_additional_prompt, outpaint_selections, example_inpaint_prompts,
     # inpaint_disable_initial_latent, inpaint_engine,
-    # inpaint_strength, inpaint_respective_field
+    # inpaint_strength
 
     if mode == modules.flags.inpaint_option_detail:
         return [
             gr.update(visible=True), gr.update(visible=False, value=[]),
             gr.Dataset.update(visible=True, samples=modules.config.example_inpaint_prompts),
-            False, 'None', 0.5, 0.0
+            False, 'None', 0.5
         ]
 
     if inpaint_engine_version == 'empty':
@@ -120,14 +120,99 @@ def inpaint_mode_change(mode, inpaint_engine_version):
         return [
             gr.update(visible=True), gr.update(visible=False, value=[]),
             gr.Dataset.update(visible=False, samples=modules.config.example_inpaint_prompts),
-            True, inpaint_engine_version, 1.0, 0.0
+            True, inpaint_engine_version, 1.0
         ]
 
     return [
         gr.update(visible=False, value=''), gr.update(visible=True),
         gr.Dataset.update(visible=False, samples=modules.config.example_inpaint_prompts),
-        False, inpaint_engine_version, 1.0, 0.618
+        False, inpaint_engine_version, 0.5
     ]
+
+
+def expand_mask(outpaint_selections, inpaint_mask_image):
+    print(f"[Debug] Mask Expansion Requested. Direction: {outpaint_selections}")
+    if inpaint_mask_image is None:
+        print("[Debug] Mask Image is None. Aborting.")
+        return gr.update()
+    
+    import numpy as np
+    
+    mask = None
+    if isinstance(inpaint_mask_image, dict):
+        image_layer = inpaint_mask_image.get('image')
+        mask_layer = inpaint_mask_image.get('mask')
+        if isinstance(image_layer, np.ndarray) and isinstance(mask_layer, np.ndarray):
+            mask = np.maximum(image_layer, mask_layer)
+        elif isinstance(image_layer, np.ndarray):
+            mask = image_layer
+        elif isinstance(mask_layer, np.ndarray):
+            mask = mask_layer
+    elif isinstance(inpaint_mask_image, np.ndarray):
+        mask = inpaint_mask_image
+        
+    if mask is None:
+        return gr.update()
+    
+    # Ensure range is 0-255 uint8
+    if mask.dtype == np.float32 or mask.dtype == np.float64:
+        # If max is <= 1.0, scale up
+        if mask.max() <= 1.0:
+            mask = mask * 255.0
+        mask = mask.astype(np.uint8)
+        
+    # mask is (H, W) or (H, W, 3) or (H, W, 4)
+    if mask.ndim == 3:
+        if mask.shape[-1] == 4:
+            mask = mask[..., :3] # discard alpha
+        mask = np.max(mask, axis=-1)
+    
+    # Threshold to make it strictly 0 or 255
+    new_mask = (mask > 127).astype(np.uint8) * 255
+    
+    # Expand white area by 32 pixels in the OPPOSITE direction of outpaint
+    # E.g., if Outpaint Direction is 'Right', the mask is on the right side.
+    # We want the mask to grow into the left side (the original image).
+    # Numpy slicing: to expand white pixels to the LEFT, we shift the array to the LEFT
+    for direction in outpaint_selections:
+        if direction == 'Right': # Expand Left
+            for _ in range(32):
+                shifted = np.zeros_like(new_mask)
+                shifted[:, :-1] = new_mask[:, 1:]
+                new_mask = np.maximum(new_mask, shifted)
+        elif direction == 'Left': # Expand Right
+            for _ in range(32):
+                shifted = np.zeros_like(new_mask)
+                shifted[:, 1:] = new_mask[:, :-1]
+                new_mask = np.maximum(new_mask, shifted)
+        elif direction == 'Top': # Expand Bottom
+            for _ in range(32):
+                shifted = np.zeros_like(new_mask)
+                shifted[1:, :] = new_mask[:-1, :]
+                new_mask = np.maximum(new_mask, shifted)
+        elif direction == 'Bottom': # Expand Top
+            for _ in range(32):
+                shifted = np.zeros_like(new_mask)
+                shifted[:-1, :] = new_mask[1:, :]
+                new_mask = np.maximum(new_mask, shifted)
+
+    # Convert to PIL for the Gallery, and pack in a tuple with label
+
+    from PIL import Image
+    import modules.util
+    import os
+    
+    result_rgb = np.stack([new_mask]*3, axis=-1)
+    result_img = Image.fromarray(result_rgb)
+    
+    # Fooocus gallery expects saved files to ensure correct format download (PNG)
+    _, temp_path, _ = modules.util.generate_temp_filename(folder=modules.config.path_outputs, extension='png')
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    result_img.save(temp_path)
+    
+    return [(temp_path, 'Expanded Mask')]
+
+
 
 
 reload_javascript()
@@ -244,10 +329,11 @@ with shared.gradio_root:
                         with gr.Row():
                             with gr.Column():
                                 inpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='inpaint_canvas', show_label=False)
-                                inpaint_advanced_masking_checkbox = gr.Checkbox(label='Enable Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
+                                inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
                                 inpaint_mode = gr.Dropdown(choices=modules.flags.inpaint_options, value=modules.config.default_inpaint_method, label='Method')
                                 inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=False)
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=[], label='Outpaint Direction')
+                                inpaint_pixelate_primer = gr.Checkbox(label='Outpaint 2nd Step generation', value=False, elem_id='inpaint_pixelate_primer', info='Provides color guidance for outpaint by pixelating the blank area.')
                                 example_inpaint_prompts = gr.Dataset(samples=modules.config.example_inpaint_prompts,
                                                                      label='Additional Prompt Quick List',
                                                                      components=[inpaint_additional_prompt],
@@ -255,22 +341,13 @@ with shared.gradio_root:
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
                                 example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
 
-                            with gr.Column(visible=modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
+                            with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
                                 inpaint_mask_image = grh.Image(label='Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
                                 invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
-                                inpaint_mask_model = gr.Dropdown(label='Mask generation model',
-                                                                 choices=flags.inpaint_mask_models,
-                                                                 value=modules.config.default_inpaint_mask_model)
-                                inpaint_mask_cloth_category = gr.Dropdown(label='Cloth category',
-                                                             choices=flags.inpaint_mask_cloth_category,
-                                                             value=modules.config.default_inpaint_mask_cloth_category,
-                                                             visible=False)
-                                inpaint_mask_dino_prompt_text = gr.Textbox(label='Detection prompt', value='', visible=False, info='Use singular whenever possible', placeholder='Describe what you want to detect.')
+                                inpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)')
                                 
-                                inpaint_mask_model.change(lambda x: gr.update(visible=x == 'u2net_cloth_seg'),
-                                                          inputs=inpaint_mask_model,
-                                                          outputs=[inpaint_mask_cloth_category],
-                                                          queue=False, show_progress=False)
+                                inpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, inpaint_mask_image], outputs=[gallery], queue=False, show_progress=False)
+
 
 
                     with gr.Tab(label='Metadata', id='metadata_tab') as metadata_tab:
@@ -429,13 +506,14 @@ with shared.gradio_root:
                         inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
                         inpaint_engine = inpaint_panel_result['inpaint_engine']
                         inpaint_strength = inpaint_panel_result['inpaint_strength']
-                        inpaint_respective_field = inpaint_panel_result['inpaint_respective_field']
                         inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
                         inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
+                        inpaint_outpaint_expansion_size = inpaint_panel_result['inpaint_outpaint_expansion_size']
 
                         inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                         inpaint_strength, inpaint_respective_field,
-                                         inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate]
+                                         inpaint_strength,
+                                         inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate,
+                                         inpaint_pixelate_primer, inpaint_outpaint_expansion_size]
 
 
 
@@ -523,14 +601,14 @@ with shared.gradio_root:
         inpaint_mode.change(inpaint_mode_change, inputs=[inpaint_mode, inpaint_engine_state], outputs=[
             inpaint_additional_prompt, outpaint_selections, example_inpaint_prompts,
             inpaint_disable_initial_latent, inpaint_engine,
-            inpaint_strength, inpaint_respective_field
+            inpaint_strength
         ], show_progress=False, queue=False)
 
         # load configured default_inpaint_method
-        default_inpaint_ctrls = [inpaint_mode, inpaint_disable_initial_latent, inpaint_engine, inpaint_strength, inpaint_respective_field]
+        default_inpaint_ctrls = [inpaint_mode, inpaint_disable_initial_latent, inpaint_engine, inpaint_strength]
         shared.gradio_root.load(inpaint_mode_change, inputs=[inpaint_mode, inpaint_engine_state], outputs=[
             inpaint_additional_prompt, outpaint_selections, example_inpaint_prompts, inpaint_disable_initial_latent,
-            inpaint_engine, inpaint_strength, inpaint_respective_field
+            inpaint_engine, inpaint_strength
         ], show_progress=False, queue=False)
 
 

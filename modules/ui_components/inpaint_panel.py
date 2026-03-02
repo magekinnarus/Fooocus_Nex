@@ -29,13 +29,8 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
     )
     results['inpaint_strength'] = gr.Slider(
         label='Inpaint Denoising Strength',
-        minimum=0.0, maximum=1.0, step=0.001, value=1.0,
-        info='Same as the denoising strength in A1111 inpaint. Only used in inpaint, not used in outpaint. (Outpaint always use 1.0)'
-    )
-    results['inpaint_respective_field'] = gr.Slider(
-        label='Inpaint Respective Field',
-        minimum=0.0, maximum=1.0, step=0.001, value=0.618,
-        info='The area to inpaint. Value 0 is same as "Only Masked" in A1111. Value 1 is same as "Whole Image" in A1111. Only used in inpaint, not used in outpaint. (Outpaint always use 1.0)'
+        minimum=0.0, maximum=1.0, step=0.001, value=0.5,
+        info='Same as the denoising strength in A1111 inpaint.'
     )
     results['inpaint_erode_or_dilate'] = gr.Slider(
         label='Mask Erode or Dilate',
@@ -44,10 +39,17 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
     )
 
     results['inpaint_mask_color'] = gr.ColorPicker(label='Inpaint brush color', value='#FFFFFF', elem_id='inpaint_brush_color')
+    
+    results['inpaint_outpaint_expansion_size'] = gr.Dropdown(
+        label='Outpaint Expansion (Pixels)',
+        choices=['384', '416', '448'],
+        value=str(modules.config.default_outpaint_expansion_size),
+        info='Number of pixels to add during outpainting. Default is 384.'
+    )
 
     # Event bindings that depend on components from other tabs
     inpaint_advanced_masking_checkbox.change(
-        lambda x: [gr.update(visible=x)] * 2,
+        lambda x: [gr.update(visible=not x)] * 2,
         inputs=inpaint_advanced_masking_checkbox,
         outputs=[inpaint_mask_image, inpaint_mask_generation_col],
         queue=False, 

@@ -79,7 +79,7 @@ inpaint_mask_models = ['u2net', 'u2netp', 'u2net_human_seg', 'u2net_cloth_seg', 
 inpaint_mask_cloth_category = ['full', 'upper', 'lower']
 
 inpaint_engine_versions = ['None', 'v1', 'v2.5', 'v2.6']
-inpaint_option_default = 'Inpaint or Outpaint (default)'
+inpaint_option_default = 'Outpaint (2-Step)'
 inpaint_option_detail = 'Improve Detail (face, hand, eyes, etc.)'
 inpaint_option_modify = 'Modify Content (add objects, change background, etc.)'
 inpaint_options = [inpaint_option_default, inpaint_option_detail, inpaint_option_modify]

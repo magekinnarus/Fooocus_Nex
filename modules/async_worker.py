@@ -105,10 +105,17 @@ class AsyncTask:
         s.inpaint_disable_initial_latent = args.pop()
         s.inpaint_engine = args.pop()
         s.inpaint_strength = args.pop()
-        s.inpaint_respective_field = args.pop()
         s.inpaint_advanced_masking_checkbox = args.pop()
         s.invert_mask_checkbox = args.pop()
         s.inpaint_erode_or_dilate = args.pop()
+        s.inpaint_pixelate_primer = args.pop()
+        
+        inpaint_outpaint_expansion_size_val = args.pop()
+        if inpaint_outpaint_expansion_size_val is None or inpaint_outpaint_expansion_size_val == '':
+            s.inpaint_outpaint_expansion_size = config.default_outpaint_expansion_size
+        else:
+            s.inpaint_outpaint_expansion_size = int(inpaint_outpaint_expansion_size_val)
+
         s.save_metadata_to_images = args.pop() if not args_manager.args.disable_image_log else False
         s.metadata_scheme = MetadataScheme(
             args.pop()) if not args_manager.args.disable_metadata else MetadataScheme.FOOOCUS
@@ -203,8 +210,30 @@ def handler(async_task: AsyncTask):
         try:
             inpaint_image, inpaint_mask = apply_outpaint(s, res['inpaint_image'], res['inpaint_mask'])
             apply_inpaint(s, res['inpaint_head_model_path'], inpaint_image, inpaint_mask, progressbar, yield_result)
-        except EarlyReturnException:
-            return
+        except EarlyReturnException as e:
+            # Step 1 outpaint: save expanded canvas + mask for the user to use in Step 2
+            if e.payload is not None:
+                inpaint_image, inpaint_mask = e.payload
+                from modules.pipeline.output import save_and_log
+                progressbar(s, 100, 'Saving composite image and mask ...')
+                
+                # Make mask 3 channel for saving
+                inpaint_mask_3c = np.stack([inpaint_mask]*3, axis=-1)
+                
+                img_paths = save_and_log(
+                    s, s.height, s.width, [inpaint_image, inpaint_mask_3c], 
+                    {
+                        'log_positive_prompt': s.prompt, 
+                        'log_negative_prompt': s.negative_prompt, 
+                        'positive': s.prompt,
+                        'negative': s.negative_prompt,
+                        'styles': s.style_selections, 
+                        'task_seed': s.seed,
+                        'description': 'Phase 1 Outpaint Prep'
+                    }, 
+                    False, s.loras)
+                yield_result(s, img_paths, 100, do_not_show_finished_images=True)
+                return
 
     if 'cn' in s.goals:
         apply_control_nets(s, res['ip_adapter_face_path'], res['ip_adapter_path'], yield_result)

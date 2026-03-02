@@ -87,6 +87,55 @@ class InpaintPipeline:
         
         return canvas, (cy1, cy2, cx1, cx2)
 
+    def prepare_outpaint_canvas_only(self, image, direction, expansion_size=384):
+        """Phase 1 Outpaint: Pad the image with pixelated primer and return the exact mask of the new area."""
+        H, W, C = image.shape
+        
+        y1, y2, x1, x2 = 0, H, 0, W
+        if direction == 'top':
+            y1 = -expansion_size
+        elif direction == 'bottom':
+            y2 = H + expansion_size
+        elif direction == 'left':
+            x1 = -expansion_size
+        elif direction == 'right':
+            x2 = W + expansion_size
+            
+        expanded_image, (cy1, cy2, cx1, cx2) = self._expand_canvas(image, y1, y2, x1, x2)
+        
+        expanded_mask = np.zeros(expanded_image.shape[:2], dtype=np.uint8)
+        if direction == 'top':
+            expanded_mask[:cy1, :] = 255
+        elif direction == 'bottom':
+            expanded_mask[cy2:, :] = 255
+        elif direction == 'left':
+            expanded_mask[:, :cx1] = 255
+        elif direction == 'right':
+            expanded_mask[:, cx2:] = 255
+            
+        return expanded_image, expanded_mask
+
+    def pixelate_mask_area(self, image, mask, pixelation_ratio=16):
+        """Phase 2 Primer: Pixelates the area defined by the mask to provide color guidance."""
+        pixelation_ratio = max(4, pixelation_ratio)
+        H, W, C = image.shape
+        
+        # Create a tiny version of the image
+        small = cv2.resize(image, (max(1, W // pixelation_ratio), max(1, H // pixelation_ratio)), interpolation=cv2.INTER_AREA)
+        # Scale it back up using nearest neighbor for the blocky effect
+        pixelated = cv2.resize(small, (W, H), interpolation=cv2.INTER_NEAREST)
+        
+        # Ensure mask is 3 channels for boolean indexing
+        mask_3c = mask[:, :, None] if mask.ndim == 2 else mask
+        if mask_3c.shape[2] == 1:
+            mask_3c = np.repeat(mask_3c, 3, axis=2)
+            
+        # Blend: original image where mask is 0, pixelated where mask is 255
+        binary_mask = (mask_3c > 127)
+        primed_image = np.where(binary_mask, pixelated, image).astype(np.uint8)
+        
+        return primed_image
+
     def _box_blur(self, x, k):
         kernel_size = 2 * k + 1
         return cv2.blur(x, (kernel_size, kernel_size))
@@ -102,7 +151,7 @@ class InpaintPipeline:
             x_int16 = np.maximum(maxed, x_int16)
         return np.clip(x_int16, 0, 255).astype(np.uint8)
 
-    def prepare(self, image, mask, extend_factor=1.2) -> InpaintContext:
+    def prepare(self, image, mask, extend_factor=1.2, outpaint_direction=None) -> InpaintContext:
         """Native-AR Bounding Box algorithm."""
         # 1. Find tight bounding box
         mask_indices = np.where(mask > 127)
@@ -116,34 +165,75 @@ class InpaintPipeline:
             y1, y2 = np.min(mask_indices[0]), np.max(mask_indices[0])
             x1, x2 = np.min(mask_indices[1]), np.max(mask_indices[1])
         
-        # 2. Expand BB by extend_factor
-        bb_h, bb_w = y2 - y1, x2 - x1
+        # 2. Determine BB Size & SDXL Snapping Strategy
+        H, W = image.shape[:2]
         center_y, center_x = (y1 + y2) // 2, (x1 + x2) // 2
         
-        new_h = int(bb_h * extend_factor)
-        new_w = int(bb_w * extend_factor)
-        
-        # 3. Snap to SDXL resolution
-        target_w, target_h = self.snap_to_sdxl_resolution(new_w, new_h)
-        target_ratio = target_w / target_h
-        
-        # 4. Adjust BB to match snapped aspect ratio
-        if new_w / new_h > target_ratio:
-            # BB is wider than target ratio -> grow height
-            new_h = int(new_w / target_ratio)
-        else:
-            # BB is taller than target ratio -> grow width
-            new_w = int(new_h * target_ratio)
+        if outpaint_direction is not None:
+            # [Path A: Outpaint Auto-Context]
+            # When outpainting, we want to anchor to the expanding edge and pull context inward.
+            # E.g., if we outpainted right by 384 on an 832x1216 image, the new canvas is 1216x1216.
+            # The fixed edge is Height (1216). We want to find the standard SDXL resolution that has H=1216.
+            # Looking at self.SDXL_RESOLUTIONS, the pair is (832, 1216).
+            # So our bounding box should be 832x1216. This easily accommodates manually expanded refinement masks.
             
-        y1, y2 = center_y - new_h // 2, center_y + (new_h + 1) // 2
-        x1, x2 = center_x - new_w // 2, center_x + (new_w + 1) // 2
+            if outpaint_direction in ['left', 'right']:
+                target_h = H  # Height is fixed
+                # Find the SDXL resolution whose height is closest to target_h
+                best_res = min(self.SDXL_RESOLUTIONS, key=lambda r: abs(r[1] - target_h))
+                target_w, target_h = best_res
+                
+                # We need bounding box to be target_w wide.
+                # If right outpaint, mask is on right (x2 == W). Anchor at x2, pull x1 inward.
+                if outpaint_direction == 'right':
+                    x2 = W
+                    x1 = x2 - target_w
+                else: # left outpaint
+                    x1 = 0
+                    x2 = target_w
+                y1, y2 = 0, H
+
+            else: # top or bottom
+                target_w = W  # Width is fixed
+                # Find the SDXL resolution whose width is closest to target_w
+                best_res = min(self.SDXL_RESOLUTIONS, key=lambda r: abs(r[0] - target_w))
+                target_w, target_h = best_res
+                
+                if outpaint_direction == 'bottom':
+                    y2 = H
+                    y1 = y2 - target_h
+                else: # top outpaint
+                    y1 = 0
+                    y2 = target_h
+                x1, x2 = 0, W
+                
+            new_w, new_h = target_w, target_h
+            
+        else:
+            # [Path B: Standard Inpaint Context]
+            bb_h, bb_w = y2 - y1, x2 - x1
+            new_h = int(bb_h * extend_factor)
+            new_w = int(bb_w * extend_factor)
+            
+            # 3. Snap to SDXL resolution
+            target_w, target_h = self.snap_to_sdxl_resolution(new_w, new_h)
+            target_ratio = target_w / target_h
+            
+            # 4. Adjust BB to match snapped aspect ratio
+            if new_w / new_h > target_ratio:
+                new_h = int(new_w / target_ratio)
+            else:
+                new_w = int(new_h * target_ratio)
+                
+            y1, y2 = center_y - new_h // 2, center_y + (new_h + 1) // 2
+            x1, x2 = center_x - new_w // 2, center_x + (new_w + 1) // 2
         
         # 5. Handle expansion and cropping
         bb_image, _ = self._expand_canvas(image, y1, y2, x1, x2)
         bb_mask, _ = self._expand_canvas(mask[:, :, None] if mask.ndim == 2 else mask, y1, y2, x1, x2)
         bb_mask = bb_mask[:, :, 0]
         
-        # 6. Resize to target resolution
+        # 6. Resize to target resolution (target_w, target_h must be defined by now)
         bb_image = resample_image(bb_image, target_w, target_h)
         bb_mask = resample_image(bb_mask, target_w, target_h)
         

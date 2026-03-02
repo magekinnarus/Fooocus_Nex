@@ -12,7 +12,9 @@ from modules.upscaler import perform_upscale
 
 
 class EarlyReturnException(BaseException):
-    pass
+    def __init__(self, payload=None):
+        super().__init__()
+        self.payload = payload
 
 
 def apply_vary(task_state, progressbar_callback=None):
@@ -62,31 +64,38 @@ def apply_vary(task_state, progressbar_callback=None):
 
 def apply_outpaint(task_state, inpaint_image, inpaint_mask):
     """
-    Pads the image and mask for outpainting.
+    Phase 1 Outpaint: Pads the image and returns the composite image + new area mask.
     """
     if len(task_state.outpaint_selections) > 0:
         H, W, C = inpaint_image.shape
         outpaint_selections = [o.lower() for o in task_state.outpaint_selections]
         
-        if 'top' in outpaint_selections:
-            inpaint_image = np.pad(inpaint_image, [[int(H * 0.3), 0], [0, 0], [0, 0]], mode='edge')
-            inpaint_mask = np.pad(inpaint_mask, [[int(H * 0.3), 0], [0, 0]], mode='constant', constant_values=255)
-        if 'bottom' in outpaint_selections:
-            inpaint_image = np.pad(inpaint_image, [[0, int(H * 0.3)], [0, 0], [0, 0]], mode='edge')
-            inpaint_mask = np.pad(inpaint_mask, [[0, int(H * 0.3)], [0, 0]], mode='constant', constant_values=255)
-
-        H, W, C = inpaint_image.shape
-        if 'left' in outpaint_selections:
-            inpaint_image = np.pad(inpaint_image, [[0, 0], [int(W * 0.3), 0], [0, 0]], mode='edge')
-            inpaint_mask = np.pad(inpaint_mask, [[0, 0], [int(W * 0.3), 0]], mode='constant', constant_values=255)
-        if 'right' in outpaint_selections:
-            inpaint_image = np.pad(inpaint_image, [[0, 0], [0, int(W * 0.3)], [0, 0]], mode='edge')
-            inpaint_mask = np.pad(inpaint_mask, [[0, 0], [0, int(W * 0.3)]], mode='constant', constant_values=255)
+        # Phase 1: Only support single direction at a time for explicit control
+        direction = outpaint_selections[0] 
+        task_state.outpaint_direction = direction
+        
+        # If Phase 2 Guided Outpaint is indicated by the primer checkbox, the user 
+        # has already provided the expanded canvas and mask. Bypass canvas expansion.
+        if getattr(task_state, 'inpaint_pixelate_primer', False):
+            return inpaint_image, inpaint_mask
+            
+        from modules.pipeline.inpaint import InpaintPipeline
+        inpaint = InpaintPipeline()
+        
+        inpaint_image, generated_mask = inpaint.prepare_outpaint_canvas_only(
+            inpaint_image, direction, expansion_size=task_state.inpaint_outpaint_expansion_size
+        )
+        
+        # Combine existing UI mask with the new generated outpaint area mask
+        inpaint_mask = np.maximum(
+            resample_image(inpaint_mask, width=inpaint_image.shape[1], height=inpaint_image.shape[0]), 
+            generated_mask
+        )
 
         inpaint_image = np.ascontiguousarray(inpaint_image.copy())
         inpaint_mask = np.ascontiguousarray(inpaint_mask.copy())
-        task_state.inpaint_strength = 1.0
-        task_state.inpaint_respective_field = 1.0
+        
+        raise EarlyReturnException(payload=(inpaint_image, inpaint_mask))
         
     return inpaint_image, inpaint_mask
 
@@ -98,7 +107,6 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     """
     inpaint_parameterized = task_state.inpaint_engine != 'None'
     denoising_strength = task_state.inpaint_strength
-    inpaint_respective_field = task_state.inpaint_respective_field
     inpaint_disable_initial_latent = task_state.inpaint_disable_initial_latent
 
     # Outpaint is handled before calling this in the original code, but we keep it here for modularity if needed
@@ -106,9 +114,17 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
+    
+    # Phase 2 Guided Outpaint: Apply Pixelation Primer if requested
+    if getattr(task_state, 'inpaint_pixelate_primer', False):
+        inpaint_image = inpaint.pixelate_mask_area(inpaint_image, inpaint_mask)
+        
+    outpaint_direction = getattr(task_state, 'outpaint_direction', None)
+        
     ctx = inpaint.prepare(
         image=inpaint_image,
         mask=inpaint_mask,
+        outpaint_direction=outpaint_direction,
         extend_factor=1.2 # Standard context expansion
     )
     
@@ -261,7 +277,10 @@ def apply_image_input(task_state, base_model_additional_loras, progressbar_callb
         inpaint_image = task_state.inpaint_input_image['image']
         inpaint_mask = task_state.inpaint_input_image['mask'][:, :, 0]
 
-        if task_state.inpaint_advanced_masking_checkbox:
+        # Advanced masking: merge uploaded mask
+        # Note: checkbox label is "Hide Advanced Masking Features"
+        # When unchecked (False) = panel is VISIBLE = process mask upload
+        if not task_state.inpaint_advanced_masking_checkbox:
             mask_upload = task_state.inpaint_mask_image_upload
             if isinstance(mask_upload, dict):
                 if (isinstance(mask_upload['image'], np.ndarray)
@@ -283,8 +302,21 @@ def apply_image_input(task_state, base_model_additional_loras, progressbar_callb
             inpaint_mask = 255 - inpaint_mask
 
         inpaint_image = HWC3(inpaint_image)
-        if isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
-                and (np.any(inpaint_mask > 127) or len(task_state.outpaint_selections) > 0):
+        
+        is_outpaint = len(task_state.outpaint_selections) > 0
+        is_phase2_outpaint = getattr(task_state, 'inpaint_pixelate_primer', False)
+        
+        # All outpaints are 2-step:
+        # Step 1 (is_outpaint and not is_phase2): expand canvas, save composite, return early
+        # Step 2 (is_phase2_outpaint): run actual inpaint generation with mask
+        is_step1 = is_outpaint and not is_phase2_outpaint
+
+        if is_step1:
+            task_state.goals.append('inpaint') 
+            skip_prompt_processing = True
+
+        elif isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
+                and (np.any(inpaint_mask > 127) or is_outpaint):
             if progressbar_callback:
                 progressbar_callback(task_state, 1, 'Downloading upscale models ...')
             config.downloading_upscale_model()

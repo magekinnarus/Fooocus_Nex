@@ -241,6 +241,7 @@ try:
         base_model_name=modules.config.default_base_model_name,
         loras=get_enabled_loras(modules.config.default_loras),
         vae_name=modules.config.default_vae,
+        clip_name=modules.config.default_clip
     )
 except Exception as e:
     print(f'[Nex Warning] Failed to load default model at startup: {e}')

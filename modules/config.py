@@ -495,6 +495,12 @@ default_inpaint_engine_version = get_config_item_or_set_default(
     validator=lambda x: x in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
+default_outpaint_expansion_size = get_config_item_or_set_default(
+    key='default_outpaint_expansion_size',
+    default_value=384,
+    validator=lambda x: isinstance(x, int) and x > 0,
+    expected_type=int
+)
 default_selected_image_input_tab_id = get_config_item_or_set_default(
     key='default_selected_image_input_tab_id',
     default_value=modules.flags.default_input_image_tab,

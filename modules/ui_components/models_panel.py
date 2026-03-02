@@ -23,14 +23,14 @@ def build_models_tab():
             results['vae_model'] = gr.Dropdown(
                 label='VAE', 
                 choices=[flags.default_vae] + modules.config.vae_filenames, 
-                value=flags.default_vae, 
+                value=modules.config.default_vae, 
                 show_label=True
             )
 
         results['clip_model'] = gr.Dropdown(
             label='Force CLIP', 
             choices=['None'] + modules.config.clip_filenames, 
-            value='None', 
+            value=modules.config.default_clip, 
             show_label=True
         )
 
