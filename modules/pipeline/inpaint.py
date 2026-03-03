@@ -151,10 +151,15 @@ class InpaintPipeline:
             x_int16 = np.maximum(maxed, x_int16)
         return np.clip(x_int16, 0, 255).astype(np.uint8)
 
-    def prepare(self, image, mask, extend_factor=1.2, outpaint_direction=None) -> InpaintContext:
+    def prepare(self, image, mask, extend_factor=1.2, outpaint_direction=None, context_mask=None) -> InpaintContext:
         """Native-AR Bounding Box algorithm."""
         # 1. Find tight bounding box
-        mask_indices = np.where(mask > 127)
+        # If a context mask is provided, the bounding box is defined by the union of the mask and the context.
+        bb_calculation_mask = mask
+        if context_mask is not None:
+            bb_calculation_mask = np.maximum(mask, context_mask)
+            
+        mask_indices = np.where(bb_calculation_mask > 127)
         if len(mask_indices[0]) == 0:
             # Fallback if no mask: use center square
             H, W = image.shape[:2]

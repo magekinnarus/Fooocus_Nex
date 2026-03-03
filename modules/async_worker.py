@@ -74,10 +74,15 @@ class AsyncTask:
         s.current_tab = args.pop()
         s.uov_method = args.pop()
         s.uov_input_image = args.pop()
+        
         s.outpaint_selections = args.pop()
+        s.outpaint_input_image = args.pop()
+        s.outpaint_mask_image = args.pop()
+        
         s.inpaint_input_image = args.pop()
         s.inpaint_additional_prompt = args.pop()
-        s.inpaint_mask_image_upload = args.pop()
+        s.inpaint_mask_image = args.pop()
+        s.inpaint_bb_image = args.pop()
 
         s.disable_preview = args.pop()
         s.disable_intermediate_results = args.pop()
@@ -101,6 +106,7 @@ class AsyncTask:
         s.canny_low_threshold = args.pop()
         s.canny_high_threshold = args.pop()
         s.controlnet_softness = args.pop()
+        
         s.debugging_inpaint_preprocessor = args.pop()
         s.inpaint_disable_initial_latent = args.pop()
         s.inpaint_engine = args.pop()
@@ -108,13 +114,20 @@ class AsyncTask:
         s.inpaint_advanced_masking_checkbox = args.pop()
         s.invert_mask_checkbox = args.pop()
         s.inpaint_erode_or_dilate = args.pop()
-        s.inpaint_pixelate_primer = args.pop()
+        s.inpaint_step2_checkbox = args.pop()
+        
+        s.outpaint_engine = args.pop()
+        s.outpaint_strength = args.pop()
+        s.outpaint_advanced_masking_checkbox = args.pop()
+        s.outpaint_invert_mask_checkbox = args.pop()
         
         inpaint_outpaint_expansion_size_val = args.pop()
         if inpaint_outpaint_expansion_size_val is None or inpaint_outpaint_expansion_size_val == '':
             s.inpaint_outpaint_expansion_size = config.default_outpaint_expansion_size
         else:
             s.inpaint_outpaint_expansion_size = int(inpaint_outpaint_expansion_size_val)
+            
+        s.outpaint_step2_checkbox = args.pop()
 
         s.save_metadata_to_images = args.pop() if not args_manager.args.disable_image_log else False
         s.metadata_scheme = MetadataScheme(

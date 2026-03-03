@@ -21,6 +21,7 @@ import modules.ui_components.models_panel as models_panel
 import modules.ui_components.advanced_panel as advanced_panel
 import modules.ui_components.control_panel as control_panel
 import modules.ui_components.inpaint_panel as inpaint_panel
+import modules.ui_components.outpaint_panel as outpaint_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -325,15 +326,29 @@ with shared.gradio_root:
                                            outputs=ip_ad_cols + ip_types + ip_stops + ip_weights,
                                            queue=False, show_progress=False)
 
-                    with gr.Tab(label='Inpaint or Outpaint', id='inpaint_tab') as inpaint_tab:
+                    with gr.Tab(label='Outpaint', id='outpaint_tab') as outpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                inpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='inpaint_canvas', show_label=False)
-                                inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
-                                inpaint_mode = gr.Dropdown(choices=modules.flags.inpaint_options, value=modules.config.default_inpaint_method, label='Method')
-                                inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=False)
+                                outpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='outpaint_canvas', show_label=False)
+                                outpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=[], label='Outpaint Direction')
-                                inpaint_pixelate_primer = gr.Checkbox(label='Outpaint 2nd Step generation', value=False, elem_id='inpaint_pixelate_primer', info='Provides color guidance for outpaint by pixelating the blank area.')
+                                outpaint_step2_checkbox = gr.Checkbox(label='Outpaint 2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', info='Provides color guidance for outpaint by pixelating the blank area.')
+                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
+
+                            with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as outpaint_mask_generation_col:
+                                outpaint_mask_image = grh.Image(label='Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='outpaint_mask_canvas')
+                                outpaint_invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
+                                outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)')
+                                
+                                outpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, outpaint_mask_image], outputs=[gallery], queue=False, show_progress=False)
+
+                    with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
+                        with gr.Row():
+                            with gr.Column():
+                                inpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#0000FF", elem_id='inpaint_canvas', show_label=False)
+                                inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
+                                inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=False)
+                                inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', info='Enable to use the uploaded edited BB patch for final generation.')
                                 example_inpaint_prompts = gr.Dataset(samples=modules.config.example_inpaint_prompts,
                                                                      label='Additional Prompt Quick List',
                                                                      components=[inpaint_additional_prompt],
@@ -342,11 +357,9 @@ with shared.gradio_root:
                                 example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
 
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
-                                inpaint_mask_image = grh.Image(label='Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
+                                inpaint_mask_image = grh.Image(label='Step 2: Edited BB Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
+                                inpaint_bb_image = grh.Image(label='Step 2: Edited BB Image Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='inpaint_bb_canvas')
                                 invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
-                                inpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)')
-                                
-                                inpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, inpaint_mask_image], outputs=[gallery], queue=False, show_progress=False)
 
 
 
@@ -497,6 +510,16 @@ with shared.gradio_root:
                         canny_low_threshold = control_panel_result['canny_low_threshold']
                         canny_high_threshold = control_panel_result['canny_high_threshold']
 
+                    with gr.Tab(label='Outpaint'):
+                        outpaint_panel_result = outpaint_panel.build_outpaint_tab()
+                        outpaint_engine = outpaint_panel_result['outpaint_engine']
+                        outpaint_strength = outpaint_panel_result['outpaint_strength']
+                        inpaint_outpaint_expansion_size = outpaint_panel_result['inpaint_outpaint_expansion_size']
+
+                        outpaint_ctrls = [outpaint_engine, outpaint_strength,
+                                          outpaint_advanced_masking_checkbox, outpaint_invert_mask_checkbox,
+                                          inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
+
                     with gr.Tab(label='Inpaint'):
                         inpaint_panel_result = inpaint_panel.build_inpaint_tab(
                             inpaint_advanced_masking_checkbox, invert_mask_checkbox,
@@ -508,12 +531,11 @@ with shared.gradio_root:
                         inpaint_strength = inpaint_panel_result['inpaint_strength']
                         inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
                         inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
-                        inpaint_outpaint_expansion_size = inpaint_panel_result['inpaint_outpaint_expansion_size']
 
                         inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
                                          inpaint_strength,
                                          inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate,
-                                         inpaint_pixelate_primer, inpaint_outpaint_expansion_size]
+                                         inpaint_step2_checkbox]
 
 
 
@@ -542,12 +564,12 @@ with shared.gradio_root:
                              overwrite_width, overwrite_height, guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
                              base_model, vae_model, clip_model, sampler_name, scheduler_name, 
-                             seed_random, image_seed, inpaint_engine, inpaint_engine_state,
-                             inpaint_mode, generate_button,
+                             seed_random, image_seed, outpaint_engine, inpaint_engine_state,
+                             generate_button,
                              load_parameter_button] + lora_ctrls
 
         if not args_manager.args.disable_preset_selection:
-            def preset_selection_change(preset, is_generating, inpaint_mode):
+            def preset_selection_change(preset, is_generating):
                 preset_content = modules.config.try_get_preset_content(preset) if preset != 'initial' else {}
                 preset_prepared = modules.meta_parser.parse_meta_from_preset(preset_content)
 
@@ -565,23 +587,16 @@ with shared.gradio_root:
                 if 'prompt' in preset_prepared and preset_prepared.get('prompt') == '':
                     del preset_prepared['prompt']
 
-                return metadata_ui.load_parameter_button_click(json.dumps(preset_prepared), is_generating, inpaint_mode)
+                return metadata_ui.load_parameter_button_click(json.dumps(preset_prepared), is_generating, modules.flags.inpaint_option_default)
 
 
-            def inpaint_engine_state_change(inpaint_engine_version, *args):
+            def inpaint_engine_state_change(inpaint_engine_version):
                 if inpaint_engine_version == 'empty':
                     inpaint_engine_version = modules.config.default_inpaint_engine_version
 
-                result = []
-                for inpaint_mode in args:
-                    if inpaint_mode != modules.flags.inpaint_option_detail:
-                        result.append(gr.update(value=inpaint_engine_version))
-                    else:
-                        result.append(gr.update())
+                return [gr.update(value=inpaint_engine_version)]
 
-                return result
-
-            preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating, inpaint_mode], outputs=load_data_outputs, queue=False, show_progress=True) \
+            preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
                 .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
                 .then(lambda: None, _js='()=>{refresh_style_localization();}')
 
@@ -598,17 +613,9 @@ with shared.gradio_root:
         output_format.input(lambda x: gr.update(output_format=x), inputs=output_format)
 
 
-        inpaint_mode.change(inpaint_mode_change, inputs=[inpaint_mode, inpaint_engine_state], outputs=[
-            inpaint_additional_prompt, outpaint_selections, example_inpaint_prompts,
-            inpaint_disable_initial_latent, inpaint_engine,
-            inpaint_strength
-        ], show_progress=False, queue=False)
-
         # load configured default_inpaint_method
-        default_inpaint_ctrls = [inpaint_mode, inpaint_disable_initial_latent, inpaint_engine, inpaint_strength]
-        shared.gradio_root.load(inpaint_mode_change, inputs=[inpaint_mode, inpaint_engine_state], outputs=[
-            inpaint_additional_prompt, outpaint_selections, example_inpaint_prompts, inpaint_disable_initial_latent,
-            inpaint_engine, inpaint_strength
+        shared.gradio_root.load(inpaint_engine_state_change, inputs=[inpaint_engine_state], outputs=[
+            outpaint_engine
         ], show_progress=False, queue=False)
 
 
@@ -622,7 +629,8 @@ with shared.gradio_root:
         ctrls += [base_model, vae_model, clip_model] + lora_ctrls
         ctrls += [input_image_checkbox, current_tab]
         ctrls += [uov_method, uov_input_image]
-        ctrls += [outpaint_selections, inpaint_input_image, inpaint_additional_prompt, inpaint_mask_image]
+        ctrls += [outpaint_selections, outpaint_input_image, outpaint_mask_image]
+        ctrls += [inpaint_input_image, inpaint_additional_prompt, inpaint_mask_image, inpaint_bb_image]
         ctrls += [disable_preview, disable_intermediate_results, disable_seed_increment]
         ctrls += [adm_scaler_positive, adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip]
         ctrls += [sampler_name, scheduler_name]
@@ -631,6 +639,7 @@ with shared.gradio_root:
         ctrls += [debugging_cn_preprocessor, skipping_cn_preprocessor, canny_low_threshold, canny_high_threshold]
         ctrls += [controlnet_softness]
         ctrls += inpaint_ctrls
+        ctrls += outpaint_ctrls
 
 
 
@@ -654,7 +663,7 @@ with shared.gradio_root:
 
         prompt.input(parse_meta, inputs=[prompt, state_is_generating], outputs=[prompt, generate_button, load_parameter_button], queue=False, show_progress=False)
 
-        load_parameter_button.click(metadata_ui.load_parameter_button_click, inputs=[prompt, state_is_generating, inpaint_mode], outputs=load_data_outputs, queue=False, show_progress=False)
+        load_parameter_button.click(metadata_ui.load_parameter_button_click, inputs=[prompt, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=False)
 
         def trigger_metadata_import(file, state_is_generating):
             parameters, metadata_scheme = modules.meta_parser.read_info_from_image(file)
@@ -665,7 +674,7 @@ with shared.gradio_root:
                 metadata_parser = modules.meta_parser.get_metadata_parser(metadata_scheme)
                 parsed_parameters = metadata_parser.to_json(parameters)
 
-            return metadata_ui.trigger_metadata_import(file, state_is_generating, inpaint_mode)
+            return metadata_ui.trigger_metadata_import(file, state_is_generating)
 
         metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)

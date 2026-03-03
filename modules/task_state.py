@@ -28,9 +28,12 @@ class TaskState:
     uov_method: str = "Disabled"
     uov_input_image: Optional[np.ndarray] = None
     outpaint_selections: List[str] = field(default_factory=list)
+    outpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
+    outpaint_mask_image: Optional[np.ndarray] = None
     inpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     inpaint_additional_prompt: str = ""
-    inpaint_mask_image_upload: Optional[np.ndarray] = None
+    inpaint_mask_image: Optional[np.ndarray] = None
+    inpaint_bb_image: Optional[np.ndarray] = None
     disable_preview: bool = False
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False
@@ -61,6 +64,13 @@ class TaskState:
     inpaint_advanced_masking_checkbox: bool = False
     invert_mask_checkbox: bool = False
     inpaint_erode_or_dilate: int = 0
+    inpaint_step2_checkbox: bool = False
+    outpaint_step2_checkbox: bool = False
+    outpaint_engine: str = "None"
+    outpaint_strength: float = 1.0
+    outpaint_advanced_masking_checkbox: bool = False
+    outpaint_invert_mask_checkbox: bool = False
+    inpaint_outpaint_expansion_size: int = 384
     save_metadata_to_images: bool = True
     metadata_scheme: Any = None # modules.flags.MetadataScheme
     cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)

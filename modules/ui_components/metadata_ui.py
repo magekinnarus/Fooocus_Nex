@@ -153,7 +153,9 @@ def get_lora(key: str, fallback: str | None, source_dict: dict, results: list, p
         results.append('None')
         results.append(1)
 
-def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool, inpaint_mode: str):
+def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
+    inpaint_mode = modules.flags.inpaint_option_default
+
     loaded_parameter_dict = raw_metadata
     if isinstance(raw_metadata, str):
         loaded_parameter_dict = json.loads(raw_metadata)
@@ -228,7 +230,8 @@ def parse_meta_from_preset(preset_content):
 
     return preset_prepared
 
-def trigger_metadata_import(file, state_is_generating, inpaint_mode):
+def trigger_metadata_import(file, state_is_generating):
+
     parameters, metadata_scheme = modules.meta_parser.read_info_from_image(file)
     if parameters is None:
         print('Could not find metadata in the image!')
@@ -237,4 +240,5 @@ def trigger_metadata_import(file, state_is_generating, inpaint_mode):
         metadata_parser = modules.meta_parser.get_metadata_parser(metadata_scheme)
         parsed_parameters = metadata_parser.to_json(parameters)
 
-    return load_parameter_button_click(parsed_parameters, state_is_generating, inpaint_mode)
+    return load_parameter_button_click(parsed_parameters, state_is_generating)
+

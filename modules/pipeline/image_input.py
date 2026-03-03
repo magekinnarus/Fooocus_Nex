@@ -105,13 +105,10 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
     """
     Sets up the inpainting worker, patches the UNet, and encodes the initial latent.
     """
-    inpaint_parameterized = task_state.inpaint_engine != 'None'
-    denoising_strength = task_state.inpaint_strength
-    inpaint_disable_initial_latent = task_state.inpaint_disable_initial_latent
+    inpaint_parameterized = getattr(task_state, 'inpaint_engine', 'None') != 'None'
+    denoising_strength = getattr(task_state, 'inpaint_strength', 1.0) # outpaint uses 1.0
+    inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
 
-    # Outpaint is handled before calling this in the original code, but we keep it here for modularity if needed
-    # or just assume it was called.
-    
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
     
@@ -120,17 +117,29 @@ def apply_inpaint(task_state, inpaint_head_model_path, inpaint_image, inpaint_ma
         inpaint_image = inpaint.pixelate_mask_area(inpaint_image, inpaint_mask)
         
     outpaint_direction = getattr(task_state, 'outpaint_direction', None)
+    context_mask = getattr(task_state, 'context_mask', None)
         
     ctx = inpaint.prepare(
         image=inpaint_image,
         mask=inpaint_mask,
+        context_mask=context_mask,
         outpaint_direction=outpaint_direction,
         extend_factor=1.2 # Standard context expansion
     )
     
-    if task_state.debugging_inpaint_preprocessor:
+    # Phase 1 Inpaint: Return BB Image and fully Blue Mask for external editing
+    is_step1_inpaint = task_state.current_tab == 'inpaint' and not getattr(task_state, 'inpaint_step2_checkbox', False)
+    if is_step1_inpaint:
+        bb_mask_blue = np.zeros_like(ctx.bb_image)
+        bb_mask_blue[:, :, 2] = 255  # Fully blue mask
+        
         if yield_result_callback:
-            # Show the BB image and mask for debugging
+            # Show the BB image and mask for debugging/download
+            yield_result_callback(task_state, [ctx.bb_image, bb_mask_blue], 100, do_not_show_finished_images=False)
+        raise EarlyReturnException(payload=(ctx.bb_image, bb_mask_blue))
+
+    if getattr(task_state, 'debugging_inpaint_preprocessor', False):
+        if yield_result_callback:
             yield_result_callback(task_state, [ctx.bb_image, ctx.bb_mask], 100, do_not_show_finished_images=True)
         raise EarlyReturnException
 
@@ -271,17 +280,12 @@ def apply_image_input(task_state, base_model_additional_loras, progressbar_callb
         skip_prompt_processing = prepare_upscale(task_state, progressbar_callback)
 
     # Inpaint/Outpaint handling
-    if (task_state.current_tab == 'inpaint' or (
-            task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint)) \
-            and isinstance(task_state.inpaint_input_image, dict):
-        inpaint_image = task_state.inpaint_input_image['image']
-        inpaint_mask = task_state.inpaint_input_image['mask'][:, :, 0]
-
-        # Advanced masking: merge uploaded mask
-        # Note: checkbox label is "Hide Advanced Masking Features"
-        # When unchecked (False) = panel is VISIBLE = process mask upload
-        if not task_state.inpaint_advanced_masking_checkbox:
-            mask_upload = task_state.inpaint_mask_image_upload
+    if task_state.current_tab == 'outpaint' and isinstance(task_state.outpaint_input_image, dict):
+        inpaint_image = task_state.outpaint_input_image['image']
+        inpaint_mask = task_state.outpaint_input_image['mask'][:, :, 0]
+        
+        if not task_state.outpaint_advanced_masking_checkbox:
+            mask_upload = task_state.outpaint_mask_image
             if isinstance(mask_upload, dict):
                 if (isinstance(mask_upload['image'], np.ndarray)
                         and isinstance(mask_upload['mask'], np.ndarray)
@@ -295,6 +299,73 @@ def apply_image_input(task_state, base_model_additional_loras, progressbar_callb
                 mask_upload = (mask_upload > 127).astype(np.uint8) * 255
                 inpaint_mask = np.maximum(inpaint_mask, mask_upload)
 
+        if task_state.outpaint_invert_mask_checkbox:
+            inpaint_mask = 255 - inpaint_mask
+
+        # Sync the primer flag for outpaint
+        task_state.inpaint_pixelate_primer = getattr(task_state, 'outpaint_step2_checkbox', False)
+
+        inpaint_image = HWC3(inpaint_image)
+        
+        is_outpaint = len(task_state.outpaint_selections) > 0
+        task_state.goals.append('inpaint') 
+        skip_prompt_processing = True
+
+    elif (task_state.current_tab == 'inpaint' or (
+            task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint)) \
+            and isinstance(task_state.inpaint_input_image, dict):
+        inpaint_image = task_state.inpaint_input_image['image']
+        raw_mask_layer = task_state.inpaint_input_image['mask']
+        
+        # Inpaint Mask (White): Alpha where RGB = 255,255,255
+        # Gradio sketch tool encodes colors into RGB based on brush selection.
+        # So we identify white strokes by masking where B > 127 and R > 127
+        # And blue strokes (context mask) where B > 127 and R < 127
+        
+        has_alpha = raw_mask_layer.shape[2] == 4
+        if has_alpha:
+            alpha_mask = raw_mask_layer[:,:,3] > 0
+        else:
+            # If no alpha channel, assume any non-black pixel is part of a stroke if we can't rely on background
+            # But usually Gradio sketches on a transparent background have alpha.
+            # Fallback: ignore alpha if not present
+            alpha_mask = np.ones_like(raw_mask_layer[:,:,0], dtype=bool)
+
+        white_strokes = (raw_mask_layer[:,:,0] > 127) & (raw_mask_layer[:,:,1] > 127) & (raw_mask_layer[:,:,2] > 127) & alpha_mask
+        blue_strokes = (raw_mask_layer[:,:,0] < 127) & (raw_mask_layer[:,:,1] < 127) & (raw_mask_layer[:,:,2] > 127) & alpha_mask
+        
+        inpaint_mask = np.zeros_like(raw_mask_layer[:, :, 0])
+        inpaint_mask[white_strokes] = 255
+        
+        context_mask = np.zeros_like(raw_mask_layer[:, :, 0])
+        context_mask[blue_strokes] = 255
+        task_state.context_mask = context_mask # Store for pipeline to use
+
+        # Advanced masking: merge uploaded mask (this is now the Step 2 mask upload slot)
+        if not task_state.inpaint_advanced_masking_checkbox:
+            mask_upload = task_state.inpaint_mask_image
+            if isinstance(mask_upload, dict):
+                if (isinstance(mask_upload['image'], np.ndarray)
+                        and isinstance(mask_upload['mask'], np.ndarray)
+                        and mask_upload['image'].ndim == 3):
+                    mask_upload = np.maximum(mask_upload['image'], mask_upload['mask'])
+            
+            if isinstance(mask_upload, np.ndarray) and mask_upload.ndim == 3:
+                H, W, C = inpaint_image.shape
+                mask_upload = resample_image(mask_upload, width=W, height=H)
+                
+                # Phase 1/2 workflow: if uploading the blue mask here, extract white/blue again
+                white_strokes_up = (mask_upload[:,:,0] > 127) & (mask_upload[:,:,1] > 127) & (mask_upload[:,:,2] > 127)
+                blue_strokes_up = (mask_upload[:,:,0] < 127) & (mask_upload[:,:,1] < 127) & (mask_upload[:,:,2] > 127)
+                
+                up_inpaint_mask = np.zeros_like(mask_upload[:, :, 0])
+                up_inpaint_mask[white_strokes_up] = 255
+                inpaint_mask = np.maximum(inpaint_mask, up_inpaint_mask)
+                
+                up_context_mask = np.zeros_like(mask_upload[:, :, 0])
+                up_context_mask[blue_strokes_up] = 255
+                task_state.context_mask = np.maximum(task_state.context_mask, up_context_mask)
+
         if int(task_state.inpaint_erode_or_dilate) != 0:
             inpaint_mask = erode_or_dilate(inpaint_mask, task_state.inpaint_erode_or_dilate)
 
@@ -303,20 +374,11 @@ def apply_image_input(task_state, base_model_additional_loras, progressbar_callb
 
         inpaint_image = HWC3(inpaint_image)
         
-        is_outpaint = len(task_state.outpaint_selections) > 0
-        is_phase2_outpaint = getattr(task_state, 'inpaint_pixelate_primer', False)
-        
-        # All outpaints are 2-step:
-        # Step 1 (is_outpaint and not is_phase2): expand canvas, save composite, return early
-        # Step 2 (is_phase2_outpaint): run actual inpaint generation with mask
-        is_step1 = is_outpaint and not is_phase2_outpaint
+        is_step1 = not getattr(task_state, 'inpaint_step2_checkbox', False)
 
         if is_step1:
             task_state.goals.append('inpaint') 
-            skip_prompt_processing = True
-
-        elif isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
-                and (np.any(inpaint_mask > 127) or is_outpaint):
+        elif isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray):
             if progressbar_callback:
                 progressbar_callback(task_state, 1, 'Downloading upscale models ...')
             config.downloading_upscale_model()

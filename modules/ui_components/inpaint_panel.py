@@ -39,13 +39,6 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
     )
 
     results['inpaint_mask_color'] = gr.ColorPicker(label='Inpaint brush color', value='#FFFFFF', elem_id='inpaint_brush_color')
-    
-    results['inpaint_outpaint_expansion_size'] = gr.Dropdown(
-        label='Outpaint Expansion (Pixels)',
-        choices=['384', '416', '448'],
-        value=str(modules.config.default_outpaint_expansion_size),
-        info='Number of pixels to add during outpainting. Default is 384.'
-    )
 
     # Event bindings that depend on components from other tabs
     inpaint_advanced_masking_checkbox.change(
