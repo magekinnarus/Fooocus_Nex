@@ -137,67 +137,19 @@ def expand_mask(outpaint_selections, inpaint_mask_image):
         print("[Debug] Mask Image is None. Aborting.")
         return gr.update()
     
-    import numpy as np
+    from modules.mask_processing import combine_image_and_mask, to_binary_mask, expand_mask_direction
     
-    mask = None
-    if isinstance(inpaint_mask_image, dict):
-        image_layer = inpaint_mask_image.get('image')
-        mask_layer = inpaint_mask_image.get('mask')
-        if isinstance(image_layer, np.ndarray) and isinstance(mask_layer, np.ndarray):
-            mask = np.maximum(image_layer, mask_layer)
-        elif isinstance(image_layer, np.ndarray):
-            mask = image_layer
-        elif isinstance(mask_layer, np.ndarray):
-            mask = mask_layer
-    elif isinstance(inpaint_mask_image, np.ndarray):
-        mask = inpaint_mask_image
-        
-    if mask is None:
+    merged = combine_image_and_mask(inpaint_mask_image)
+    if merged is None:
         return gr.update()
-    
-    # Ensure range is 0-255 uint8
-    if mask.dtype == np.float32 or mask.dtype == np.float64:
-        # If max is <= 1.0, scale up
-        if mask.max() <= 1.0:
-            mask = mask * 255.0
-        mask = mask.astype(np.uint8)
         
-    # mask is (H, W) or (H, W, 3) or (H, W, 4)
-    if mask.ndim == 3:
-        if mask.shape[-1] == 4:
-            mask = mask[..., :3] # discard alpha
-        mask = np.max(mask, axis=-1)
+    print(f"[Debug Expand Mask] merged shape: {merged.shape}, max: {merged.max()}, min: {merged.min()}, mean: {merged.mean()}")
     
-    # Threshold to make it strictly 0 or 255
-    new_mask = (mask > 127).astype(np.uint8) * 255
+    new_mask = to_binary_mask(merged)
+    print(f"[Debug Expand Mask] binary_mask shape: {new_mask.shape}, sum (white pixels): {new_mask.sum() // 255} out of {new_mask.size}")
     
-    # Expand white area by 32 pixels in the OPPOSITE direction of outpaint
-    # E.g., if Outpaint Direction is 'Right', the mask is on the right side.
-    # We want the mask to grow into the left side (the original image).
-    # Numpy slicing: to expand white pixels to the LEFT, we shift the array to the LEFT
     for direction in outpaint_selections:
-        if direction == 'Right': # Expand Left
-            for _ in range(32):
-                shifted = np.zeros_like(new_mask)
-                shifted[:, :-1] = new_mask[:, 1:]
-                new_mask = np.maximum(new_mask, shifted)
-        elif direction == 'Left': # Expand Right
-            for _ in range(32):
-                shifted = np.zeros_like(new_mask)
-                shifted[:, 1:] = new_mask[:, :-1]
-                new_mask = np.maximum(new_mask, shifted)
-        elif direction == 'Top': # Expand Bottom
-            for _ in range(32):
-                shifted = np.zeros_like(new_mask)
-                shifted[1:, :] = new_mask[:-1, :]
-                new_mask = np.maximum(new_mask, shifted)
-        elif direction == 'Bottom': # Expand Top
-            for _ in range(32):
-                shifted = np.zeros_like(new_mask)
-                shifted[:-1, :] = new_mask[1:, :]
-                new_mask = np.maximum(new_mask, shifted)
-
-    # Convert to PIL for the Gallery, and pack in a tuple with label
+        new_mask = expand_mask_direction(new_mask, direction, pixels=32)
 
     from PIL import Image
     import modules.util
@@ -206,7 +158,6 @@ def expand_mask(outpaint_selections, inpaint_mask_image):
     result_rgb = np.stack([new_mask]*3, axis=-1)
     result_img = Image.fromarray(result_rgb)
     
-    # Fooocus gallery expects saved files to ensure correct format download (PNG)
     _, temp_path, _ = modules.util.generate_temp_filename(folder=modules.config.path_outputs, extension='png')
     os.makedirs(os.path.dirname(temp_path), exist_ok=True)
     result_img.save(temp_path)
@@ -346,19 +297,22 @@ with shared.gradio_root:
                         with gr.Row():
                             with gr.Column():
                                 inpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#0000FF", elem_id='inpaint_canvas', show_label=False)
+                                with gr.Row():
+                                    inpaint_brush_color = gr.Radio(choices=["Blue (Context Mask)", "White (Inpaint Mask)"], value="Blue (Context Mask)", label="Brush Color", show_label=False, container=False)
+                                    inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm")
                                 inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
-                                inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=False)
+                                inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=True)
                                 inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', info='Enable to use the uploaded edited BB patch for final generation.')
                                 example_inpaint_prompts = gr.Dataset(samples=modules.config.example_inpaint_prompts,
                                                                      label='Additional Prompt Quick List',
                                                                      components=[inpaint_additional_prompt],
-                                                                     visible=False)
+                                                                     visible=True)
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
                                 example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
 
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
-                                inpaint_mask_image = grh.Image(label='Step 2: Edited BB Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
                                 inpaint_bb_image = grh.Image(label='Step 2: Edited BB Image Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='inpaint_bb_canvas')
+                                inpaint_mask_image = grh.Image(label='Step 2: Edited BB Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
                                 invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
 
 
@@ -384,6 +338,42 @@ with shared.gradio_root:
                         metadata_input_image.upload(trigger_metadata_preview, inputs=metadata_input_image,
                                                     outputs=metadata_json, queue=False, show_progress=True)
 
+            # Phase 3 UI Bindings
+            inpaint_brush_color.change(
+                lambda color: gr.update(brush_color="#FFFFFF" if "White" in color else "#0000FF"),
+                inputs=[inpaint_brush_color],
+                outputs=[inpaint_input_image],
+                queue=False, show_progress=False
+            )
+
+            toggle_toolbar_js = """
+            () => {
+                const wrap = document.querySelector('#inpaint_canvas');
+                if(wrap){
+                    wrap.classList.toggle('hide-toolbar');
+                    if(!document.getElementById('inpaint-toolbar-style')){
+                        const style = document.createElement('style');
+                        style.id = 'inpaint-toolbar-style';
+                        style.innerHTML = `
+                            #inpaint_canvas.hide-toolbar button[aria-label="Undo"],
+                            #inpaint_canvas.hide-toolbar button[aria-label="Clear"],
+                            #inpaint_canvas.hide-toolbar button[aria-label="Remove Image"],
+                            #inpaint_canvas.hide-toolbar button[aria-label="Draw"],
+                            #inpaint_canvas.hide-toolbar button[aria-label="Erase"],
+                            #inpaint_canvas.hide-toolbar .canvas-tooltip-info,
+                            #inpaint_canvas.hide-toolbar .toolbar,
+                            #inpaint_canvas.hide-toolbar input[type="range"] {
+                                display: none !important;
+                                opacity: 0 !important;
+                                visibility: hidden !important;
+                            }
+                        `;
+                        document.head.appendChild(style);
+                    }
+                }
+            }
+            """
+            inpaint_toggle_toolbar.click(lambda: None, queue=False, show_progress=False, _js=toggle_toolbar_js)
 
             switch_js = "(x) => {if(x){viewer_to_bottom(100);viewer_to_bottom(500);}else{viewer_to_top();} return x;}"
             down_js = "() => {viewer_to_bottom();}"
@@ -395,6 +385,7 @@ with shared.gradio_root:
             current_tab = gr.Textbox(value='uov', visible=False)
             uov_tab.select(lambda: 'uov', outputs=current_tab, queue=False, _js=down_js, show_progress=False)
             inpaint_tab.select(lambda: 'inpaint', outputs=current_tab, queue=False, _js=down_js, show_progress=False)
+            outpaint_tab.select(lambda: 'outpaint', outputs=current_tab, queue=False, _js=down_js, show_progress=False)
             ip_tab.select(lambda: 'ip', outputs=current_tab, queue=False, _js=down_js, show_progress=False)
             metadata_tab.select(lambda: 'metadata', outputs=current_tab, queue=False, _js=down_js, show_progress=False)
 

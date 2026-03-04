@@ -755,12 +755,6 @@ def update_files():
 def downloading_inpaint_models(v):
     assert v in modules.flags.inpaint_engine_versions
 
-    load_file_from_url(
-        url='https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/fooocus_inpaint_head.pth',
-        model_dir=path_inpaint,
-        file_name='fooocus_inpaint_head.pth'
-    )
-    head_file = os.path.join(path_inpaint, 'fooocus_inpaint_head.pth')
     patch_file = None
 
     if v == 'v1':
@@ -787,7 +781,7 @@ def downloading_inpaint_models(v):
         )
         patch_file = os.path.join(path_inpaint, 'inpaint_v26.fooocus.patch')
 
-    return head_file, patch_file
+    return patch_file
 
 
 def downloading_sdxl_lcm_lora():

@@ -222,7 +222,7 @@ def handler(async_task: AsyncTask):
     if 'inpaint' in s.goals:
         try:
             inpaint_image, inpaint_mask = apply_outpaint(s, res['inpaint_image'], res['inpaint_mask'])
-            apply_inpaint(s, res['inpaint_head_model_path'], inpaint_image, inpaint_mask, progressbar, yield_result)
+            apply_inpaint(s, inpaint_image, inpaint_mask, progressbar, yield_result)
         except EarlyReturnException as e:
             # Step 1 outpaint: save expanded canvas + mask for the user to use in Step 2
             if e.payload is not None:
@@ -230,11 +230,14 @@ def handler(async_task: AsyncTask):
                 from modules.pipeline.output import save_and_log
                 progressbar(s, 100, 'Saving composite image and mask ...')
                 
-                # Make mask 3 channel for saving
-                inpaint_mask_3c = np.stack([inpaint_mask]*3, axis=-1)
+                # Ensure mask is 3 channel for saving
+                if inpaint_mask.ndim == 2:
+                    inpaint_mask_save = np.stack([inpaint_mask]*3, axis=-1)
+                else:
+                    inpaint_mask_save = inpaint_mask
                 
                 img_paths = save_and_log(
-                    s, s.height, s.width, [inpaint_image, inpaint_mask_3c], 
+                    s, s.height, s.width, [inpaint_image, inpaint_mask_save], 
                     {
                         'log_positive_prompt': s.prompt, 
                         'log_negative_prompt': s.negative_prompt, 
@@ -271,7 +274,7 @@ def handler(async_task: AsyncTask):
                 s, t, i, s.image_number, all_steps, preparation_steps, 
                 s.denoising_strength, final_scheduler_name, s.loras,
                 res.get('controlnet_canny_path'), res.get('controlnet_cpds_path'),
-                res.get('inpaint_head_model_path'), progressbar, yield_result
+                progressbar, yield_result
             )
         except resources.InterruptProcessingException:
             if s.last_stop == 'skip':

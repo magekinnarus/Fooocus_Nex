@@ -296,9 +296,14 @@ class Image(
         if self.tool == "sketch" and self.source in ["upload", "webcam"]:
             if mask is not None:
                 mask_im = processing_utils.decode_base64_to_image(mask)
-                if mask_im.mode == "RGBA":  # whiten any opaque pixels in the mask
-                    alpha_data = mask_im.getchannel("A").convert("L")
-                    mask_im = _Image.merge("RGB", [alpha_data, alpha_data, alpha_data])
+                if mask_im.mode == "RGBA":  # Preserve brush color, use alpha for stroke detection
+                    alpha_data = np.array(mask_im.getchannel("A"))
+                    rgb_data = np.array(mask_im.convert("RGB"))
+                    # Zero out pixels that have no alpha (not drawn), preserve color where drawn
+                    rgb_data[alpha_data == 0] = 0
+                    # Add alpha channel back as 4th channel for downstream stroke detection
+                    mask_array = np.dstack([rgb_data, alpha_data])
+                    mask_im = _Image.fromarray(mask_array, mode="RGBA")
                 return {
                     "image": self._format_image(im),
                     "mask": self._format_image(mask_im),

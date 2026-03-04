@@ -67,23 +67,23 @@ class InpaintPipeline:
         if ox1 > 0: canvas[:, :cx1] = canvas[:, cx1:cx1+1]
         if ox2 > 0: canvas[:, cx2:] = canvas[:, cx2-1:cx2]
         
-        # Apply pixelation to overflow regions
-        def pixelate(slice_idx, block_size):
-            block_size = max(4, block_size)
+        # Apply strict 8x8 pixelation to overflow regions for SDXL VAE alignment
+        def pixelate(slice_idx):
             h, w, c = slice_idx.shape
             if h > 0 and w > 0:
                 is_single_channel = (c == 1)
-                small = cv2.resize(slice_idx, (max(1, w // block_size), max(1, h // block_size)), interpolation=cv2.INTER_NEAREST)
+                # SDXL VAE compresses 8x8 pixels into 1 latent pixel
+                small = cv2.resize(slice_idx, (max(1, w // 8), max(1, h // 8)), interpolation=cv2.INTER_NEAREST)
                 large = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
                 if is_single_channel and large.ndim == 2:
                     large = large[:, :, None]
                 return large
             return slice_idx
 
-        if oy1 > 0: canvas[:cy1, :] = pixelate(canvas[:cy1, :], oy1 // 16)
-        if oy2 > 0: canvas[cy2:, :] = pixelate(canvas[cy2:, :], oy2 // 16)
-        if ox1 > 1: canvas[:, :cx1] = pixelate(canvas[:, :cx1], ox1 // 16) # ox1 > 1 to avoid single pixel strips
-        if ox2 > 1: canvas[:, cx2:] = pixelate(canvas[:, cx2:], ox2 // 16)
+        if oy1 > 0: canvas[:cy1, :] = pixelate(canvas[:cy1, :])
+        if oy2 > 0: canvas[cy2:, :] = pixelate(canvas[cy2:, :])
+        if ox1 > 1: canvas[:, :cx1] = pixelate(canvas[:, :cx1])
+        if ox2 > 1: canvas[:, cx2:] = pixelate(canvas[:, cx2:])
         
         return canvas, (cy1, cy2, cx1, cx2)
 
@@ -115,13 +115,12 @@ class InpaintPipeline:
             
         return expanded_image, expanded_mask
 
-    def pixelate_mask_area(self, image, mask, pixelation_ratio=16):
-        """Phase 2 Primer: Pixelates the area defined by the mask to provide color guidance."""
-        pixelation_ratio = max(4, pixelation_ratio)
+    def pixelate_mask_area(self, image, mask, pixelation_ratio=8):
+        """Phase 2 Primer: Applies strict 8x8 pixelation to the mapped area to preserve color edges for SDXL latents."""
         H, W, C = image.shape
         
-        # Create a tiny version of the image
-        small = cv2.resize(image, (max(1, W // pixelation_ratio), max(1, H // pixelation_ratio)), interpolation=cv2.INTER_AREA)
+        # Create a tiny version of the image using a strict 8x8 block size
+        small = cv2.resize(image, (max(1, W // 8), max(1, H // 8)), interpolation=cv2.INTER_AREA)
         # Scale it back up using nearest neighbor for the blocky effect
         pixelated = cv2.resize(small, (W, H), interpolation=cv2.INTER_NEAREST)
         

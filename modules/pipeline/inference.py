@@ -34,7 +34,7 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
 
 def process_task(task_state, task_dict, current_task_id, total_count, all_steps, 
                  preparation_steps, denoising_strength, final_scheduler_name, loras, 
-                 controlnet_canny_path, controlnet_cpds_path, inpaint_head_model_path,
+                 controlnet_canny_path, controlnet_cpds_path,
                  progressbar_callback=None, yield_result_callback=None):
     """
     Executes a single generation task (one image).
