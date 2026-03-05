@@ -9,6 +9,7 @@ import numpy as np
 import gradio as gr
 from typing import Any, Literal
 from PIL import Image as _Image
+from gradio.events import Dependency
 
 class Image(gr.Image):
     """
@@ -47,6 +48,11 @@ class Image(gr.Image):
     def style(self, **kwargs):
         # Legacy method from Gradio 3
         return self
+    from typing import Callable, Literal, Sequence, Any, TYPE_CHECKING
+    from gradio.blocks import Block
+    if TYPE_CHECKING:
+        from gradio.components import Timer
+        from gradio.components.base import Component
 
 all_components = []
 

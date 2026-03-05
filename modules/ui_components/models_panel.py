@@ -64,7 +64,6 @@ def build_models_tab():
 
     with gr.Row():
         results['refresh_files'] = gr.Button(
-            label='Refresh', 
             value='\U0001f504 Refresh All Files', 
             variant='secondary', 
             elem_classes='refresh_button'
