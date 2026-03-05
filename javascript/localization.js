@@ -77,7 +77,9 @@ function processNode(node) {
 }
 
 function refresh_style_localization() {
-    processNode(document.querySelector('.style_selections'));
+    const stylesNode = document.querySelector('.style_selections');
+    if (!stylesNode) return;
+    processNode(stylesNode);
 }
 
 function refresh_aspect_ratios_label(value) {

@@ -243,6 +243,29 @@ div:has(> #positive_prompt) {
   overflow: visible;
 }
 
+/* Gradio 5 can keep hidden blocks in layout; collapse hidden preview/gallery containers */
+.main_view.hidden,
+.main_view[style*="display: none"] {
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+.main_view {
+  width: 100%;
+}
+
+.preview_panel img,
+.preview_panel canvas,
+.preview_panel video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+
 /* fullpage image viewer */
 
 #lightboxModal{
@@ -364,38 +387,26 @@ div:has(> #positive_prompt) {
     transform: translate(-140px, -140px);
 }
 
-/* scrollable box for style selections */
-.contain .tabs {
-  height: 100%;
+/* scrollable box for style selections (Gradio 5 compatible selectors) */
+.style_selections {
+  min-height: 220px;
 }
 
-.contain .tabs .tabitem.style_selections_tab {
-  height: 100%;
-}
-
-.contain .tabs .tabitem.style_selections_tab > div:first-child {
-  height: 100%;
-}
-
-.contain .tabs .tabitem.style_selections_tab .style_selections {
-  min-height: 200px;
-  height: 100%;
-}
-
-.contain .tabs .tabitem.style_selections_tab .style_selections .wrap[data-testid="checkbox-group"] {
-  position: absolute; /* remove this to disable scrolling within the checkbox-group */
+.style_selections .wrap[data-testid="checkbox-group"],
+.style_selections [data-testid="checkbox-group"] {
+  position: relative;
   overflow: auto;
   padding-right: 2px;
-  max-height: 100%;
+  max-height: min(62vh, 720px);
 }
 
-.contain .tabs .tabitem.style_selections_tab .style_selections .wrap[data-testid="checkbox-group"] label {
-  /* max-width: calc(35% - 15px) !important; */ /* add this to enable 3 columns layout */
+.style_selections .wrap[data-testid="checkbox-group"] label,
+.style_selections [data-testid="checkbox-group"] label {
   flex: calc(50% - 5px) !important;
 }
 
-.contain .tabs .tabitem.style_selections_tab .style_selections .wrap[data-testid="checkbox-group"] label span {
-  /* white-space:nowrap; */ /* add this to disable text wrapping (better choice for 3 columns layout) */
+.style_selections .wrap[data-testid="checkbox-group"] label span,
+.style_selections [data-testid="checkbox-group"] label span {
   overflow: hidden;
   text-overflow: ellipsis;
 }

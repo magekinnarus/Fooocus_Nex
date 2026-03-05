@@ -268,6 +268,7 @@ def handler(async_task: AsyncTask):
     for i, t in enumerate(tasks):
         progressbar(s, s.current_progress, f'Preparing task {i + 1}/{s.image_number} ...')
         execution_start_time = time.perf_counter()
+        interrupted_action = None
         
         try:
             process_task(
@@ -280,13 +281,22 @@ def handler(async_task: AsyncTask):
             if s.last_stop == 'skip':
                 print('User skipped')
                 s.last_stop = False
-                continue
+                interrupted_action = 'skip'
             else:
                 print('User stopped')
-                break
-        
-        del t['c'], t['uc']  # Free conditioning tensors
-        resources.soft_empty_cache()
+                interrupted_action = 'stop'
+        finally:
+            if 'c' in t:
+                del t['c']
+            if 'uc' in t:
+                del t['uc']
+            resources.soft_empty_cache()
+
+        if interrupted_action == 'skip':
+            continue
+        if interrupted_action == 'stop':
+            break
+
         print(f'Task {i+1} time: {time.perf_counter() - execution_start_time:.2f}s')
 
     s.processing = False

@@ -13,6 +13,17 @@ modules_path = os.path.dirname(os.path.realpath(__file__))
 script_path = os.path.dirname(modules_path)
 
 
+def webpath(fn):
+    if fn.startswith(script_path):
+        web_path = os.path.relpath(fn, script_path).replace('\\', '/')
+    else:
+        web_path = os.path.abspath(fn).replace('\\', '/')
+
+    if os.path.exists(fn):
+        return f'file={web_path}?{os.path.getmtime(fn)}'
+    return f'file={web_path}'
+
+
 def read_asset(fn):
     fn = fn.replace('/', os.sep)
     full_path = os.path.normpath(os.path.join(script_path, fn))
@@ -25,6 +36,7 @@ def read_asset(fn):
 
 
 def javascript_html():
+    samples_path = webpath(os.path.abspath('./sdxl_styles/samples/fooocus_v2.jpg'))
     head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
     
     # Inline all JS files to avoid 404 routing issues in Gradio 5
@@ -42,6 +54,7 @@ def javascript_html():
         content = read_asset(js_file)
         if content:
             head += f'<script type="text/javascript">{content}</script>\n'
+    head += f'<meta name="samples-path" content="{samples_path}">\n'
     if args_manager.args.theme:
         head += f'<script type="text/javascript">set_theme(\"{args_manager.args.theme}\");</script>\n'
 

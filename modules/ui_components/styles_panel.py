@@ -16,6 +16,7 @@ def build_styles_tab():
     style_sorter.try_load_sorted_styles(
         style_names=legal_style_names,
         default_selected=modules.config.default_styles)
+    default_selected = [x for x in modules.config.default_styles if x in style_sorter.all_styles]
 
     results['style_search_bar'] = gr.Textbox(
         show_label=False, container=False,
@@ -27,7 +28,7 @@ def build_styles_tab():
     results['style_selections'] = gr.CheckboxGroup(
         show_label=False, container=False,
         choices=copy.deepcopy(style_sorter.all_styles),
-        value=copy.deepcopy(modules.config.default_styles),
+        value=copy.deepcopy(default_selected),
         label='Selected Styles',
         elem_classes=['style_selections']
     )

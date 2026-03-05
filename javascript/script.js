@@ -185,7 +185,10 @@ document.addEventListener('keydown', function(e) {
 
 function initStylePreviewOverlay() {
     let overlayVisible = false;
-    const samplesPath = document.querySelector("meta[name='samples-path']").getAttribute("content")
+    const samplesMeta = document.querySelector("meta[name='samples-path']");
+    if (!samplesMeta) return;
+    const samplesPath = samplesMeta.getAttribute("content");
+    if (!samplesPath) return;
     const overlay = document.createElement('div');
     const tooltip = document.createElement('div');
     tooltip.className = 'preview-tooltip';
@@ -195,12 +198,14 @@ function initStylePreviewOverlay() {
     document.addEventListener('mouseover', function (e) {
         const label = e.target.closest('.style_selections label');
         if (!label) return;
+        const span = label.querySelector("span");
+        if (!span) return;
         label.removeEventListener("mouseout", onMouseLeave);
         label.addEventListener("mouseout", onMouseLeave);
         overlayVisible = true;
         overlay.style.opacity = "1";
-        const originalText = label.querySelector("span").getAttribute("data-original-text");
-        const name = originalText || label.querySelector("span").textContent;
+        const originalText = span.getAttribute("data-original-text");
+        const name = originalText || span.textContent;
         overlay.style.backgroundImage = `url("${samplesPath.replace(
             "fooocus_v2",
             name.toLowerCase().replaceAll(" ", "_")

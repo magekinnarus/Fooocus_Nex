@@ -41,23 +41,38 @@ def get_task(*args):
 
     return worker.AsyncTask(args=args)
 
-def generate_clicked(task: worker.AsyncTask):
+def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
     import backend.resources as resources
 
     with resources.interrupt_processing_mutex:
         resources.interrupt_processing = False
-    # outputs=[progress_html, progress_window, progress_gallery, gallery]
+    # outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]
 
     if len(task.args) == 0:
         return
 
+    try:
+        batch_size = int(image_number)
+    except Exception:
+        batch_size = 1
+    preview_enabled = not bool(disable_preview)
+
     execution_start_time = time.perf_counter()
     finished = False
+    has_results = False
+
+    if preview_enabled:
+        initial_preview_col = gr.update(visible=True)
+        initial_gallery_col = gr.update(visible=False)
+    else:
+        initial_preview_col = gr.update(visible=False)
+        initial_gallery_col = gr.update(visible=True)
 
     yield gr.update(visible=True, value=modules.html.make_progress_html(1, 'Waiting for task to start ...')), \
         gr.update(visible=True, value=None), \
-        gr.update(visible=False, value=None), \
-        gr.update(visible=False)
+        gr.update(visible=True, columns=1), \
+        initial_preview_col, \
+        initial_gallery_col
 
     worker.async_tasks.append(task)
 
@@ -74,21 +89,47 @@ def generate_clicked(task: worker.AsyncTask):
                         continue
 
                 percentage, title, image = product
+                if preview_enabled:
+                    if has_results and batch_size >= 2:
+                        preview_col = gr.update(visible=True)
+                        gallery_col = gr.update(visible=True)
+                    else:
+                        preview_col = gr.update(visible=True)
+                        gallery_col = gr.update(visible=False)
+                else:
+                    preview_col = gr.update(visible=False)
+                    gallery_col = gr.update(visible=True)
+
                 yield gr.update(visible=True, value=modules.html.make_progress_html(percentage, title)), \
-                    gr.update(visible=True, value=image) if image is not None else gr.update(), \
-                    gr.update(), \
-                    gr.update(visible=False)
+                    gr.update(visible=True, value=image) if image is not None else gr.update(visible=True), \
+                    gr.update(visible=True, columns=1), \
+                    preview_col, \
+                    gallery_col
             if flag == 'results':
+                has_results = True
+                if preview_enabled and batch_size >= 2:
+                    preview_col = gr.update(visible=True)
+                    gallery_col = gr.update(visible=True)
+                elif preview_enabled and batch_size == 1:
+                    preview_col = gr.update(visible=True)
+                    gallery_col = gr.update(visible=False)
+                else:
+                    preview_col = gr.update(visible=False)
+                    gallery_col = gr.update(visible=True)
+
                 yield gr.update(visible=True), \
-                    gr.update(visible=True), \
-                    gr.update(visible=True, value=product), \
-                    gr.update(visible=False)
+                    gr.update(), \
+                    gr.update(visible=True, value=product, columns=1), \
+                    preview_col, \
+                    gallery_col
             if flag == 'finish':
+                cols = max(1, int(np.ceil(np.sqrt(len(product))))) if len(product) > 0 else 1
 
                 yield gr.update(visible=False), \
+                    gr.update(visible=True, value=None), \
+                    gr.update(visible=True, value=product, columns=cols), \
                     gr.update(visible=False), \
-                    gr.update(visible=False), \
-                    gr.update(visible=True, value=product)
+                    gr.update(visible=True)
                 finished = True
 
                 # delete Fooocus temp images, only keep gradio temp images
@@ -184,15 +225,16 @@ with shared.gradio_root:
     inpaint_engine_state = gr.State('empty')
     with gr.Row():
         with gr.Column(scale=2):
-            progress_window = grh.Image(label='Preview', show_label=True, visible=False, height=768,
-                                        elem_classes=['main_view'])
-            progress_gallery = gr.Gallery(label='Finished Images', show_label=True, object_fit='contain',
-                                          height=768, visible=False, elem_classes=['main_view', 'image_gallery'])
+            with gr.Row():
+                with gr.Column(scale=5, min_width=420, visible=False) as preview_column:
+                    progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
+                                               height=768, elem_classes=['main_view', 'preview_panel'])
+                with gr.Column(scale=6, min_width=500, visible=True) as gallery_column:
+                    gallery = gr.Gallery(label='Gallery', show_label=True, object_fit='contain', visible=True, height=768,
+                                         elem_classes=['resizable_area', 'main_view', 'final_gallery', 'image_gallery'],
+                                         elem_id='final_gallery')
             progress_html = gr.HTML(value=modules.html.make_progress_html(32, 'Progress 32%'), visible=False,
                                     elem_id='progress-bar', elem_classes='progress-bar')
-            gallery = gr.Gallery(label='Gallery', show_label=False, object_fit='contain', visible=True, height=768,
-                                 elem_classes=['main_view', 'image_gallery'],
-                                 elem_id='fooocus_gallery')
             with gr.Row():
                 with gr.Column(scale=17):
                     prompt = gr.Textbox(show_label=False, placeholder="Type prompt here or paste parameters.", elem_id='positive_prompt',
@@ -440,8 +482,15 @@ with shared.gradio_root:
                 style_selections = styles_panel_result['style_selections']
                 gradio_receiver_style_selections = styles_panel_result['gradio_receiver_style_selections']
 
-                shared.gradio_root.load(lambda: gr.update(choices=copy.deepcopy(style_sorter.all_styles)),
-                                        outputs=style_selections)
+                shared.gradio_root.load(
+                    lambda: gr.update(
+                        choices=copy.deepcopy(style_sorter.all_styles),
+                        value=[x for x in modules.config.default_styles if x in style_sorter.all_styles]
+                    ),
+                    outputs=style_selections,
+                    queue=False,
+                    show_progress=False
+                ).then(lambda: None, js='()=>{refresh_style_localization();}', queue=False, show_progress=False)
 
                 style_search_bar.change(style_sorter.search_styles,
                                         inputs=[style_selections, style_search_bar],
@@ -672,22 +721,44 @@ with shared.gradio_root:
         metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
 
-        generate_button.click(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), [], True),
-                              outputs=[stop_button, skip_button, generate_button, gallery, state_is_generating]) \
+        generate_button.click(
+            lambda disable_preview_value: (
+                gr.update(visible=True, interactive=True),
+                gr.update(visible=True, interactive=True),
+                gr.update(visible=False, interactive=False),
+                gr.update(visible=True, columns=1),
+                True,
+                gr.update(visible=not disable_preview_value),
+                gr.update(visible=disable_preview_value)
+            ),
+            inputs=[disable_preview],
+            outputs=[stop_button, skip_button, generate_button, gallery, state_is_generating, preview_column, gallery_column]
+        ) \
             .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
             .then(fn=get_task, inputs=ctrls, outputs=currentTask) \
-            .then(fn=generate_clicked, inputs=currentTask, outputs=[progress_html, progress_window, progress_gallery, gallery]) \
+            .then(fn=generate_clicked, inputs=[currentTask, image_number, disable_preview],
+                  outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]) \
             .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),
                   outputs=[generate_button, stop_button, skip_button, state_is_generating]) \
             .then(fn=update_history_link, outputs=history_link) \
             .then(fn=lambda: None, js='playNotification').then(fn=lambda: None, js='refresh_grid_delayed')
 
-        reset_button.click(lambda: [worker.AsyncTask(args=[]), False, gr.update(visible=True, interactive=True)] +
-                                   [gr.update(visible=False)] * 6 +
-                                   [gr.update(visible=True, value=[])],
+        reset_button.click(lambda: [
+                                    worker.AsyncTask(args=[]),
+                                    False,
+                                    gr.update(visible=True, interactive=True),
+                                    gr.update(visible=False),
+                                    gr.update(visible=False),
+                                    gr.update(visible=False),
+                                    gr.update(visible=False),
+                                    gr.update(visible=True, value=None),
+                                    gr.update(visible=True, value=[], columns=2),
+                                    gr.update(visible=False),
+                                    gr.update(visible=True)
+                                ],
                            outputs=[currentTask, state_is_generating, generate_button,
                                     reset_button, stop_button, skip_button,
-                                    progress_html, progress_window, progress_gallery, gallery],
+                                    progress_html, progress_window, gallery, preview_column, gallery_column],
                            queue=False)
 
         for notification_file in ['notification.ogg', 'notification.mp3']:
