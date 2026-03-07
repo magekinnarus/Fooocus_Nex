@@ -814,19 +814,19 @@ def downloading_sdxl_hyper_sd_lora():
 def downloading_controlnet_canny():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/control-lora-canny-rank128.safetensors',
-        model_dir=path_controlnet,
+        model_dir=path_controlnet[0],
         file_name='control-lora-canny-rank128.safetensors'
     )
-    return os.path.join(path_controlnet, 'control-lora-canny-rank128.safetensors')
+    return os.path.join(path_controlnet[0], 'control-lora-canny-rank128.safetensors')
 
 
 def downloading_controlnet_cpds():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_xl_cpds_128.safetensors',
-        model_dir=path_controlnet,
+        model_dir=path_controlnet[0],
         file_name='fooocus_xl_cpds_128.safetensors'
     )
-    return os.path.join(path_controlnet, 'fooocus_xl_cpds_128.safetensors')
+    return os.path.join(path_controlnet[0], 'fooocus_xl_cpds_128.safetensors')
 
 
 def downloading_ip_adapters(v):
@@ -843,26 +843,26 @@ def downloading_ip_adapters(v):
 
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_ip_negative.safetensors',
-        model_dir=path_controlnet,
+        model_dir=path_controlnet[0],
         file_name='fooocus_ip_negative.safetensors'
     )
-    results += [os.path.join(path_controlnet, 'fooocus_ip_negative.safetensors')]
+    results += [os.path.join(path_controlnet[0], 'fooocus_ip_negative.safetensors')]
 
     if v == 'ip':
         load_file_from_url(
             url='https://huggingface.co/lllyasviel/misc/resolve/main/ip-adapter-plus_sdxl_vit-h.bin',
-            model_dir=path_controlnet,
+            model_dir=path_controlnet[0],
             file_name='ip-adapter-plus_sdxl_vit-h.bin'
         )
-        results += [os.path.join(path_controlnet, 'ip-adapter-plus_sdxl_vit-h.bin')]
+        results += [os.path.join(path_controlnet[0], 'ip-adapter-plus_sdxl_vit-h.bin')]
 
     if v == 'face':
         load_file_from_url(
             url='https://huggingface.co/lllyasviel/misc/resolve/main/ip-adapter-plus-face_sdxl_vit-h.bin',
-            model_dir=path_controlnet,
+            model_dir=path_controlnet[0],
             file_name='ip-adapter-plus-face_sdxl_vit-h.bin'
         )
-        results += [os.path.join(path_controlnet, 'ip-adapter-plus-face_sdxl_vit-h.bin')]
+        results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
 
@@ -870,9 +870,9 @@ def downloading_ip_adapters(v):
 def downloading_upscale_model():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_upscaler_s409985e5.bin',
-        model_dir=path_upscale_models,
+        model_dir=path_upscale_models[0],
         file_name='fooocus_upscaler_s409985e5.bin',
     )
-    return os.path.join(path_upscale_models, 'fooocus_upscaler_s409985e5.bin')
+    return os.path.join(path_upscale_models[0], 'fooocus_upscaler_s409985e5.bin')
 
 

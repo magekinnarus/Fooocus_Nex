@@ -1,14 +1,19 @@
 /* based on https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/v1.6.0/style.css */
 
 .loader-container {
-  display: flex; /* Use flex to align items horizontally */
-  align-items: center; /* Center items vertically within the container */
-  white-space: nowrap; /* Prevent line breaks within the container */
+  display: flex;
+  /* Use flex to align items horizontally */
+  align-items: center;
+  /* Center items vertically within the container */
+  white-space: nowrap;
+  /* Prevent line breaks within the container */
 }
 
 .loader {
-  border: 8px solid #f3f3f3; /* Light grey */
-  border-top: 8px solid #3498db; /* Blue */
+  border: 8px solid #f3f3f3;
+  /* Light grey */
+  border-top: 8px solid #3498db;
+  /* Blue */
   border-radius: 50%;
   width: 30px;
   height: 30px;
@@ -16,16 +21,25 @@
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Style the progress bar */
 progress {
-  appearance: none; /* Remove default styling */
-  height: 20px; /* Set the height of the progress bar */
-  border-radius: 5px; /* Round the corners of the progress bar */
-  background-color: #f3f3f3; /* Light grey background */
+  appearance: none;
+  /* Remove default styling */
+  height: 20px;
+  /* Set the height of the progress bar */
+  border-radius: 5px;
+  /* Round the corners of the progress bar */
+  background-color: #f3f3f3;
+  /* Light grey background */
   width: 100%;
   vertical-align: middle !important;
 }
@@ -34,53 +48,61 @@ progress {
 .progress-container {
   margin-left: 20px;
   margin-right: 20px;
-  flex-grow: 1; /* Allow the progress container to take up remaining space */
+  flex-grow: 1;
+  /* Allow the progress container to take up remaining space */
 }
 
 /* Set the color of the progress bar fill */
 progress::-webkit-progress-value {
-  background-color: #3498db; /* Blue color for the fill */
+  background-color: #3498db;
+  /* Blue color for the fill */
 }
 
 progress::-moz-progress-bar {
-  background-color: #3498db; /* Blue color for the fill in Firefox */
+  background-color: #3498db;
+  /* Blue color for the fill in Firefox */
 }
 
 /* Style the text on the progress bar */
 progress::after {
-  content: attr(value '%'); /* Display the progress value followed by '%' */
+  content: attr(value '%');
+  /* Display the progress value followed by '%' */
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: white; /* Set text color */
-  font-size: 14px; /* Set font size */
+  color: white;
+  /* Set text color */
+  font-size: 14px;
+  /* Set font size */
 }
 
 /* Style other texts */
-.loader-container > span {
-  margin-left: 5px; /* Add spacing between the progress bar and the text */
+.loader-container>span {
+  margin-left: 5px;
+  /* Add spacing between the progress bar and the text */
 }
 
-.progress-bar > .generating {
+.progress-bar>.generating {
   display: none !important;
 }
 
-.progress-bar{
+.progress-bar {
   height: 30px !important;
 }
 
 .progress-bar span {
-    text-align: right;
-    width: 215px;
+  text-align: right;
+  width: 215px;
 }
+
 div:has(> #positive_prompt) {
-    border: none;
+  border: none;
 }
 
 #positive_prompt {
-    padding: 1px;
-    background: var(--background-fill-primary);
+  padding: 1px;
+  background: var(--background-fill-primary);
 }
 
 .type_row {
@@ -112,19 +134,19 @@ div:has(> #positive_prompt) {
 }
 
 .performance_selection label {
-    width: 140px !important;
+  width: 140px !important;
 }
 
 .aspect_ratios label {
-    flex: calc(50% - 5px) !important;
+  flex: calc(50% - 5px) !important;
 }
 
 .aspect_ratios label span {
-    white-space: nowrap !important;
+  white-space: nowrap !important;
 }
 
 .aspect_ratios label input {
-    margin-left: -5px !important;
+  margin-left: -5px !important;
 }
 
 .lora_enable label {
@@ -145,31 +167,31 @@ div:has(> #positive_prompt) {
   }
 }
 
-#context-menu{
-    z-index:9999;
-    position:absolute;
-    display:block;
-    padding:0px 0;
-    border:2px solid #a55000;
-    border-radius:8px;
-    box-shadow:1px 1px 2px #CE6400;
-    width: 200px;
+#context-menu {
+  z-index: 9999;
+  position: absolute;
+  display: block;
+  padding: 0px 0;
+  border: 2px solid #a55000;
+  border-radius: 8px;
+  box-shadow: 1px 1px 2px #CE6400;
+  width: 200px;
 }
 
-.context-menu-items{
-    list-style: none;
-    margin: 0;
-    padding: 0;
+.context-menu-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.context-menu-items a{
-    display:block;
-    padding:5px;
-    cursor:pointer;
+.context-menu-items a {
+  display: block;
+  padding: 5px;
+  cursor: pointer;
 }
 
-.context-menu-items a:hover{
-    background: #a55000;
+.context-menu-items a:hover {
+  background: #a55000;
 }
 
 .canvas-tooltip-info {
@@ -219,7 +241,7 @@ div:has(> #positive_prompt) {
   font-size: 16px;
   opacity: 0;
   border-radius: 8px;
-  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
 
   z-index: 100;
 }
@@ -231,15 +253,20 @@ div:has(> #positive_prompt) {
 }
 
 @keyframes fadeIn {
-  from {opacity: 0;}
-  to {opacity: 1;}
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .styler {
-  overflow:inherit !important;
+  overflow: inherit !important;
 }
 
-.gradio-container{
+.gradio-container {
   overflow: visible;
 }
 
@@ -268,63 +295,67 @@ div:has(> #positive_prompt) {
 
 /* fullpage image viewer */
 
-#lightboxModal{
-    display: none;
-    position: fixed;
-    z-index: 1001;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    overflow: auto;
-    background-color: rgba(20, 20, 20, 0.95);
-    user-select: none;
-    -webkit-user-select: none;
-    flex-direction: column;
+#lightboxModal {
+  display: none;
+  position: fixed;
+  z-index: 1001;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(20, 20, 20, 0.95);
+  user-select: none;
+  -webkit-user-select: none;
+  flex-direction: column;
 }
 
 .modalControls {
-    display: flex;
-    position: absolute;
-    right: 0px;
-    left: 0px;
-    gap: 1em;
-    padding: 1em;
-    background-color:rgba(0,0,0,0);
-    z-index: 1;
-    transition: 0.2s ease background-color;
+  display: flex;
+  position: absolute;
+  right: 0px;
+  left: 0px;
+  gap: 1em;
+  padding: 1em;
+  background-color: rgba(0, 0, 0, 0);
+  z-index: 1;
+  transition: 0.2s ease background-color;
 }
+
 .modalControls:hover {
-    background-color:rgba(0,0,0,0.9);
+  background-color: rgba(0, 0, 0, 0.9);
 }
+
 .modalClose {
-    margin-left: auto;
-}
-.modalControls span{
-    color: white;
-    text-shadow: 0px 0px 0.25em black;
-    font-size: 35px;
-    font-weight: bold;
-    cursor: pointer;
-    width: 1em;
+  margin-left: auto;
 }
 
-.modalControls span:hover, .modalControls span:focus{
-    color: #999;
-    text-decoration: none;
+.modalControls span {
+  color: white;
+  text-shadow: 0px 0px 0.25em black;
+  font-size: 35px;
+  font-weight: bold;
+  cursor: pointer;
+  width: 1em;
 }
 
-#lightboxModal > img {
-    display: block;
-    margin: auto;
-    width: auto;
+.modalControls span:hover,
+.modalControls span:focus {
+  color: #999;
+  text-decoration: none;
 }
 
-#lightboxModal > img.modalImageFullscreen{
-    object-fit: contain;
-    height: 100%;
-    width: 100%;
-    min-height: 0;
+#lightboxModal>img {
+  display: block;
+  margin: auto;
+  width: auto;
+}
+
+#lightboxModal>img.modalImageFullscreen {
+  object-fit: contain;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
 }
 
 .modalPrev,
@@ -355,36 +386,36 @@ div:has(> #positive_prompt) {
 }
 
 #imageARPreview {
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    border: 2px solid red;
-    background: rgba(255, 0, 0, 0.3);
-    z-index: 900;
-    pointer-events: none;
-    display: none;
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  border: 2px solid red;
+  background: rgba(255, 0, 0, 0.3);
+  z-index: 900;
+  pointer-events: none;
+  display: none;
 }
 
 #stylePreviewOverlay {
-    opacity: 0;
-    pointer-events: none;
-    width: 128px;
-    height: 128px;
-    position: fixed;
-    top: 0px;
-    left: 0px;
-    border: solid 1px lightgrey;
-    transform: translate(-140px, 20px);
-    background-size: cover;
-    background-position: center;
-    background-color: rgba(0, 0, 0, 0.3);
-    border-radius: 5px;
-    z-index: 100;
-    transition: transform 0.1s ease, opacity 0.3s ease;
+  opacity: 0;
+  pointer-events: none;
+  width: 128px;
+  height: 128px;
+  position: fixed;
+  top: 0px;
+  left: 0px;
+  border: solid 1px lightgrey;
+  transform: translate(-140px, 20px);
+  background-size: cover;
+  background-position: center;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+  z-index: 100;
+  transition: transform 0.1s ease, opacity 0.3s ease;
 }
 
 #stylePreviewOverlay.lower-half {
-    transform: translate(-140px, -140px);
+  transform: translate(-140px, -140px);
 }
 
 /* scrollable box for style selections (Gradio 5 compatible selectors) */
@@ -417,13 +448,14 @@ div:has(> #positive_prompt) {
   font-family: monospace;
   text-align: center;
   border-radius: 5px 5px 0px 0px;
-  display: none; /* remove this to enable tooltip in preview image */
+  display: none;
+  /* remove this to enable tooltip in preview image */
 }
 
 #inpaint_canvas .canvas-tooltip-info {
   top: 2px;
 }
 
-#inpaint_brush_color input[type=color]{
+#inpaint_brush_color input[type=color] {
   background: none;
 }

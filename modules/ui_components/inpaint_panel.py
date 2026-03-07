@@ -38,7 +38,6 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
         info='Positive value will make white area in the mask larger, negative value will make white area smaller. (default is 0, always processed before any mask invert)'
     )
 
-    results['inpaint_mask_color'] = gr.ColorPicker(label='Inpaint brush color', value='#FFFFFF', elem_id='inpaint_brush_color')
 
     # Event bindings that depend on components from other tabs
     inpaint_advanced_masking_checkbox.change(
@@ -49,12 +48,5 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
         show_progress=False
     )
 
-    results['inpaint_mask_color'].change(
-        lambda x: gr.update(brush_color=x), 
-        inputs=results['inpaint_mask_color'],
-        outputs=inpaint_input_image,
-        queue=False, 
-        show_progress=False
-    )
 
     return results

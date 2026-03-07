@@ -71,6 +71,9 @@ class TaskState:
     outpaint_advanced_masking_checkbox: bool = False
     outpaint_invert_mask_checkbox: bool = False
     inpaint_outpaint_expansion_size: int = 384
+    inpaint_pixelate_primer: bool = False
+    context_mask: Optional[np.ndarray] = None
+    outpaint_direction: Optional[str] = None
     save_metadata_to_images: bool = True
     metadata_scheme: Any = None # modules.flags.MetadataScheme
     cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)

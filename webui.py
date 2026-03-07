@@ -181,9 +181,13 @@ def expand_mask(outpaint_selections, inpaint_mask_image):
         print("[Debug] Mask Image is None. Aborting.")
         return gr.update()
     
-    from modules.mask_processing import combine_image_and_mask, to_binary_mask, expand_mask_direction
+    from modules.mask_processing import combine_image_and_mask, to_binary_mask, expand_mask_direction, extract_mask_from_layers
     
-    merged = combine_image_and_mask(inpaint_mask_image)
+    # Handle ImageEditor EditorValue
+    if isinstance(inpaint_mask_image, dict) and 'background' in inpaint_mask_image:
+        merged = combine_image_and_mask(inpaint_mask_image)
+    else:
+        merged = combine_image_and_mask(inpaint_mask_image)
     if merged is None:
         return gr.update()
         
@@ -274,7 +278,7 @@ with shared.gradio_root:
                     with gr.Tab(label='Upscale or Variation', id='uov_tab') as uov_tab:
                         with gr.Row():
                             with gr.Column():
-                                uov_input_image = grh.Image(label='Image', source='upload', type='numpy', show_label=False)
+                                uov_input_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False)
                             with gr.Column():
                                 uov_method = gr.Radio(label='Upscale or Variation:', choices=flags.uov_list, value=modules.config.default_uov_method)
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
@@ -289,7 +293,7 @@ with shared.gradio_root:
                             for image_count in range(modules.config.default_controlnet_image_count):
                                 image_count += 1
                                 with gr.Column():
-                                    ip_image = grh.Image(label='Image', source='upload', type='numpy', show_label=False, height=300, value=modules.config.default_ip_images[image_count])
+                                    ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count])
                                     ip_images.append(ip_image)
                                     ip_ctrls.append(ip_image)
                                     with gr.Column(visible=modules.config.default_image_prompt_advanced_checkbox) as ad_col:
@@ -324,14 +328,14 @@ with shared.gradio_root:
                     with gr.Tab(label='Outpaint', id='outpaint_tab') as outpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                outpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='outpaint_canvas', show_label=False)
+                                outpaint_input_image = gr.Image(label='Image', sources='upload', type='filepath', height=500, show_label=False)
                                 outpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=[], label='Outpaint Direction')
                                 outpaint_step2_checkbox = gr.Checkbox(label='Outpaint 2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', info='Provides color guidance for outpaint by pixelating the blank area.')
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as outpaint_mask_generation_col:
-                                outpaint_mask_image = grh.Image(label='Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='outpaint_mask_canvas')
+                                outpaint_mask_image = gr.Image(label='Mask Upload', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
                                 outpaint_invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
                                 outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)')
                                 
@@ -340,9 +344,8 @@ with shared.gradio_root:
                     with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                inpaint_input_image = grh.Image(label='Image', source='upload', type='numpy', tool='sketch', height=500, brush_color="#0000FF", elem_id='inpaint_canvas', show_label=False)
+                                inpaint_input_image = gr.ImageEditor(label='Image', sources='upload', type='filepath', height=500, brush=gr.Brush(colors=["#0000FF"], default_color="#0000FF"), elem_id='inpaint_canvas', show_label=False)
                                 with gr.Row():
-                                    inpaint_brush_color = gr.Radio(choices=["Blue (Context Mask)", "White (Inpaint Mask)"], value="Blue (Context Mask)", label="Brush Color", show_label=False, container=False)
                                     inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm")
                                 inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
                                 inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=True)
@@ -355,15 +358,15 @@ with shared.gradio_root:
                                 example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
 
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
-                                inpaint_bb_image = grh.Image(label='Step 2: Edited BB Image Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", elem_id='inpaint_bb_canvas')
-                                inpaint_mask_image = grh.Image(label='Step 2: Edited BB Mask Upload', source='upload', type='numpy', tool='sketch', height=500, brush_color="#FFFFFF", mask_opacity=1, elem_id='inpaint_mask_canvas')
+                                inpaint_bb_image = gr.ImageEditor(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, brush=gr.Brush(colors=["#FFFFFF"], default_color="#FFFFFF"), elem_id='inpaint_bb_canvas')
+                                inpaint_mask_image = gr.Image(label='Step 2: Edited BB Mask Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
                                 invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
 
 
 
                     with gr.Tab(label='Metadata', id='metadata_tab') as metadata_tab:
                         with gr.Column():
-                            metadata_input_image = grh.Image(label='For images created by Fooocus', source='upload', type='pil')
+                            metadata_input_image = gr.Image(label='For images created by Fooocus', sources='upload', type='pil')
                             metadata_json = gr.JSON(label='Metadata')
                             metadata_import_button = gr.Button(value='Apply Metadata')
 
@@ -383,12 +386,6 @@ with shared.gradio_root:
                                                     outputs=metadata_json, queue=False, show_progress=True)
 
             # Phase 3 UI Bindings
-            inpaint_brush_color.change(
-                lambda color: gr.update(brush_color="#FFFFFF" if "White" in color else "#0000FF"),
-                inputs=[inpaint_brush_color],
-                outputs=[inpaint_input_image],
-                queue=False, show_progress=False
-            )
 
             toggle_toolbar_js = """
             () => {
@@ -572,7 +569,6 @@ with shared.gradio_root:
                         inpaint_engine = inpaint_panel_result['inpaint_engine']
                         inpaint_strength = inpaint_panel_result['inpaint_strength']
                         inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
-                        inpaint_mask_color = inpaint_panel_result['inpaint_mask_color']
 
                         inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
                                          inpaint_strength,

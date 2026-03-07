@@ -9,6 +9,7 @@ import numpy as np
 import gradio as gr
 from typing import Any, Literal
 from PIL import Image as _Image
+_Image.init()
 
 class Image(gr.Image):
     """
@@ -60,3 +61,19 @@ if not hasattr(gr.components.base.Component, 'original_init'):
         return self.original_init(*args, **kwargs)
         
     gr.components.base.Component.__init__ = patched_init
+
+
+import gradio.routes
+import importlib
+gradio.routes.asyncio = importlib.reload(gradio.routes.asyncio)
+
+if not hasattr(gradio.routes.asyncio, 'original_wait_for'):
+    gradio.routes.asyncio.original_wait_for = gradio.routes.asyncio.wait_for
+
+
+def patched_wait_for(fut, timeout):
+    del timeout
+    return gradio.routes.asyncio.original_wait_for(fut, timeout=65535)
+
+
+gradio.routes.asyncio.wait_for = patched_wait_for

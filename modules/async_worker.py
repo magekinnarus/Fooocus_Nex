@@ -20,7 +20,8 @@ from modules.pipeline import (
     apply_image_input,
     apply_control_nets,
     apply_vary,
-    apply_outpaint,
+    apply_outpaint_expansion,
+    apply_outpaint_inference_setup,
     apply_upscale,
     apply_inpaint,
     process_task,
@@ -184,18 +185,62 @@ def handler(async_task: AsyncTask):
 
     base_model_additional_loras = []
     
-    res = {}
-    if s.input_image_checkbox:
-        res = apply_image_input(s, base_model_additional_loras, progressbar)
-        base_model_additional_loras = res['base_model_additional_loras']
+    save_step1_result = None
+    try:
+        if s.input_image_checkbox:
+            res = apply_image_input(s, base_model_additional_loras, progressbar)
+            base_model_additional_loras = res['base_model_additional_loras']
+            
+        s.current_progress = 1
+        progressbar(s, s.current_progress, 'Loading ControlNets ...')
+        pipeline.refresh_controlnets([res.get('controlnet_canny_path'), res.get('controlnet_cpds_path')] if s.input_image_checkbox else [])
         
-    s.current_progress = 1
-    progressbar(s, s.current_progress, 'Loading ControlNets ...')
-    pipeline.refresh_controlnets([res.get('controlnet_canny_path'), res.get('controlnet_cpds_path')] if s.input_image_checkbox else [])
-    
-    import extras.ip_adapter as ip_adapter
-    ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
-    ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_face_path'))
+        import extras.ip_adapter as ip_adapter
+        ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
+        ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_face_path'))
+
+        if 'outpaint' in s.goals:
+            # Phase 2: Inference setup on the expanded canvas
+            # Note: res['outpaint_image/mask'] contains the result of Step 1 if it finished, 
+            # or the original inputs if Step 2 was already selected.
+            apply_outpaint_inference_setup(s, res['outpaint_image'], res['outpaint_mask'], progressbar, yield_result)
+
+        if 'inpaint' in s.goals:
+            # Phase 1/2 Inpaint: Manual dual-masking and inference setup
+            apply_inpaint(s, res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
+    except EarlyReturnException as e:
+        save_step1_result = e.payload
+
+    if save_step1_result is not None:
+        inpaint_image, inpaint_mask = save_step1_result
+        from modules.pipeline.output import save_and_log
+        
+        description = 'Phase 1 Outpaint Expansion' if 'outpaint' in s.goals else 'Phase 1 Inpaint BB'
+        progressbar(s, 100, f'Saving {description} ...')
+        
+        if inpaint_mask is not None:
+            if inpaint_mask.ndim == 2:
+                inpaint_mask_save = np.stack([inpaint_mask]*3, axis=-1)
+            else:
+                inpaint_mask_save = inpaint_mask
+            images_to_save = [inpaint_image, inpaint_mask_save]
+        else:
+            images_to_save = [inpaint_image]
+        
+        img_paths = save_and_log(
+            s, s.height, s.width, images_to_save, 
+            {
+                'log_positive_prompt': s.prompt, 
+                'log_negative_prompt': s.negative_prompt, 
+                'positive': [],
+                'negative': [],
+                'styles': s.style_selections, 
+                'task_seed': s.seed,
+                'description': description
+            }, 
+            False, s.loras)
+        yield_result(s, img_paths, 100, do_not_show_finished_images=True)
+        return
 
     apply_overrides(s)
     
@@ -215,41 +260,10 @@ def handler(async_task: AsyncTask):
         if direct_return:
             from modules.pipeline.output import save_and_log
             progressbar(s, 100, 'Saving image to system ...')
-            img_paths = save_and_log(s, s.height, s.width, [s.uov_input_image], {'log_positive_prompt': s.prompt, 'log_negative_prompt': s.negative_prompt, 'styles': s.style_selections, 'task_seed': s.seed}, s.use_expansion, s.loras)
+            img_paths = save_and_log(s, s.height, s.width, [s.uov_input_image], {'log_positive_prompt': s.prompt, 'log_negative_prompt': s.negative_prompt, 'positive': [], 'negative': [], 'styles': s.style_selections, 'task_seed': s.seed}, s.use_expansion, s.loras)
             yield_result(s, img_paths, 100, do_not_show_finished_images=True)
             return
 
-    if 'inpaint' in s.goals:
-        try:
-            inpaint_image, inpaint_mask = apply_outpaint(s, res['inpaint_image'], res['inpaint_mask'])
-            apply_inpaint(s, inpaint_image, inpaint_mask, progressbar, yield_result)
-        except EarlyReturnException as e:
-            # Step 1 outpaint: save expanded canvas + mask for the user to use in Step 2
-            if e.payload is not None:
-                inpaint_image, inpaint_mask = e.payload
-                from modules.pipeline.output import save_and_log
-                progressbar(s, 100, 'Saving composite image and mask ...')
-                
-                # Ensure mask is 3 channel for saving
-                if inpaint_mask.ndim == 2:
-                    inpaint_mask_save = np.stack([inpaint_mask]*3, axis=-1)
-                else:
-                    inpaint_mask_save = inpaint_mask
-                
-                img_paths = save_and_log(
-                    s, s.height, s.width, [inpaint_image, inpaint_mask_save], 
-                    {
-                        'log_positive_prompt': s.prompt, 
-                        'log_negative_prompt': s.negative_prompt, 
-                        'positive': s.prompt,
-                        'negative': s.negative_prompt,
-                        'styles': s.style_selections, 
-                        'task_seed': s.seed,
-                        'description': 'Phase 1 Outpaint Prep'
-                    }, 
-                    False, s.loras)
-                yield_result(s, img_paths, 100, do_not_show_finished_images=True)
-                return
 
     if 'cn' in s.goals:
         apply_control_nets(s, res['ip_adapter_face_path'], res['ip_adapter_path'], yield_result)

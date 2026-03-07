@@ -8,7 +8,8 @@ from modules.pipeline.preprocessing import (
 )
 from modules.pipeline.image_input import (
     apply_vary,
-    apply_outpaint,
+    apply_outpaint_expansion,
+    apply_outpaint_inference_setup,
     apply_inpaint,
     apply_upscale,
     prepare_upscale,
