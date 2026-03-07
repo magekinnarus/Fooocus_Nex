@@ -33,9 +33,40 @@ class InpaintPipeline:
 
     def snap_to_sdxl_resolution(self, w, h):
         target_ratio = w / h
-        best = min(self.SDXL_RESOLUTIONS, key=lambda r: abs(r[0]/r[1] - target_ratio))
+        best = min(self.SDXL_RESOLUTIONS, key=lambda r: abs(r[0] / r[1] - target_ratio))
         return best
 
+    def fit_box_to_native_sdxl_crop(self, box_w, box_h, image_w, image_h):
+        target_ratio = box_w / box_h
+        candidates = []
+
+        for target_w, target_h in self.SDXL_RESOLUTIONS:
+            aspect = target_w / target_h
+            if target_ratio > aspect:
+                crop_w = max(1, int(np.ceil(box_w)))
+                crop_h = max(1, int(np.ceil(crop_w / aspect)))
+            else:
+                crop_h = max(1, int(np.ceil(box_h)))
+                crop_w = max(1, int(np.ceil(crop_h * aspect)))
+
+            if crop_w <= image_w and crop_h <= image_h:
+                area_expand = (crop_w * crop_h) / max(1.0, box_w * box_h)
+                ratio_error = abs(aspect - target_ratio)
+                candidates.append((ratio_error, area_expand, target_w, target_h, crop_w, crop_h))
+
+        if len(candidates) > 0:
+            _, _, target_w, target_h, crop_w, crop_h = min(candidates, key=lambda item: (item[0], item[1]))
+            return target_w, target_h, crop_w, crop_h
+
+        target_w, target_h = self.snap_to_sdxl_resolution(image_w, image_h)
+        aspect = target_w / target_h
+        if image_w / image_h > aspect:
+            crop_h = image_h
+            crop_w = max(1, int(np.floor(crop_h * aspect)))
+        else:
+            crop_w = image_w
+            crop_h = max(1, int(np.floor(crop_w / aspect)))
+        return target_w, target_h, crop_w, crop_h
     def _expand_canvas(self, image, y1, y2, x1, x2):
         H, W, C = image.shape
         ey1, ey2, ex1, ex2 = y1, y2, x1, x2
@@ -128,6 +159,7 @@ class InpaintPipeline:
         bb_calculation_mask = mask
         if context_mask is not None:
             bb_calculation_mask = np.maximum(mask, context_mask)
+        print(f"[Debug] inpaint.prepare() source image size: {image.shape[1]}x{image.shape[0]}")
             
         mask_indices = np.where(bb_calculation_mask > 127)
         if len(mask_indices[0]) == 0:
@@ -136,42 +168,60 @@ class InpaintPipeline:
             side = min(H, W)
             y1, y2 = (H - side) // 2, (H + side) // 2
             x1, x2 = (W - side) // 2, (W + side) // 2
+            print("[Debug] inpaint.prepare() no Step 1 mask found; using center-square fallback bbox.")
         else:
             y1, y2 = np.min(mask_indices[0]), np.max(mask_indices[0])
             x1, x2 = np.min(mask_indices[1]), np.max(mask_indices[1])
+            print(f"[Debug] inpaint.prepare() tight bbox from mask: x=({x1}, {x2}) y=({y1}, {y2}) size={x2 - x1 + 1}x{y2 - y1 + 1}")
         
-        # 2. Determine BB Size & SDXL Snapping Strategy
+        # 2. Choose a native SDXL aspect ratio first, then grow the source-space
+        # crop to that exact aspect so the cropped BB and the upscaled BB align 1:1.
         H, W = image.shape[:2]
         center_y, center_x = (y1 + y2) // 2, (x1 + x2) // 2
-        
-        # [Path B: Standard Inpaint Context]
-        bb_h, bb_w = y2 - y1, x2 - x1
-        new_h = int(bb_h * extend_factor)
-        new_w = int(bb_w * extend_factor)
-        
-        # 3. Snap to SDXL resolution
-        target_w, target_h = self.snap_to_sdxl_resolution(new_w, new_h)
-        target_ratio = target_w / target_h
-        
-        # 4. Adjust BB to match snapped aspect ratio
-        if new_w / new_h > target_ratio:
-            new_h = int(new_w / target_ratio)
-        else:
-            new_w = int(new_h * target_ratio)
-            
-        y1, y2 = center_y - new_h // 2, center_y + (new_h + 1) // 2
-        x1, x2 = center_x - new_w // 2, center_x + (new_w + 1) // 2
-        
-        # 5. Handle expansion and cropping
-        bb_image, _ = self._expand_canvas(image, y1, y2, x1, x2)
-        bb_mask, _ = self._expand_canvas(mask[:, :, None] if mask.ndim == 2 else mask, y1, y2, x1, x2)
-        bb_mask = bb_mask[:, :, 0]
-        
-        # 6. Resize to target resolution (target_w, target_h must be defined by now)
+
+        bb_h = max(1, y2 - y1 + 1)
+        bb_w = max(1, x2 - x1 + 1)
+        desired_h = max(1, int(bb_h * extend_factor))
+        desired_w = max(1, int(bb_w * extend_factor))
+
+        target_w, target_h, crop_w, crop_h = self.fit_box_to_native_sdxl_crop(desired_w, desired_h, W, H)
+        print(f"[Debug] inpaint.prepare() native target selected: {target_w}x{target_h}; source crop size={crop_w}x{crop_h} center=({center_x}, {center_y})")
+
+        y1, y2 = center_y - crop_h // 2, center_y + (crop_h + 1) // 2
+        x1, x2 = center_x - crop_w // 2, center_x + (crop_w + 1) // 2
+
+        # 3. Clamp the native-AR crop to the source image bounds while preserving size.
+        if y1 < 0:
+            y2 -= y1
+            y1 = 0
+        if y2 > H:
+            y1 -= (y2 - H)
+            y2 = H
+        if x1 < 0:
+            x2 -= x1
+            x1 = 0
+        if x2 > W:
+            x1 -= (x2 - W)
+            x2 = W
+
+        y1 = max(0, y1)
+        x1 = max(0, x1)
+        y2 = min(H, y2)
+        x2 = min(W, x2)
+        print(f"[Debug] inpaint.prepare() clamped native crop bbox: x=({x1}, {x2}) y=({y1}, {y2}) size={x2 - x1}x{y2 - y1}")
+
+        # 4. Crop the real source-image BB using the selected native aspect ratio.
+        bb_image = image[y1:y2, x1:x2]
+        bb_mask = mask[y1:y2, x1:x2]
+
+        actual_h, actual_w = bb_image.shape[:2]
+        print(f"[Debug] inpaint.prepare() crop before resize: {actual_w}x{actual_h}; native output: {target_w}x{target_h}")
+
+        # 5. Upscale the native-AR crop to the selected SDXL resolution.
         bb_image = resample_image(bb_image, target_w, target_h)
         bb_mask = resample_image(bb_mask, target_w, target_h)
-        
-        # 7. Generate blend mask
+
+        # 6. Generate blend mask in full-image coordinates for stitch-back.
         blend_mask = self._morphological_open(mask)
         
         return InpaintContext(
@@ -239,3 +289,8 @@ class InpaintPipeline:
         
         y = fg * w + bg * (1.0 - w)
         return y.clip(0, 255).astype(np.uint8)
+
+
+
+
+

@@ -9,6 +9,8 @@ import gradio as gr
 from modules.util import HWC3
 from PIL import Image
 import os
+import io
+import base64
 
 
 def rgba_to_black_bg_rgb(x):
@@ -44,16 +46,25 @@ def rgba_to_black_bg_rgb(x):
         return y.clip(0, 255).astype(np.uint8)
     return x
 
-
 def ensure_numpy(x, mode='RGB'):
     """
-    Ensure the input is a numpy array. Handles None, str (filepath), 
+    Ensure the input is a numpy array. Handles None, str (filepath/data URL),
     PIL.Image, and np.ndarray.
     """
     if x is None:
         return None
-    
+
     if isinstance(x, str):
+        if x == '':
+            return None
+        if x.startswith('data:image'):
+            try:
+                _, encoded = x.split(',', 1)
+                with Image.open(io.BytesIO(base64.b64decode(encoded))) as img:
+                    return np.array(img.convert(mode))
+            except Exception as e:
+                print(f"[mask_processing] Error decoding image data URL: {e}")
+                return None
         if os.path.exists(x):
             try:
                 with Image.open(x) as img:
@@ -61,18 +72,17 @@ def ensure_numpy(x, mode='RGB'):
             except Exception as e:
                 print(f"[mask_processing] Error loading image from {x}: {e}")
                 return None
-        else:
-            print(f"[mask_processing] File not found: {x}")
-            return None
-            
+        print(f"[mask_processing] File not found: {x}")
+        return None
+
     if isinstance(x, Image.Image):
         return np.array(x.convert(mode))
-        
+
     if isinstance(x, np.ndarray):
         if mode == 'RGB' and x.ndim == 3 and x.shape[2] == 4:
             return x[:, :, :3]
         return x
-        
+
     return None
 
 
@@ -261,7 +271,7 @@ def extract_color_masks(raw_mask_layer):
         raw_mask_layer: np.ndarray (H, W, 3) or (H, W, 4) from Gradio sketch
         
     Returns:
-        (white_mask_2d, blue_mask_2d) — both (H, W) np.uint8, values 0 or 255
+        (white_mask_2d, blue_mask_2d) ??both (H, W) np.uint8, values 0 or 255
     """
     if raw_mask_layer is None:
         return None, None
@@ -313,8 +323,11 @@ def to_binary_mask(mask):
     
     if mask.ndim == 3:
         if mask.shape[-1] == 4:
-            mask = mask[..., :3]
-        mask = np.max(mask, axis=-1)
+            alpha = mask[..., 3]
+            rgb = mask[..., :3]
+            mask = np.maximum(alpha, np.max(rgb, axis=-1))
+        else:
+            mask = np.max(mask, axis=-1)
     
     return (mask > 127).astype(np.uint8) * 255
 
@@ -369,3 +382,4 @@ def expand_mask_direction(mask_2d, direction, pixels=32):
         result = np.maximum(result, shifted)
     
     return result
+

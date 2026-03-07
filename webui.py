@@ -81,14 +81,14 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
         if len(task.yields) > 0:
             flag, product = task.yields.pop(0)
             if flag == 'preview':
-
-                # help bad internet connection by skipping duplicated preview
-                if len(task.yields) > 0:  # if we have the next item
-                    if task.yields[0][0] == 'preview':   # if the next item is also a preview
-                        # print('Skipped one preview for better internet connection.')
-                        continue
-
                 percentage, title, image = product
+                # Coalesce consecutive preview updates so the UI sees the newest
+                # progress state without dropping every preview under load.
+                while len(task.yields) > 0 and task.yields[0][0] == 'preview':
+                    next_percentage, next_title, next_image = task.yields.pop(0)[1]
+                    percentage, title = next_percentage, next_title
+                    if next_image is not None:
+                        image = next_image
                 if preview_enabled:
                     if has_results and batch_size >= 2:
                         preview_col = gr.update(visible=True)
@@ -232,7 +232,8 @@ with shared.gradio_root:
             with gr.Row():
                 with gr.Column(scale=5, min_width=420, visible=False) as preview_column:
                     progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
-                                               height=768, elem_classes=['main_view', 'preview_panel'])
+                                               height=768, type='numpy',
+                                               elem_classes=['main_view', 'preview_panel'])
                 with gr.Column(scale=6, min_width=500, visible=True) as gallery_column:
                     gallery = gr.Gallery(label='Gallery', show_label=True, object_fit='contain', visible=True, height=768,
                                          elem_classes=['resizable_area', 'main_view', 'final_gallery', 'image_gallery'],
@@ -344,9 +345,25 @@ with shared.gradio_root:
                     with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                inpaint_input_image = gr.ImageEditor(label='Image', sources='upload', type='filepath', height=500, brush=gr.Brush(colors=["#0000FF"], default_color="#0000FF"), elem_id='inpaint_canvas', show_label=False)
-                                with gr.Row():
-                                    inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm")
+                                inpaint_input_image = gr.Image(label='Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_canvas', show_label=False)
+                                inpaint_context_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_context_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
+                                gr.HTML("""
+<div id="inpaint-mask-tools" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0 12px; padding:10px 12px; border:1px solid rgba(128,128,128,0.25); border-radius:10px;">
+  <span style="font-size:0.9rem; font-weight:600;">Mask Tools</span>
+  <div style="display:flex; gap:6px; align-items:center;">
+    <button type="button" id="inpaint-mask-mode-context">Context Mask</button>
+    <button type="button" id="inpaint-mask-mode-bb">BB Mask</button>
+  </div>
+  <button type="button" id="inpaint-mask-brush">Brush</button>
+  <button type="button" id="inpaint-mask-erase">Erase</button>
+  <button type="button" id="inpaint-mask-clear">Clear</button>
+  <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem;">Brush Size
+    <input id="inpaint-mask-size" type="range" min="8" max="160" step="1" value="36">
+  </label>
+  <span id="inpaint-mask-status" style="font-size:0.85rem; opacity:0.8;">Load an image, then choose a mask mode.</span>
+</div>
+""")
+                                inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm", visible=False)
                                 inpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
                                 inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=True)
                                 inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', info='Enable to use the uploaded edited BB patch for final generation.')
@@ -354,12 +371,14 @@ with shared.gradio_root:
                                                                      label='Additional Prompt Quick List',
                                                                      components=[inpaint_additional_prompt],
                                                                      visible=True)
-                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
+                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">Documentation</a>')
                                 example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
 
+
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
-                                inpaint_bb_image = gr.ImageEditor(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, brush=gr.Brush(colors=["#FFFFFF"], default_color="#FFFFFF"), elem_id='inpaint_bb_canvas')
-                                inpaint_mask_image = gr.Image(label='Step 2: Edited BB Mask Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
+                                inpaint_bb_image = gr.Image(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
+                                inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
+                                inpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload (Optional)', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
                                 invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
 
 
@@ -416,8 +435,8 @@ with shared.gradio_root:
             """
             inpaint_toggle_toolbar.click(lambda: None, queue=False, show_progress=False, js=toggle_toolbar_js)
 
-            switch_js = "(x) => {if(x){viewer_to_bottom(100);viewer_to_bottom(500);}else{viewer_to_top();} return x;}"
-            down_js = "() => {viewer_to_bottom();}"
+            switch_js = "(x) => {if(x){if(window.viewer_to_bottom){viewer_to_bottom(100);viewer_to_bottom(500);}}else{if(window.viewer_to_top){viewer_to_top();}} return x;}"
+            down_js = "() => {if(window.viewer_to_bottom){viewer_to_bottom();}}"
 
             input_image_checkbox.change(lambda x: gr.update(visible=x), inputs=input_image_checkbox,
                                         outputs=image_input_panel, queue=False, show_progress=False, js=switch_js)
@@ -668,7 +687,7 @@ with shared.gradio_root:
         ctrls += [input_image_checkbox, current_tab]
         ctrls += [uov_method, uov_input_image]
         ctrls += [outpaint_selections, outpaint_input_image, outpaint_mask_image]
-        ctrls += [inpaint_input_image, inpaint_additional_prompt, inpaint_mask_image, inpaint_bb_image]
+        ctrls += [inpaint_input_image, inpaint_context_mask_data, inpaint_additional_prompt, inpaint_mask_image, inpaint_bb_image, inpaint_bb_mask_data]
         ctrls += [disable_preview, disable_intermediate_results, disable_seed_increment]
         ctrls += [adm_scaler_positive, adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip]
         ctrls += [sampler_name, scheduler_name]
@@ -784,3 +803,5 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
+
+

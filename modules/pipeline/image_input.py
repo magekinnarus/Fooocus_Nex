@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import modules.config as config
 import modules.core as core
@@ -16,6 +17,9 @@ class EarlyReturnException(BaseException):
     def __init__(self, payload=None):
         super().__init__()
         self.payload = payload
+
+
+LAST_INPAINT_STEP1_CONTEXT = None
 
 
 def apply_vary(task_state, progressbar_callback=None):
@@ -150,32 +154,41 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
     Sets up the inpainting worker, patches the UNet, and encodes the initial latent.
     Exclusively using InpaintPipeline.
     """
+    global LAST_INPAINT_STEP1_CONTEXT
+
     denoising_strength = getattr(task_state, 'inpaint_strength', 1.0)
     inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
 
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
-        
+
     context_mask = getattr(task_state, 'context_mask', None)
-        
-    ctx = inpaint.prepare(
-        image=inpaint_image,
-        mask=inpaint_mask,
-        context_mask=context_mask,
-        extend_factor=1.2
-    )
-    
-    print(f"[Debug] inpaint.prepare() returned BB of size: {ctx.bb_image.shape}")
-    
+
     is_step1_inpaint = task_state.current_tab == 'inpaint' and not getattr(task_state, 'inpaint_step2_checkbox', False)
     is_step2_inpaint = task_state.current_tab == 'inpaint' and getattr(task_state, 'inpaint_step2_checkbox', False)
+
+    if is_step2_inpaint and LAST_INPAINT_STEP1_CONTEXT is not None:
+        ctx = copy.deepcopy(LAST_INPAINT_STEP1_CONTEXT)
+        print(f"[Debug] Step 2 using cached Step 1 context: bb={ctx.bb}, native={ctx.target_w}x{ctx.target_h}, original={ctx.original_image.shape[1]}x{ctx.original_image.shape[0]}")
+    else:
+        if is_step2_inpaint:
+            print('[Fooocus Warning] Step 2 selected without cached Step 1 context. Recomputing from current input.')
+        ctx = inpaint.prepare(
+            image=inpaint_image,
+            mask=inpaint_mask,
+            context_mask=context_mask,
+            extend_factor=1.2
+        )
+        print(f"[Debug] inpaint.prepare() returned BB of size: {ctx.bb_image.shape}")
     
     if is_step1_inpaint:
+        LAST_INPAINT_STEP1_CONTEXT = copy.deepcopy(ctx)
         raise EarlyReturnException(payload=(ctx.bb_image, None))
 
     if is_step2_inpaint:
         raw_bb = getattr(task_state, 'inpaint_bb_image', None)
         raw_mask = getattr(task_state, 'inpaint_mask_image', None)
+        raw_bb_overlay_mask = mask_proc.ensure_numpy(getattr(task_state, 'inpaint_bb_mask_data', None), mode='RGBA')
 
         bb_img_data = mask_proc.combine_image_and_mask(raw_bb)
         mask_img_data = mask_proc.combine_image_and_mask(raw_mask)
@@ -194,8 +207,8 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         else:
             bb_white = None
 
-        # 3. Combine both masks
-        bb_mask_2d = mask_proc.combine_masks(mask_white, bb_white)
+        # 3. Defer final mask combination until the BB image size is known.
+        bb_mask_2d = None
 
         # 4. Heal the guidance image (remove white strokes from the image sent to AI)
         if isinstance(raw_bb, dict) and 'background' in raw_bb and raw_bb['background'] is not None:
@@ -210,8 +223,18 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
                 bb_img_data[bb_white > 127] = 0
 
         if bb_img_data is None:
-            print("[Fooocus Warning] Step 2 Generation selected but BB Image is missing.")
-            bb_img_data = ctx.bb_image
+            bb_img_data = mask_proc.combine_image_and_mask(task_state.inpaint_input_image)
+            if bb_img_data is not None:
+                print("[Fooocus] Step 2 using current inpaint input as BB image fallback.")
+            else:
+                print("[Fooocus Warning] Step 2 Generation selected but BB Image is missing.")
+                bb_img_data = ctx.bb_image
+        bb_overlay_mask_2d = None
+        if raw_bb_overlay_mask is not None and bb_img_data is not None:
+            bb_overlay_mask_2d = mask_proc.to_binary_mask(raw_bb_overlay_mask)
+            bb_overlay_mask_2d = resample_image(bb_overlay_mask_2d, width=bb_img_data.shape[1], height=bb_img_data.shape[0])
+
+        bb_mask_2d = mask_proc.combine_masks(mask_white, bb_white, bb_overlay_mask_2d)
             
         if bb_mask_2d is None:
             print("[Fooocus Warning] Step 2 Generation selected but BB Mask is missing.")
@@ -432,28 +455,22 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
     elif (task_state.current_tab == 'inpaint' or (
             task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint)) \
             and task_state.inpaint_input_image is not None:
-        
         if isinstance(task_state.inpaint_input_image, dict):
             if 'background' in task_state.inpaint_input_image:
                 inpaint_image = mask_proc.ensure_numpy(task_state.inpaint_input_image['background'])
-                inpaint_mask, context_mask = mask_proc.extract_color_masks_from_layers(task_state.inpaint_input_image)
-                
-                if inpaint_mask is None:
-                    inpaint_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
-                if context_mask is None:
-                    context_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
             else:
                 inpaint_image = mask_proc.ensure_numpy(task_state.inpaint_input_image['image'])
-                raw_mask_layer = task_state.inpaint_input_image.get('mask')
-                if raw_mask_layer is not None:
-                    inpaint_mask, context_mask = mask_proc.extract_color_masks(mask_proc.ensure_numpy(raw_mask_layer))
-                else:
-                    inpaint_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
-                    context_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
         else:
             inpaint_image = mask_proc.ensure_numpy(task_state.inpaint_input_image)
-            inpaint_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
-            context_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
+
+        inpaint_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
+        context_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
+
+        raw_context_mask = mask_proc.ensure_numpy(getattr(task_state, 'inpaint_context_mask_data', None), mode='RGBA')
+        if raw_context_mask is not None:
+            context_mask = mask_proc.to_binary_mask(raw_context_mask)
+            context_mask = resample_image(context_mask, width=inpaint_image.shape[1], height=inpaint_image.shape[0])
+
         task_state.context_mask = context_mask
 
         if not task_state.inpaint_advanced_masking_checkbox and not getattr(task_state, 'inpaint_step2_checkbox', False):
@@ -461,9 +478,8 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             if merged_upload is not None:
                 H, W, C = inpaint_image.shape
                 merged_upload = resample_image(merged_upload, width=W, height=H)
-                up_white, up_blue = mask_proc.extract_color_masks(merged_upload)
-                inpaint_mask = mask_proc.combine_masks(inpaint_mask, up_white)
-                task_state.context_mask = mask_proc.combine_masks(task_state.context_mask, up_blue)
+                upload_mask = mask_proc.to_binary_mask(merged_upload)
+                task_state.context_mask = mask_proc.combine_masks(task_state.context_mask, upload_mask)
 
         if int(task_state.inpaint_erode_or_dilate) != 0:
             inpaint_mask = erode_or_dilate(inpaint_mask, task_state.inpaint_erode_or_dilate)
@@ -583,3 +599,5 @@ def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_
     all_ip_tasks = task_state.cn_tasks[flags.cn_ip] + task_state.cn_tasks[flags.cn_ip_face]
     if len(all_ip_tasks) > 0:
         pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
+
+

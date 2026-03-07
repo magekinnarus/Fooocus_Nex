@@ -499,11 +499,11 @@ onUiLoaded(async () => {
             }
         });
 
-        // Apply auto expand if enabled
         if (hotkeysConfig.canvas_auto_expand) {
             targetElement.addEventListener("mousemove", autoExpand);
-            // Set up an observer to track attribute changes
-            observer.observe(targetElement, { attributes: true, childList: true, subtree: true });
+            // Restrict observation to style changes to avoid expensive subtree churn
+            // from Gradio 5 ImageEditor internals.
+            observer.observe(targetElement, { attributes: true, subtree: true, attributeFilter: ["style"] });
         }
 
         // Handle events only inside the targetElement
@@ -640,7 +640,6 @@ onUiLoaded(async () => {
 
         gradioApp().addEventListener("mousemove", handleMoveByKey);
     }
-
-    applyZoomAndPan("#inpaint_canvas");
-    applyZoomAndPan("#inpaint_mask_canvas");
+    // Disabled for Gradio 5 ImageEditor until the zoom hooks are rewritten.
 });
+

@@ -38,25 +38,15 @@ def read_asset(fn):
 def javascript_html():
     samples_path = webpath(os.path.abspath('./sdxl_styles/samples/fooocus_v2.jpg'))
     head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
-    
-    # Inline all JS files to avoid 404 routing issues in Gradio 5
-    js_files = [
-        'javascript/script.js',
-        'javascript/contextMenus.js',
-        'javascript/localization.js',
-        'javascript/zoom.js',
-        'javascript/edit-attention.js',
-        'javascript/viewer.js',
-        'javascript/imageviewer.js'
-    ]
-    
+    # Gradio 5 baseline mode: disable legacy UI augmentation scripts until
+    # each file is revalidated or rewritten against the new DOM model.
+    js_files = ['javascript/inpaint_mask.js']
+
     for js_file in js_files:
         content = read_asset(js_file)
         if content:
             head += f'<script type="text/javascript">{content}</script>\n'
     head += f'<meta name="samples-path" content="{samples_path}">\n'
-    if args_manager.args.theme:
-        head += f'<script type="text/javascript">set_theme(\"{args_manager.args.theme}\");</script>\n'
 
     return head
 

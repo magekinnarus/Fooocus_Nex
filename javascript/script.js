@@ -31,6 +31,8 @@ var uiLoadedCallbacks = [];
 var uiTabChangeCallbacks = [];
 var optionsChangedCallbacks = [];
 var uiAfterUpdateTimeout = null;
+var uiMutationFlushTimeout = null;
+var uiPendingMutations = [];
 var uiCurrentTab = null;
 
 /**
@@ -77,7 +79,6 @@ function onUiTabChange(callback) {
 function onOptionsChanged(callback) {
     optionsChangedCallbacks.push(callback);
 }
-
 function executeCallbacks(queue, arg) {
     for (const callback of queue) {
         try {
@@ -105,18 +106,30 @@ var executedOnLoaded = false;
 
 document.addEventListener("DOMContentLoaded", function() {
     var mutationObserver = new MutationObserver(function(m) {
-        if (!executedOnLoaded && gradioApp().querySelector('#generate_button')) {
-            executedOnLoaded = true;
-            executeCallbacks(uiLoadedCallbacks);
+        uiPendingMutations.push(...m);
+
+        if (uiMutationFlushTimeout !== null) {
+            return;
         }
 
-        executeCallbacks(uiUpdateCallbacks, m);
-        scheduleAfterUiUpdateCallbacks();
-        const newTab = get_uiCurrentTab();
-        if (newTab && (newTab !== uiCurrentTab)) {
-            uiCurrentTab = newTab;
-            executeCallbacks(uiTabChangeCallbacks);
-        }
+        uiMutationFlushTimeout = setTimeout(function() {
+            const pending = uiPendingMutations;
+            uiPendingMutations = [];
+            uiMutationFlushTimeout = null;
+
+            if (!executedOnLoaded && gradioApp().querySelector('#generate_button')) {
+                executedOnLoaded = true;
+                executeCallbacks(uiLoadedCallbacks);
+            }
+
+            executeCallbacks(uiUpdateCallbacks, pending);
+            scheduleAfterUiUpdateCallbacks();
+            const newTab = get_uiCurrentTab();
+            if (newTab && (newTab !== uiCurrentTab)) {
+                uiCurrentTab = newTab;
+                executeCallbacks(uiTabChangeCallbacks);
+            }
+        }, 100);
     });
     mutationObserver.observe(gradioApp(), {childList: true, subtree: true});
     initStylePreviewOverlay();

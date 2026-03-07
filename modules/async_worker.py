@@ -3,6 +3,7 @@ import os
 import time
 import traceback
 import threading
+import re
 import torch
 import numpy as np
 import backend.resources as resources
@@ -81,9 +82,11 @@ class AsyncTask:
         s.outpaint_mask_image = args.pop()
         
         s.inpaint_input_image = args.pop()
+        s.inpaint_context_mask_data = args.pop()
         s.inpaint_additional_prompt = args.pop()
         s.inpaint_mask_image = args.pop()
         s.inpaint_bb_image = args.pop()
+        s.inpaint_bb_mask_data = args.pop()
 
         s.disable_preview = args.pop()
         s.disable_intermediate_results = args.pop()
@@ -179,9 +182,10 @@ def handler(async_task: AsyncTask):
         set_hyper_sd_defaults(s, progressbar)
 
     print(f'[Parameters] Seed = {s.seed}')
-    
-    width_str, height_str = s.aspect_ratios_selection.replace('×', ' ').split(' ')[:2]
-    s.width, s.height = int(width_str), int(height_str)
+    dims = re.findall(r'\d+', str(s.aspect_ratios_selection))
+    if len(dims) < 2:
+        raise ValueError(f'Invalid aspect ratio selection: {s.aspect_ratios_selection!r}')
+    s.width, s.height = int(dims[0]), int(dims[1])
 
     base_model_additional_loras = []
     
@@ -348,3 +352,4 @@ def worker():
 
 
 threading.Thread(target=worker, daemon=True).start()
+

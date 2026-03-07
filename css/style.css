@@ -459,3 +459,7 @@ div:has(> #positive_prompt) {
 #inpaint_brush_color input[type=color] {
   background: none;
 }
+.inpaint-hidden-mask-field {
+    display: none !important;
+}
+

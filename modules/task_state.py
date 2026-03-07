@@ -13,7 +13,7 @@ class TaskState:
     performance_selection: Any = None  # modules.flags.Performance
     steps: int = 30
     original_steps: int = 30
-    aspect_ratios_selection: str = "1024×1024"
+    aspect_ratios_selection: str = "1024x1024"
     image_number: int = 1
     output_format: str = "png"
     seed: int = -1
@@ -31,6 +31,8 @@ class TaskState:
     outpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     outpaint_mask_image: Optional[np.ndarray] = None
     inpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
+    inpaint_context_mask_data: Optional[str] = None
+    inpaint_bb_mask_data: Optional[str] = None
     inpaint_additional_prompt: str = ""
     inpaint_mask_image: Optional[np.ndarray] = None
     inpaint_bb_image: Optional[np.ndarray] = None
