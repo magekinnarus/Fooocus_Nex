@@ -92,18 +92,27 @@ def get_seed(key: str, fallback: str | None, source_dict: dict, results: list, d
         results.append(gr.update())
         results.append(gr.update())
 
-def get_inpaint_engine_version(key: str, fallback: str | None, source_dict: dict, results: list, inpaint_mode: str, default=None) -> str | None:
+def get_inpaint_engine_version(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
+        if h == 'empty':
+            h = modules.config.default_inpaint_engine_version
         assert isinstance(h, str) and h in modules.flags.inpaint_engine_versions
-        if inpaint_mode != modules.flags.inpaint_option_detail:
-            results.append(h)
-        else:
-            results.append(gr.update())
         results.append(h)
         return h
     except:
-        results.append(gr.update())
+        results.append('empty')
+        return None
+
+def get_outpaint_engine_version(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
+    try:
+        h = source_dict.get(key, source_dict.get(fallback, default))
+        if h == 'empty':
+            h = modules.config.default_outpaint_engine_version
+        assert isinstance(h, str) and h in modules.flags.inpaint_engine_versions
+        results.append(h)
+        return h
+    except:
         results.append('empty')
         return None
 
@@ -180,7 +189,8 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     get_str('sampler', 'Sampler', loaded_parameter_dict, results)
     get_str('scheduler', 'Scheduler', loaded_parameter_dict, results)
     get_seed('seed', 'Seed', loaded_parameter_dict, results)
-    get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results, inpaint_mode)
+    get_outpaint_engine_version('outpaint_engine_version', 'Outpaint Engine Version', loaded_parameter_dict, results)
+    get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results)
 
     if is_generating:
         results.append(gr.update())

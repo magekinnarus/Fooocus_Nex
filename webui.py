@@ -227,6 +227,7 @@ shared.gradio_root = gr.Blocks(title=title, head=javascript_html() + css_html())
 with shared.gradio_root:
     currentTask = gr.State(worker.AsyncTask(args=[]))
     inpaint_engine_state = gr.State('empty')
+    outpaint_engine_state = gr.State('empty')
     with gr.Row():
         with gr.Column(scale=2):
             with gr.Row():
@@ -646,7 +647,7 @@ with shared.gradio_root:
                              overwrite_width, overwrite_height, guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
                              base_model, vae_model, clip_model, sampler_name, scheduler_name, 
-                             seed_random, image_seed, outpaint_engine, inpaint_engine_state,
+                             seed_random, image_seed, outpaint_engine_state, inpaint_engine_state,
                              generate_button,
                              load_parameter_button] + lora_ctrls
 
@@ -675,8 +676,12 @@ with shared.gradio_root:
             def inpaint_engine_state_change(inpaint_engine_version):
                 if inpaint_engine_version == 'empty':
                     inpaint_engine_version = modules.config.default_inpaint_engine_version
-
                 return gr.update(value=inpaint_engine_version)
+
+            def outpaint_engine_state_change(outpaint_engine_version):
+                if outpaint_engine_version == 'empty':
+                    outpaint_engine_version = modules.config.default_outpaint_engine_version
+                return gr.update(value=outpaint_engine_version)
 
             preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
                 .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
@@ -688,6 +693,10 @@ with shared.gradio_root:
 
         # load configured default_inpaint_method
         shared.gradio_root.load(inpaint_engine_state_change, inputs=[inpaint_engine_state], outputs=[
+            inpaint_engine
+        ], show_progress=False, queue=False)
+
+        shared.gradio_root.load(outpaint_engine_state_change, inputs=[outpaint_engine_state], outputs=[
             outpaint_engine
         ], show_progress=False, queue=False)
 
