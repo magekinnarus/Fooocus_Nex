@@ -88,15 +88,15 @@
     function updateModeButtons() {
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
-        if (contextBtn) contextBtn.disabled = state.activeMode === 'context';
-        if (bbBtn) bbBtn.disabled = state.activeMode === 'bb';
+        if (contextBtn) contextBtn.classList.toggle('active', state.activeMode === 'context');
+        if (bbBtn) bbBtn.classList.toggle('active', state.activeMode === 'bb');
     }
 
     function updateToolButtons() {
         const brushBtn = document.getElementById('inpaint-mask-brush');
         const eraseBtn = document.getElementById('inpaint-mask-erase');
-        if (brushBtn) brushBtn.disabled = state.tool === 'brush';
-        if (eraseBtn) eraseBtn.disabled = state.tool === 'erase';
+        if (brushBtn) brushBtn.classList.toggle('active', state.tool === 'brush');
+        if (eraseBtn) eraseBtn.classList.toggle('active', state.tool === 'erase');
     }
 
     function currentModeName() {
@@ -215,7 +215,7 @@
             surface.lastPoint = null;
             try {
                 surface.canvas.releasePointerCapture(event.pointerId);
-            } catch (e) {}
+            } catch (e) { }
             exportMask(mode);
             event.preventDefault();
         };
@@ -244,21 +244,46 @@
         attachCanvasEvents(mode);
     }
 
+    function getContainSize(img) {
+        const { clientWidth: width, clientHeight: height, naturalWidth, naturalHeight } = img;
+        if (!width || !height || !naturalWidth || !naturalHeight) return null;
+
+        const imgRatio = naturalWidth / naturalHeight;
+        const containerRatio = width / height;
+
+        let w, h, x, y;
+        if (imgRatio > containerRatio) {
+            w = width;
+            h = width / imgRatio;
+            x = 0;
+            y = (height - h) / 2;
+        } else {
+            h = height;
+            w = height * imgRatio;
+            x = (width - w) / 2;
+            y = 0;
+        }
+        return { w, h, x, y };
+    }
+
     function syncCanvasToImage(mode, clearForNewImage = false) {
         const surface = getSurface(mode);
         if (!surface.canvas || !surface.img || !surface.host) return;
-        const hostRect = surface.host.getBoundingClientRect();
-        const imgRect = surface.img.getBoundingClientRect();
-        if (!imgRect.width || !imgRect.height || !surface.img.naturalWidth || !surface.img.naturalHeight) {
+
+        const size = getContainSize(surface.img);
+        if (!size) {
             surface.canvas.style.display = 'none';
             return;
         }
 
+        const hostRect = surface.host.getBoundingClientRect();
+        const imgRect = surface.img.getBoundingClientRect();
+
         surface.canvas.style.display = 'block';
-        surface.canvas.style.left = `${imgRect.left - hostRect.left}px`;
-        surface.canvas.style.top = `${imgRect.top - hostRect.top}px`;
-        surface.canvas.style.width = `${imgRect.width}px`;
-        surface.canvas.style.height = `${imgRect.height}px`;
+        surface.canvas.style.left = `${(imgRect.left - hostRect.left) + size.x}px`;
+        surface.canvas.style.top = `${(imgRect.top - hostRect.top) + size.y}px`;
+        surface.canvas.style.width = `${size.w}px`;
+        surface.canvas.style.height = `${size.h}px`;
 
         if (clearForNewImage || surface.canvas.width !== surface.img.naturalWidth || surface.canvas.height !== surface.img.naturalHeight) {
             surface.canvas.width = surface.img.naturalWidth;

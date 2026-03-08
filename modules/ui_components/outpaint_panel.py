@@ -13,13 +13,13 @@ def build_outpaint_tab():
 
     results['outpaint_engine'] = gr.Dropdown(
         label='Outpaint Engine',
-        value=modules.config.default_inpaint_engine_version,
+        value=modules.config.default_outpaint_engine_version,
         choices=flags.inpaint_engine_versions,
         info='Version of Fooocus inpaint model. If set, use performance Quality or Speed (no performance LoRAs) for best results.'
     )
     results['outpaint_strength'] = gr.Slider(
         label='Outpaint Denoising Strength',
-        minimum=0.0, maximum=1.0, step=0.001, value=1.0,
+        minimum=0.0, maximum=1.0, step=0.001, value=0.75,
         info='Same as the denoising strength in A1111 inpaint.'
     )
     

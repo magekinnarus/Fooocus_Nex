@@ -25,16 +25,14 @@ class VAEDecode:
     def decode(self, vae, samples):
         resources.load_models_gpu([vae.patcher])
         result = (vae.decode(samples["samples"]), )
-        vae.patcher.detach()
-        resources.soft_empty_cache()
+        resources.eject_model(vae.patcher)
         return result
 
 class VAEDecodeTiled:
     def decode(self, vae, samples, tile_size):
         resources.load_models_gpu([vae.patcher])
         result = (vae.decode_tiled(samples["samples"], tile_x=tile_size // 8, tile_y=tile_size // 8, ), )
-        vae.patcher.detach()
-        resources.soft_empty_cache()
+        resources.eject_model(vae.patcher)
         return result
 
 def vae_encode_crop_pixels(pixels):
@@ -52,8 +50,7 @@ class VAEEncode:
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode(pixels[:,:,:,:3])
         result = ({"samples":t}, )
-        vae.patcher.detach()
-        resources.soft_empty_cache()
+        resources.eject_model(vae.patcher)
         return result
 
 class VAEEncodeTiled:
@@ -62,8 +59,7 @@ class VAEEncodeTiled:
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode_tiled(pixels[:,:,:,:3], tile_x=tile_size, tile_y=tile_size, )
         result = ({"samples":t}, )
-        vae.patcher.detach()
-        resources.soft_empty_cache()
+        resources.eject_model(vae.patcher)
         return result
 
 class EmptyLatentImage:
@@ -342,8 +338,7 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
 def decode_vae(vae, latent_image, tiled=False):
     resources.load_models_gpu([vae.patcher])
     result = vae.decode(latent_image["samples"], tiled=tiled)
-    vae.patcher.detach()
-    resources.soft_empty_cache()
+    resources.eject_model(vae.patcher)
     return result
 
 
@@ -351,8 +346,7 @@ def decode_vae(vae, latent_image, tiled=False):
 def encode_vae(vae, pixels):
     resources.load_models_gpu([vae.patcher])
     result = vae.encode(pixels)
-    vae.patcher.detach()
-    resources.soft_empty_cache()
+    resources.eject_model(vae.patcher)
     return result
 
 

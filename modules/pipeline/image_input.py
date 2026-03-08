@@ -159,105 +159,73 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
     denoising_strength = getattr(task_state, 'inpaint_strength', 1.0)
     inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
 
+    # 1. Identify explicit 4-slot inputs
+    raw_input_image = getattr(task_state, 'inpaint_input_image', None)
+    raw_context_mask = getattr(task_state, 'inpaint_context_mask_image', None)
+    raw_bb_image = getattr(task_state, 'inpaint_bb_image', None)
+    raw_bb_mask = getattr(task_state, 'inpaint_mask_image', None)
+    
+    # 2. Extract usable arrays
+    input_image = mask_proc.unpack_gradio_data(raw_input_image) if raw_input_image is not None else inpaint_image
+    context_mask = mask_proc.unpack_gradio_data(raw_context_mask) if raw_context_mask is not None else inpaint_mask
+    
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
-
-    context_mask = getattr(task_state, 'context_mask', None)
+    
+    # 3. Always derive coordinate system from Full Image + Context Mask if possible
+    # This prevents "BB Inception" (cropping within a crop).
+    if input_image is not None and context_mask is not None:
+        ctx = inpaint.prepare(
+            image=input_image,
+            mask=context_mask,
+            extend_factor=1.2
+        )
+        print(f"[Debug] Context derived from {input_image.shape[1]}x{input_image.shape[0]} image via context mask.")
+    else:
+        # Fallback to standard preparation if explicit slots are missing
+        ctx = inpaint.prepare(
+            image=inpaint_image,
+            mask=inpaint_mask,
+            extend_factor=1.2
+        )
+        print(f"[Debug] Context derived from standard inpaint inputs.")
 
     is_step1_inpaint = task_state.current_tab == 'inpaint' and not getattr(task_state, 'inpaint_step2_checkbox', False)
     is_step2_inpaint = task_state.current_tab == 'inpaint' and getattr(task_state, 'inpaint_step2_checkbox', False)
 
-    if is_step2_inpaint and LAST_INPAINT_STEP1_CONTEXT is not None:
-        ctx = copy.deepcopy(LAST_INPAINT_STEP1_CONTEXT)
-        print(f"[Debug] Step 2 using cached Step 1 context: bb={ctx.bb}, native={ctx.target_w}x{ctx.target_h}, original={ctx.original_image.shape[1]}x{ctx.original_image.shape[0]}")
-    else:
-        if is_step2_inpaint:
-            print('[Fooocus Warning] Step 2 selected without cached Step 1 context. Recomputing from current input.')
-        ctx = inpaint.prepare(
-            image=inpaint_image,
-            mask=inpaint_mask,
-            context_mask=context_mask,
-            extend_factor=1.2
-        )
-        print(f"[Debug] inpaint.prepare() returned BB of size: {ctx.bb_image.shape}")
-    
     if is_step1_inpaint:
         LAST_INPAINT_STEP1_CONTEXT = copy.deepcopy(ctx)
-        raise EarlyReturnException(payload=(ctx.bb_image, None))
+        # Use a list to ensure Gradio Gallery receives a proper list of images
+        raise EarlyReturnException(payload=[ctx.bb_image])
 
     if is_step2_inpaint:
-        raw_bb = getattr(task_state, 'inpaint_bb_image', None)
-        raw_mask = getattr(task_state, 'inpaint_mask_image', None)
-        raw_bb_overlay_mask = mask_proc.ensure_numpy(getattr(task_state, 'inpaint_bb_mask_data', None), mode='RGBA')
+        # 4. Integrate explicit Step 2 slots (BB image and BB mask)
+        # We use the coordinates (y1, y2, x1, x2) from the Full Context (ctx.bb)
+        # to ensure stitching is perfectly aligned.
+        
+        bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
+        # Handle mask from both the explicit slot and potential drawing on the BB image
+        bb_mask_2d = mask_proc.combine_masks(
+            mask_proc.unpack_gradio_data(raw_bb_mask),
+            mask_proc.extract_mask_from_layers(raw_bb_image) if isinstance(raw_bb_image, dict) else None
+        )
 
-        print(f"[Debug] Inpaint Step 2: raw_bb={'Yes' if raw_bb is not None else 'No'}, raw_mask={'Yes' if raw_mask is not None else 'No'}")
-
-        bb_img_data = mask_proc.combine_image_and_mask(raw_bb)
-        mask_img_data = mask_proc.combine_image_and_mask(raw_mask)
-
-        # 1. Start with white strokes from the dedicated Mask Upload slot
-        if mask_img_data is not None:
-            mask_white, _ = mask_proc.extract_color_masks(mask_img_data)
-        else:
-            mask_white = None
-
-        # 2. Add white strokes painted directly on the BB Image slot (if any)
-        if isinstance(raw_bb, dict) and 'layers' in raw_bb:
-            bb_white, _ = mask_proc.extract_color_masks_from_layers(raw_bb)
-        elif isinstance(raw_bb, dict) and 'mask' in raw_bb:
-            bb_white, _ = mask_proc.extract_color_masks(raw_bb['mask'])
-        else:
-            bb_white = None
-
-        # 3. Defer final mask combination until the BB image size is known.
-        bb_mask_2d = None
-
-        # 4. Heal the guidance image (remove white strokes from the image sent to AI)
-        if isinstance(raw_bb, dict) and 'background' in raw_bb and raw_bb['background'] is not None:
-            # Best case: use the clean background layer directly
-            bb_img_data = mask_proc.rgba_to_black_bg_rgb(np.array(raw_bb['background']))
-        else:
-            # Fallback: composite or raw array
-            bb_img_data = mask_proc.combine_image_and_mask(raw_bb)
-            if bb_img_data is not None and bb_white is not None:
-                # Remove white strokes by zeroing them out (black) or using ctx.bb_image as backfill
-                # For color guidance, blacking them out is usually fine as they are in the masked area anyway.
-                bb_img_data[bb_white > 127] = 0
-
-        if bb_img_data is None:
-            bb_img_data = mask_proc.combine_image_and_mask(task_state.inpaint_input_image)
-            if bb_img_data is not None:
-                print("[Fooocus] Step 2 using current inpaint input as BB image fallback.")
-            else:
-                print("[Fooocus Warning] Step 2 Generation selected but BB Image is missing.")
-                bb_img_data = ctx.bb_image
-        bb_overlay_mask_2d = None
-        if raw_bb_overlay_mask is not None and bb_img_data is not None:
-            bb_overlay_mask_2d = mask_proc.to_binary_mask(raw_bb_overlay_mask)
-            bb_overlay_mask_2d = resample_image(bb_overlay_mask_2d, width=bb_img_data.shape[1], height=bb_img_data.shape[0])
-
-        bb_mask_2d = mask_proc.combine_masks(mask_white, bb_white, bb_overlay_mask_2d)
+        if bb_img_data is not None:
+            ctx.bb_image = bb_img_data
+            ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
+            print(f"[Debug] Using explicit BB image from slot: {ctx.target_w}x{ctx.target_h}")
+        
+        if bb_mask_2d is not None:
+            # Ensure mask matches BB image resolution
+            bb_mask_2d = resample_image(bb_mask_2d, width=ctx.target_w, height=ctx.target_h)
+            ctx.bb_mask = bb_mask_2d
+            print(f"[Debug] Using explicit BB mask.")
             
-        if bb_mask_2d is None:
-            print("[Fooocus Warning] Step 2 Generation selected but BB Mask is missing.")
-            bb_mask_2d = ctx.bb_mask
-        
-        if int(task_state.inpaint_erode_or_dilate) != 0:
-            bb_mask_2d = erode_or_dilate(bb_mask_2d, task_state.inpaint_erode_or_dilate)
-
-        if task_state.invert_mask_checkbox:
-            bb_mask_2d = 255 - bb_mask_2d
-
-        target_h, target_w = bb_img_data.shape[:2]
-        ctx.bb_image = bb_img_data
-        ctx.bb_mask = bb_mask_2d
-        ctx.target_h = target_h
-        ctx.target_w = target_w
-        
+        # 5. Re-run morphological blend calculation for stitching
         y1, y2, x1, x2 = ctx.bb
         full_mask = np.zeros_like(ctx.original_image[:, :, 0])
         H, W = full_mask.shape
-        patch_mask_resized = resample_image(bb_mask_2d, width=x2-x1, height=y2-y1)
+        patch_mask_resized = resample_image(ctx.bb_mask, width=x2-x1, height=y2-y1)
         
         iy1, iy2 = max(0, y1), min(H, y2)
         ix1, ix2 = max(0, x1), min(W, x2)
@@ -267,8 +235,8 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         full_mask[iy1:iy2, ix1:ix2] = patch_mask_resized[cy1:cy2, cx1:cx2]
         ctx.blend_mask = inpaint._morphological_open(full_mask)
         
-        task_state.width = target_w
-        task_state.height = target_h
+        task_state.width = ctx.target_w
+        task_state.height = ctx.target_h
 
     if getattr(task_state, 'debugging_inpaint_preprocessor', False):
         if yield_result_callback:

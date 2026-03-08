@@ -714,7 +714,7 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             loaded_model_index = None
 
         if loaded_model_index is not None:
-            loaded = current_loaded_models[loaded_model_index]
+            loaded = current_loaded_models.pop(loaded_model_index)
             loaded.currently_used = True
             models_to_load.append(loaded)
         else:

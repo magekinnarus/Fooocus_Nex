@@ -383,3 +383,40 @@ def expand_mask_direction(mask_2d, direction, pixels=32):
     
     return result
 
+
+def compute_inpaint_step1_context(img_data, mask_b64):
+    import gradio as gr
+    if not img_data or not mask_b64:
+        return gr.update(), gr.update(), gr.update()
+        
+    original_image = unpack_gradio_data(img_data)
+    if original_image is None:
+        return gr.update(), gr.update(), gr.update()
+        
+    context_mask = ensure_numpy(mask_b64, mode='L')
+    if context_mask is None:
+        return gr.update(), gr.update(), gr.update()
+        
+    from modules.pipeline.inpaint import InpaintPipeline
+    inpaint = InpaintPipeline()
+    ctx = inpaint.prepare(
+        image=original_image,
+        mask=context_mask,
+        context_mask=None,
+        extend_factor=1.2
+    )
+    
+    return gr.update(value=context_mask), gr.update(value=ctx.bb_image), gr.update(value="")
+
+
+def compute_inpaint_step2_mask(mask_b64):
+    import gradio as gr
+    if not mask_b64:
+        return gr.update(), gr.update()
+        
+    bb_mask = ensure_numpy(mask_b64, mode='L')
+    if bb_mask is None:
+        return gr.update(), gr.update()
+        
+    return gr.update(value=bb_mask), gr.update(value="")
+

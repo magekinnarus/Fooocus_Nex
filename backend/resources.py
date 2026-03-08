@@ -546,7 +546,7 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             loaded_model_index = None
 
         if loaded_model_index is not None:
-            loaded = current_loaded_models[loaded_model_index]
+            loaded = current_loaded_models.pop(loaded_model_index)
             loaded.currently_used = True
             models_to_load.append(loaded)
         else:
@@ -706,6 +706,10 @@ def vae_offload_device():
 
 def unload_all_models():
     free_memory(1e30, get_torch_device())
+
+def eject_model(model_patcher):
+    model_patcher.detach()
+    soft_empty_cache()
 
 def module_size(module):
     module_mem = 0

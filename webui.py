@@ -36,9 +36,10 @@ from modules.auth import auth_enabled, check_auth
 from modules.util import is_json
 
 def get_task(*args):
-    args = list(args)
-
-    return worker.AsyncTask(args=args)
+    global ctrls_keys
+    named_args = dict(zip(ctrls_keys, args))
+    del named_args['_currentTask']
+    return worker.AsyncTask(args=named_args)
 
 def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
     import backend.resources as resources
@@ -345,19 +346,27 @@ with shared.gradio_root:
                                 inpaint_input_image = gr.Image(label='Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_canvas', show_label=False)
                                 inpaint_context_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_context_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 gr.HTML("""
-<div id="inpaint-mask-tools" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0 12px; padding:10px 12px; border:1px solid rgba(128,128,128,0.25); border-radius:10px;">
-  <span style="font-size:0.9rem; font-weight:600;">Mask Tools</span>
-  <div style="display:flex; gap:6px; align-items:center;">
-    <button type="button" id="inpaint-mask-mode-context">Context Mask</button>
-    <button type="button" id="inpaint-mask-mode-bb">BB Mask</button>
+<div id="inpaint-mask-tools" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
+  <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
+    <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">MASK WORKFLOW</span>
+    <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-context" title="Step 1: Paint Context">Context Mask</button>
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
+    </div>
+    <div style="width:1px; height:22px; background:rgba(128,128,128,0.3); margin:0 4px;"></div>
+    <div style="display:flex; gap:8px;">
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-brush">Brush</button>
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-erase">Erase</button>
+    </div>
+    <button type="button" class="mask-tool-btn" id="inpaint-mask-clear" style="margin-left:auto; opacity:0.8;">Clear All</button>
   </div>
-  <button type="button" id="inpaint-mask-brush">Brush</button>
-  <button type="button" id="inpaint-mask-erase">Erase</button>
-  <button type="button" id="inpaint-mask-clear">Clear</button>
-  <label style="display:flex; align-items:center; gap:6px; font-size:0.9rem;">Brush Size
-    <input id="inpaint-mask-size" type="range" min="8" max="160" step="1" value="36">
-  </label>
-  <span id="inpaint-mask-status" style="font-size:0.85rem; opacity:0.8;">Load an image, then choose a mask mode.</span>
+  <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
+    <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
+      <span style="white-space:nowrap; opacity:0.8;">Brush Size</span>
+      <input id="inpaint-mask-size" type="range" min="8" max="160" step="1" value="36" style="flex-grow:1; accent-color:var(--button-primary-background-fill);">
+    </label>
+    <span id="inpaint-mask-status" style="font-size:0.85rem; opacity:0.6; font-style:italic; min-width:120px; text-align:right;">Ready</span>
+  </div>
 </div>
 """)
                                 inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm", visible=False)
@@ -373,6 +382,7 @@ with shared.gradio_root:
 
 
                             with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as inpaint_mask_generation_col:
+                                inpaint_context_mask_image = gr.Image(label='Step 1: Context Mask Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_canvas')
                                 inpaint_bb_image = gr.Image(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
                                 inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 inpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload (Optional)', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
@@ -515,6 +525,19 @@ with shared.gradio_root:
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
 
+                def update_style_label(selections):
+                    if not selections or len(selections) == 0:
+                        return gr.update(label='Styles')
+                    
+                    visible_styles = selections[:2]
+                    label = f"Styles: {', '.join(visible_styles)}"
+                    if len(selections) > 2:
+                        label += f" ... (+{len(selections) - 2} more)"
+                    
+                    return gr.update(label=label)
+
+                style_selections.change(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False)
+
                 shared.gradio_root.load(
                     lambda: gr.update(
                         choices=copy.deepcopy(style_sorter.all_styles),
@@ -523,7 +546,7 @@ with shared.gradio_root:
                     outputs=style_selections,
                     queue=False,
                     show_progress=False
-                ).then(lambda: None, js='()=>{refresh_style_localization();}', queue=False, show_progress=False)
+                ).then(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False).then(lambda: None, js='()=>{refresh_style_localization();}', queue=False, show_progress=False)
 
                 style_search_bar.change(style_sorter.search_styles,
                                         inputs=[style_selections, style_search_bar],
@@ -538,19 +561,6 @@ with shared.gradio_root:
                                                        queue=False,
                                                        show_progress=False).then(
                     lambda: None, js='()=>{refresh_style_localization();}')
-
-                def update_style_label(selections):
-                    if not selections or len(selections) == 0:
-                        return gr.update(label='Styles')
-                    
-                    visible_styles = selections[:2]
-                    label = f"Styles: {', '.join(visible_styles)}"
-                    if len(selections) > 2:
-                        label += f" ... (+{len(selections) - 2} more)"
-                    
-                    return gr.update(label=label)
-
-                style_selections.change(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False)
             with gr.Tab(label='Advanced'):
                 with gr.Column(visible=True) as dev_tools:
                     with gr.Tab(label='Debug Tools'):
@@ -682,34 +692,97 @@ with shared.gradio_root:
         ], show_progress=False, queue=False)
 
 
-        ctrls = [currentTask, generate_image_grid]
-        ctrls += [
-            prompt, negative_prompt, style_selections,
-            aspect_ratios_selection, image_number, output_format, image_seed,
-            read_wildcards_in_order, sharpness, guidance_scale
-        ]
+        ctrls_dict = {
+            'generate_image_grid': generate_image_grid,
+            'prompt': prompt,
+            'negative_prompt': negative_prompt,
+            'style_selections': style_selections,
+            'aspect_ratios_selection': aspect_ratios_selection,
+            'image_number': image_number,
+            'output_format': output_format,
+            'image_seed': image_seed,
+            'read_wildcards_in_order': read_wildcards_in_order,
+            'sharpness': sharpness,
+            'guidance_scale': guidance_scale,
+            'base_model': base_model,
+            'vae_model': vae_model,
+            'clip_model': clip_model,
+        }
 
-        ctrls += [base_model, vae_model, clip_model] + lora_ctrls
-        ctrls += [input_image_checkbox, current_tab]
-        ctrls += [uov_method, uov_input_image]
-        ctrls += [outpaint_selections, outpaint_input_image, outpaint_mask_image]
-        ctrls += [inpaint_input_image, inpaint_context_mask_data, inpaint_additional_prompt, inpaint_mask_image, inpaint_bb_image, inpaint_bb_mask_data]
-        ctrls += [disable_preview, disable_intermediate_results, disable_seed_increment]
-        ctrls += [adm_scaler_positive, adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip]
-        ctrls += [sampler_name, scheduler_name]
-        ctrls += [overwrite_step, overwrite_width, overwrite_height, overwrite_vary_strength]
-        ctrls += [overwrite_upscale_strength, mixing_image_prompt_and_vary_upscale, mixing_image_prompt_and_inpaint]
-        ctrls += [debugging_cn_preprocessor, skipping_cn_preprocessor, canny_low_threshold, canny_high_threshold]
-        ctrls += [controlnet_softness]
-        ctrls += inpaint_ctrls
-        ctrls += outpaint_ctrls
+        for i in range(modules.config.default_max_lora_number):
+            ctrls_dict[f'lora_{i}_enabled'] = lora_ctrls[i * 3]
+            ctrls_dict[f'lora_{i}_model'] = lora_ctrls[i * 3 + 1]
+            ctrls_dict[f'lora_{i}_weight'] = lora_ctrls[i * 3 + 2]
 
+        ctrls_dict.update({
+            'input_image_checkbox': input_image_checkbox,
+            'current_tab': current_tab,
+            'uov_method': uov_method,
+            'uov_input_image': uov_input_image,
+            'outpaint_selections': outpaint_selections,
+            'outpaint_input_image': outpaint_input_image,
+            'outpaint_mask_image': outpaint_mask_image,
+            'inpaint_input_image': inpaint_input_image,
+            'inpaint_context_mask_image': inpaint_context_mask_image,
+            'inpaint_additional_prompt': inpaint_additional_prompt,
+            'inpaint_mask_image': inpaint_mask_image,
+            'inpaint_bb_image': inpaint_bb_image,
+            'disable_preview': disable_preview,
+            'disable_intermediate_results': disable_intermediate_results,
+            'disable_seed_increment': disable_seed_increment,
+            'adm_scaler_positive': adm_scaler_positive,
+            'adm_scaler_negative': adm_scaler_negative,
+            'adm_scaler_end': adm_scaler_end,
+            'adaptive_cfg': adaptive_cfg,
+            'clip_skip': clip_skip,
+            'sampler_name': sampler_name,
+            'scheduler_name': scheduler_name,
+            'overwrite_step': overwrite_step,
+            'overwrite_width': overwrite_width,
+            'overwrite_height': overwrite_height,
+            'overwrite_vary_strength': overwrite_vary_strength,
+            'overwrite_upscale_strength': overwrite_upscale_strength,
+            'mixing_image_prompt_and_vary_upscale': mixing_image_prompt_and_vary_upscale,
+            'mixing_image_prompt_and_inpaint': mixing_image_prompt_and_inpaint,
+            'debugging_cn_preprocessor': debugging_cn_preprocessor,
+            'skipping_cn_preprocessor': skipping_cn_preprocessor,
+            'canny_low_threshold': canny_low_threshold,
+            'canny_high_threshold': canny_high_threshold,
+            'controlnet_softness': controlnet_softness,
+            
+            # inpaint_ctrls
+            'debugging_inpaint_preprocessor': debugging_inpaint_preprocessor,
+            'inpaint_disable_initial_latent': inpaint_disable_initial_latent,
+            'inpaint_engine': inpaint_engine,
+            'inpaint_strength': inpaint_strength,
+            'inpaint_advanced_masking_checkbox': inpaint_advanced_masking_checkbox,
+            'invert_mask_checkbox': invert_mask_checkbox,
+            'inpaint_erode_or_dilate': inpaint_erode_or_dilate,
+            'inpaint_step2_checkbox': inpaint_step2_checkbox,
 
+            # outpaint_ctrls
+            'outpaint_engine': outpaint_engine,
+            'outpaint_strength': outpaint_strength,
+            'inpaint_outpaint_expansion_size': inpaint_outpaint_expansion_size,
+            'outpaint_step2_checkbox': outpaint_step2_checkbox,
+        })
 
         if not args_manager.args.disable_metadata:
-            ctrls += [save_metadata_to_images, metadata_scheme]
+            ctrls_dict['save_metadata_to_images'] = save_metadata_to_images
+            ctrls_dict['metadata_scheme'] = metadata_scheme
 
-        ctrls += ip_ctrls
+        for i in range(modules.config.default_controlnet_image_count):
+            ctrls_dict[f'cn_{i}_image'] = ip_ctrls[i * 4]
+            ctrls_dict[f'cn_{i}_stop'] = ip_ctrls[i * 4 + 1]
+            ctrls_dict[f'cn_{i}_weight'] = ip_ctrls[i * 4 + 2]
+            ctrls_dict[f'cn_{i}_type'] = ip_ctrls[i * 4 + 3]
+
+        import modules.parameter_registry as parameter_registry
+        parameter_registry.validate_ctrls(ctrls_dict)
+
+        global ctrls_keys
+        ctrls_keys = ['_currentTask'] + list(ctrls_dict.keys())
+        ctrls = [currentTask] + list(ctrls_dict.values())
 
         def parse_meta(raw_prompt_txt, is_generating):
             loaded_json = None
@@ -741,6 +814,23 @@ with shared.gradio_root:
 
         metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
+
+        import modules.mask_processing as mask_proc
+        inpaint_context_mask_data.change(
+            mask_proc.compute_inpaint_step1_context,
+            inputs=[inpaint_input_image, inpaint_context_mask_data],
+            outputs=[inpaint_context_mask_image, inpaint_bb_image, inpaint_context_mask_data],
+            queue=False,
+            show_progress=False
+        )
+
+        inpaint_bb_mask_data.change(
+            mask_proc.compute_inpaint_step2_mask,
+            inputs=[inpaint_bb_mask_data],
+            outputs=[inpaint_mask_image, inpaint_bb_mask_data],
+            queue=False,
+            show_progress=False
+        )
 
         generate_button.click(
             lambda disable_preview_value: (

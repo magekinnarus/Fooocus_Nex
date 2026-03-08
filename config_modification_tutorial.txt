@@ -168,7 +168,8 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "1728*576"
     ],
     "default_aspect_ratio": "1024*1024",
-    "default_inpaint_engine_version": "v2.6",
+    "default_inpaint_engine_version": "None",
+    "default_outpaint_engine_version": "v2.6",
     "default_outpaint_expansion_size": 384,
     "default_selected_image_input_tab_id": "uov_tab",
     "default_uov_method": "Disabled",

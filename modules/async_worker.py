@@ -46,102 +46,54 @@ class AsyncTask:
         if len(args) == 0:
             return
 
-        args.reverse()
-        s = self.state
-        _ = args.pop() # currentTask
-        s.generate_image_grid = args.pop()
-        s.prompt = args.pop()
-        s.negative_prompt = args.pop()
-        s.style_selections = args.pop()
+        if isinstance(args, list):
+            raise TypeError("AsyncTask received a positional args list instead of a named dictionary. Clear your browser cache and restart.")
 
-        s.performance_selection = Performance.SPEED # Fallback or remove if unused elsewhere
-        s.steps = 30 # Default steps
+        s = self.state
+
+        import modules.parameter_registry as registry
+        for param in registry.PARAM_REGISTRY:
+            if param.task_field is None:
+                continue
+            
+            val = args.get(param.name, param.default)
+            if param.transform and val is not None:
+                try:
+                    val = param.transform(val)
+                except (ValueError, TypeError):
+                    val = param.default
+            setattr(s, param.task_field, val)
+
+        s.performance_selection = Performance.SPEED 
+        s.steps = 30 
         s.original_steps = s.steps
 
-        s.aspect_ratios_selection = args.pop()
-        s.image_number = args.pop()
-        s.output_format = args.pop()
-        s.seed = int(args.pop())
-        _ = args.pop()  # read_wildcards_in_order (removed)
-        s.sharpness = args.pop()
-        s.cfg_scale = args.pop()
-        s.base_model_name = args.pop()
-        s.vae_name = args.pop()
-        s.clip_model_name = args.pop()
-        s.loras = get_enabled_loras([(bool(args.pop()), str(args.pop()), float(args.pop())) for _ in
-                                        range(default_max_lora_number)])
-        s.input_image_checkbox = args.pop()
-        s.current_tab = args.pop()
-        s.uov_method = args.pop()
-        s.uov_input_image = args.pop()
-        
-        s.outpaint_selections = args.pop()
-        s.outpaint_input_image = args.pop()
-        s.outpaint_mask_image = args.pop()
-        
-        s.inpaint_input_image = args.pop()
-        s.inpaint_context_mask_data = args.pop()
-        s.inpaint_additional_prompt = args.pop()
-        s.inpaint_mask_image = args.pop()
-        s.inpaint_bb_image = args.pop()
-        s.inpaint_bb_mask_data = args.pop()
-
-        s.disable_preview = args.pop()
-        s.disable_intermediate_results = args.pop()
-        s.disable_seed_increment = args.pop()
-        s.adm_scaler_positive = args.pop()
-        s.adm_scaler_negative = args.pop()
-        s.adm_scaler_end = args.pop()
-        s.adaptive_cfg = args.pop()
-        s.clip_skip = args.pop()
-        s.sampler_name = args.pop()
-        s.scheduler_name = args.pop()
-        s.overwrite_step = args.pop()
-        s.overwrite_width = args.pop()
-        s.overwrite_height = args.pop()
-        s.overwrite_vary_strength = args.pop()
-        s.overwrite_upscale_strength = args.pop()
-        s.mixing_image_prompt_and_vary_upscale = args.pop()
-        s.mixing_image_prompt_and_inpaint = args.pop()
-        s.debugging_cn_preprocessor = args.pop()
-        s.skipping_cn_preprocessor = args.pop()
-        s.canny_low_threshold = args.pop()
-        s.canny_high_threshold = args.pop()
-        s.controlnet_softness = args.pop()
-        
-        s.debugging_inpaint_preprocessor = args.pop()
-        s.inpaint_disable_initial_latent = args.pop()
-        s.inpaint_engine = args.pop()
-        s.inpaint_strength = args.pop()
-        s.inpaint_advanced_masking_checkbox = args.pop()
-        s.invert_mask_checkbox = args.pop()
-        s.inpaint_erode_or_dilate = args.pop()
-        s.inpaint_step2_checkbox = args.pop()
-        
-        s.outpaint_engine = args.pop()
-        s.outpaint_strength = args.pop()
-        
-        inpaint_outpaint_expansion_size_val = args.pop()
-        if inpaint_outpaint_expansion_size_val is None or inpaint_outpaint_expansion_size_val == '':
-            s.inpaint_outpaint_expansion_size = config.default_outpaint_expansion_size
-        else:
-            s.inpaint_outpaint_expansion_size = int(inpaint_outpaint_expansion_size_val)
-            
-        s.outpaint_step2_checkbox = args.pop()
+        lora_data = []
+        for i in range(default_max_lora_number):
+            enabled = bool(args.get(f'lora_{i}_enabled', False))
+            name = str(args.get(f'lora_{i}_model', 'None'))
+            weight = float(args.get(f'lora_{i}_weight', 1.0))
+            lora_data.append((enabled, name, weight))
+        s.loras = get_enabled_loras(lora_data)
 
         if not args_manager.args.disable_metadata:
-            s.save_metadata_to_images = args.pop()
-            s.metadata_scheme = MetadataScheme(args.pop())
+            s.save_metadata_to_images = args.get('save_metadata_to_images', False)
+            scheme_val = args.get('metadata_scheme', 'fooocus')
+            try:
+                s.metadata_scheme = MetadataScheme(scheme_val)
+            except ValueError:
+                s.metadata_scheme = MetadataScheme.FOOOCUS
         else:
             s.save_metadata_to_images = False
             s.metadata_scheme = MetadataScheme.FOOOCUS
 
-        for _ in range(config.default_controlnet_image_count):
-            cn_img = args.pop()
-            cn_stop = args.pop()
-            cn_weight = args.pop()
-            cn_type = args.pop()
-            if cn_img is not None:
+        from modules.config import default_controlnet_image_count
+        for i in range(default_controlnet_image_count):
+            cn_img = args.get(f'cn_{i}_image')
+            cn_stop = args.get(f'cn_{i}_stop', 1.0)
+            cn_weight = args.get(f'cn_{i}_weight', 1.0)
+            cn_type = args.get(f'cn_{i}_type')
+            if cn_img is not None and cn_type:
                 s.cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
 
     @property
@@ -184,6 +136,7 @@ def handler(async_task: AsyncTask):
     
     save_step1_result = None
     try:
+        res = {}
         if s.input_image_checkbox:
             res = apply_image_input(s, base_model_additional_loras, progressbar)
             base_model_additional_loras = res['base_model_additional_loras']
@@ -196,15 +149,16 @@ def handler(async_task: AsyncTask):
         ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
         ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_face_path'))
 
-        if 'outpaint' in s.goals:
-            # Phase 2: Inference setup on the expanded canvas
-            # Note: res['outpaint_image/mask'] contains the result of Step 1 if it finished, 
-            # or the original inputs if Step 2 was already selected.
-            apply_outpaint_inference_setup(s, res['outpaint_image'], res['outpaint_mask'], progressbar, yield_result)
+        if s.input_image_checkbox:
+            if 'outpaint' in s.goals:
+                # Phase 2: Inference setup on the expanded canvas
+                # Note: res['outpaint_image/mask'] contains the result of Step 1 if it finished, 
+                # or the original inputs if Step 2 was already selected.
+                apply_outpaint_inference_setup(s, res['outpaint_image'], res['outpaint_mask'], progressbar, yield_result)
 
-        if 'inpaint' in s.goals:
-            # Phase 1/2 Inpaint: Manual dual-masking and inference setup
-            apply_inpaint(s, res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
+            if 'inpaint' in s.goals:
+                # Phase 1/2 Inpaint: Manual dual-masking and inference setup
+                apply_inpaint(s, res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
     except EarlyReturnException as e:
         save_step1_result = e.payload
         if save_step1_result is None:

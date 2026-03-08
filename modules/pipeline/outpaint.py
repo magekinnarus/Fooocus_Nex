@@ -253,11 +253,8 @@ class OutpaintPipeline:
         # 1. BB Image to tensor
         pixels = numpy_to_pytorch(context.bb_image)
         
-        # 2. VAE encode with lifecycle management
-        resources.load_models_gpu([vae.patcher])
+        # 2. VAE encode (lifecycle managed by core.encode_vae)
         latent = core.encode_vae(vae=vae, pixels=pixels)['samples']
-        vae.patcher.detach()
-        resources.soft_empty_cache()
         
         # 3. Create denoise_mask in latent space
         mask = torch.from_numpy(context.bb_mask).float() / 255.0
