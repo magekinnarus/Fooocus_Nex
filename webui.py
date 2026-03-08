@@ -37,7 +37,6 @@ from modules.util import is_json
 
 def get_task(*args):
     args = list(args)
-    args.pop(0)
 
     return worker.AsyncTask(args=args)
 

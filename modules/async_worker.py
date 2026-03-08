@@ -129,9 +129,12 @@ class AsyncTask:
             
         s.outpaint_step2_checkbox = args.pop()
 
-        s.save_metadata_to_images = args.pop() if not args_manager.args.disable_image_log else False
-        s.metadata_scheme = MetadataScheme(
-            args.pop()) if not args_manager.args.disable_metadata else MetadataScheme.FOOOCUS
+        if not args_manager.args.disable_metadata:
+            s.save_metadata_to_images = args.pop()
+            s.metadata_scheme = MetadataScheme(args.pop())
+        else:
+            s.save_metadata_to_images = False
+            s.metadata_scheme = MetadataScheme.FOOOCUS
 
         for _ in range(config.default_controlnet_image_count):
             cn_img = args.pop()
@@ -204,6 +207,10 @@ def handler(async_task: AsyncTask):
             apply_inpaint(s, res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
     except EarlyReturnException as e:
         save_step1_result = e.payload
+        if save_step1_result is None:
+            s.yields.append(['finish', s.results])
+            s.processing = False
+            return
 
     if save_step1_result is not None:
         inpaint_image, inpaint_mask = save_step1_result
@@ -234,6 +241,8 @@ def handler(async_task: AsyncTask):
             }, 
             False, s.loras)
         yield_result(s, img_paths, 100, do_not_show_finished_images=True)
+        s.yields.append(['finish', s.results])
+        s.processing = False
         return
 
     apply_overrides(s)
@@ -256,12 +265,16 @@ def handler(async_task: AsyncTask):
             progressbar(s, 100, 'Saving image to system ...')
             img_paths = save_and_log(s, s.height, s.width, [s.uov_input_image], {'log_positive_prompt': s.prompt, 'log_negative_prompt': s.negative_prompt, 'positive': [], 'negative': [], 'styles': s.style_selections, 'task_seed': s.seed}, s.use_expansion, s.loras)
             yield_result(s, img_paths, 100, do_not_show_finished_images=True)
+            s.yields.append(['finish', s.results])
+            s.processing = False
             return
 
 
     if 'cn' in s.goals:
         apply_control_nets(s, res['ip_adapter_face_path'], res['ip_adapter_path'], yield_result)
         if s.debugging_cn_preprocessor:
+            s.yields.append(['finish', s.results])
+            s.processing = False
             return
 
     steps, _, _ = apply_overrides(s)

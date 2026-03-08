@@ -190,6 +190,8 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         raw_mask = getattr(task_state, 'inpaint_mask_image', None)
         raw_bb_overlay_mask = mask_proc.ensure_numpy(getattr(task_state, 'inpaint_bb_mask_data', None), mode='RGBA')
 
+        print(f"[Debug] Inpaint Step 2: raw_bb={'Yes' if raw_bb is not None else 'No'}, raw_mask={'Yes' if raw_mask is not None else 'No'}")
+
         bb_img_data = mask_proc.combine_image_and_mask(raw_bb)
         mask_img_data = mask_proc.combine_image_and_mask(raw_mask)
 
@@ -241,7 +243,6 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
             bb_mask_2d = ctx.bb_mask
         
         if int(task_state.inpaint_erode_or_dilate) != 0:
-            from modules.pipeline.image_input import erode_or_dilate
             bb_mask_2d = erode_or_dilate(bb_mask_2d, task_state.inpaint_erode_or_dilate)
 
         if task_state.invert_mask_checkbox:
