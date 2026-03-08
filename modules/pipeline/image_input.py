@@ -428,15 +428,11 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         if outpaint_mask is None:
             outpaint_mask = np.zeros(outpaint_image.shape[:2], dtype=np.uint8)
         
-        if not task_state.outpaint_advanced_masking_checkbox:
-            merged_upload = mask_proc.combine_image_and_mask(task_state.outpaint_mask_image)
-            if merged_upload is not None:
-                H, W, C = outpaint_image.shape
-                upload_mask = mask_proc.to_binary_mask(resample_image(merged_upload, width=W, height=H))
-                outpaint_mask = mask_proc.combine_masks(outpaint_mask, upload_mask)
-
-        if task_state.outpaint_invert_mask_checkbox:
-            outpaint_mask = 255 - outpaint_mask
+        merged_upload = mask_proc.combine_image_and_mask(task_state.outpaint_mask_image)
+        if merged_upload is not None:
+            H, W, C = outpaint_image.shape
+            upload_mask = mask_proc.to_binary_mask(resample_image(merged_upload, width=W, height=H))
+            outpaint_mask = mask_proc.combine_masks(outpaint_mask, upload_mask)
 
         # Parse direction even for Step 2
         if len(task_state.outpaint_selections) > 0:

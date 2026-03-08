@@ -10,7 +10,6 @@ class TaskState:
     prompt: str = ""
     negative_prompt: str = ""
     style_selections: List[str] = field(default_factory=list)
-    performance_selection: Any = None  # modules.flags.Performance
     steps: int = 30
     original_steps: int = 30
     aspect_ratios_selection: str = "1024x1024"
@@ -70,8 +69,6 @@ class TaskState:
     outpaint_step2_checkbox: bool = False
     outpaint_engine: str = "None"
     outpaint_strength: float = 1.0
-    outpaint_advanced_masking_checkbox: bool = False
-    outpaint_invert_mask_checkbox: bool = False
     inpaint_outpaint_expansion_size: int = 384
     inpaint_pixelate_primer: bool = False
     context_mask: Optional[np.ndarray] = None

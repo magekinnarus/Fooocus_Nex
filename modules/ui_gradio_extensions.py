@@ -40,7 +40,7 @@ def javascript_html():
     head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
     # Gradio 5 baseline mode: disable legacy UI augmentation scripts until
     # each file is revalidated or rewritten against the new DOM model.
-    js_files = ['javascript/inpaint_mask.js']
+    js_files = ['javascript/ui_utils.js', 'javascript/inpaint_mask.js']
 
     for js_file in js_files:
         content = read_asset(js_file)

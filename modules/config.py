@@ -405,12 +405,6 @@ default_prompt = get_config_item_or_set_default(
     disable_empty_as_none=True,
     expected_type=str
 )
-default_performance = get_config_item_or_set_default(
-    key='default_performance',
-    default_value=Performance.SPEED.value,
-    validator=lambda x: x in Performance.values(),
-    expected_type=str
-)
 default_image_prompt_checkbox = get_config_item_or_set_default(
     key='default_image_prompt_checkbox',
     default_value=False,
@@ -590,7 +584,7 @@ default_clip = get_config_item_or_set_default(
 )
 default_overwrite_step = get_config_item_or_set_default(
     key='default_overwrite_step',
-    default_value=-1,
+    default_value=20,
     validator=lambda x: isinstance(x, int),
     expected_type=int
 )
@@ -667,7 +661,6 @@ possible_preset_keys = {
     "default_sampler": "sampler",
     "default_scheduler": "scheduler",
     "default_overwrite_step": "steps",
-    "default_performance": "performance",
     "default_image_number": "image_number",
     "default_prompt": "prompt",
     "default_prompt_negative": "negative_prompt",
@@ -698,7 +691,7 @@ def add_ratio(x):
     a, b = x.replace('*', ' ').split(' ')[:2]
     a, b = int(a), int(b)
     g = math.gcd(a, b)
-    return f'{a}×{b} <span style="color: grey;"> \U00002223 {a // g}:{b // g}</span>'
+    return f'{a}x{b} ({a // g}:{b // g})'
 
 
 default_aspect_ratio = add_ratio(default_aspect_ratio)

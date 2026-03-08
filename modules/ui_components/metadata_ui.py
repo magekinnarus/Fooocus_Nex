@@ -167,7 +167,6 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     get_str('prompt', 'Prompt', loaded_parameter_dict, results)
     get_str('negative_prompt', 'Negative Prompt', loaded_parameter_dict, results)
     get_list('styles', 'Styles', loaded_parameter_dict, results)
-    performance = get_str('performance', 'Performance', loaded_parameter_dict, results)
     get_steps('steps', 'Steps', loaded_parameter_dict, results)
     get_resolution('resolution', 'Resolution', loaded_parameter_dict, results)
     get_number('guidance_scale', 'Guidance Scale', loaded_parameter_dict, results)
@@ -182,7 +181,6 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     get_str('scheduler', 'Scheduler', loaded_parameter_dict, results)
     get_seed('seed', 'Seed', loaded_parameter_dict, results)
     get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results, inpaint_mode)
-    get_inpaint_method('inpaint_method', 'Inpaint Mode', loaded_parameter_dict, results)
 
     if is_generating:
         results.append(gr.update())
@@ -192,9 +190,6 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     results.append(gr.update(visible=False))
 
     performance_filename = None
-    if performance is not None and performance in Performance.values():
-        performance = Performance(performance)
-        performance_filename = performance.lora_filename()
 
     for i in range(modules.config.default_max_lora_number):
         get_lora(f'lora_combined_{i + 1}', f'LoRA {i + 1}', loaded_parameter_dict, results, performance_filename)

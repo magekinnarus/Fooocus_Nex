@@ -58,52 +58,6 @@ def patch_samplers(task_state):
     return final_scheduler_name
 
 
-def set_hyper_sd_defaults(task_state, progressbar_callback=None):
-    print('Enter Hyper-SD mode.')
-    if progressbar_callback:
-        progressbar_callback(task_state, task_state.current_progress, 'Downloading Hyper-SD components ...')
-    
-    task_state.performance_loras += [(config.downloading_sdxl_hyper_sd_lora(), 0.8)]
-    task_state.sampler_name = 'dpmpp_sde_gpu'
-    task_state.scheduler_name = 'karras'
-    task_state.sharpness = 0.0
-    task_state.cfg_scale = 1.0
-    task_state.adaptive_cfg = 1.0
-    task_state.adm_scaler_positive = 1.0
-    task_state.adm_scaler_negative = 1.0
-    task_state.adm_scaler_end = 0.0
-
-
-def set_lightning_defaults(task_state, progressbar_callback=None):
-    print('Enter Lightning mode.')
-    if progressbar_callback:
-        progressbar_callback(task_state, 1, 'Downloading Lightning components ...')
-    
-    task_state.performance_loras += [(config.downloading_sdxl_lightning_lora(), 1.0)]
-    task_state.sampler_name = 'euler'
-    task_state.scheduler_name = 'sgm_uniform'
-    task_state.sharpness = 0.0
-    task_state.cfg_scale = 1.0
-    task_state.adaptive_cfg = 1.0
-    task_state.adm_scaler_positive = 1.0
-    task_state.adm_scaler_negative = 1.0
-    task_state.adm_scaler_end = 0.0
-
-
-def set_lcm_defaults(task_state, progressbar_callback=None):
-    print('Enter LCM mode.')
-    if progressbar_callback:
-        progressbar_callback(task_state, 1, 'Downloading LCM components ...')
-    
-    task_state.performance_loras += [(config.downloading_sdxl_lcm_lora(), 1.0)]
-    task_state.sampler_name = 'lcm'
-    task_state.scheduler_name = 'lcm'
-    task_state.sharpness = 0.0
-    task_state.cfg_scale = 1.0
-    task_state.adaptive_cfg = 1.0
-    task_state.adm_scaler_positive = 1.0
-    task_state.adm_scaler_negative = 1.0
-    task_state.adm_scaler_end = 0.0
 
 
 def process_prompt(task_state, base_model_additional_loras, progressbar_callback=None):
@@ -140,11 +94,8 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
         task_state.current_progress += 1
         progressbar_callback(task_state, task_state.current_progress, 'Loading models ...')
 
-    lora_filenames = util.remove_performance_lora(config.lora_filenames, task_state.performance_selection)
     loras, prompt = parse_lora_references_from_prompt(prompt, task_state.loras,
-                                                      config.default_max_lora_number,
-                                                      lora_filenames=lora_filenames)
-    loras += task_state.performance_loras
+                                                      config.default_max_lora_number)
 
     pipeline.refresh_everything(base_model_name=task_state.base_model_name,
                                 loras=loras, base_model_additional_loras=base_model_additional_loras,

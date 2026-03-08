@@ -330,14 +330,12 @@ with shared.gradio_root:
                         with gr.Row():
                             with gr.Column():
                                 outpaint_input_image = gr.Image(label='Image', sources='upload', type='filepath', height=500, show_label=False)
-                                outpaint_advanced_masking_checkbox = gr.Checkbox(label='Hide Advanced Masking Features', value=modules.config.default_inpaint_advanced_masking_checkbox)
-                                outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=[], label='Outpaint Direction')
+                                outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=['Left'], label='Outpaint Direction')
                                 outpaint_step2_checkbox = gr.Checkbox(label='Outpaint 2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', info='Provides color guidance for outpaint by pixelating the blank area.')
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
-                            with gr.Column(visible=not modules.config.default_inpaint_advanced_masking_checkbox) as outpaint_mask_generation_col:
+                            with gr.Column(visible=True) as outpaint_mask_generation_col:
                                 outpaint_mask_image = gr.Image(label='Mask Upload', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
-                                outpaint_invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
                                 outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)')
                                 
                                 outpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, outpaint_mask_image], outputs=[gallery], queue=False, show_progress=False)
@@ -442,6 +440,13 @@ with shared.gradio_root:
                                         outputs=image_input_panel, queue=False, show_progress=False, js=switch_js)
             ip_advanced.change(lambda: None, queue=False, show_progress=False, js=down_js)
 
+            def outpaint_selection_change(choices):
+                if len(choices) <= 1:
+                    return choices
+                return [choices[-1]]
+
+            outpaint_selections.change(outpaint_selection_change, inputs=outpaint_selections, outputs=outpaint_selections, queue=False, show_progress=False)
+
             current_tab = gr.Textbox(value='uov', visible=False)
             uov_tab.select(lambda: 'uov', outputs=current_tab, queue=False, js=down_js, show_progress=False)
             inpaint_tab.select(lambda: 'inpaint', outputs=current_tab, queue=False, js=down_js, show_progress=False)
@@ -454,10 +459,14 @@ with shared.gradio_root:
                 settings_panel_result = settings_panel.build_settings_tab()
                 if not args_manager.args.disable_preset_selection:
                     preset_selection = settings_panel_result['preset_selection']
-                performance_selection = settings_panel_result['performance_selection']
                 aspect_ratios_selection = settings_panel_result['aspect_ratios_selection']
                 image_number = settings_panel_result['image_number']
-                output_format = settings_panel_result['output_format']
+                overwrite_step = settings_panel_result['overwrite_step']
+                sampler_name = settings_panel_result['sampler_name']
+                scheduler_name = settings_panel_result['scheduler_name']
+                guidance_scale = settings_panel_result['guidance_scale']
+                clip_skip = settings_panel_result['clip_skip']
+                # output_format moved to debug_panel_result
                 negative_prompt = settings_panel_result['negative_prompt']
                 seed_random = settings_panel_result['seed_random']
                 image_seed = settings_panel_result['image_seed']
@@ -492,11 +501,20 @@ with shared.gradio_root:
 
                 shared.gradio_root.load(update_history_link, outputs=history_link, queue=False, show_progress=False)
 
-            with gr.Tab(label='Styles', elem_classes=['style_selections_tab']):
-                styles_panel_result = styles_panel.build_styles_tab()
-                style_search_bar = styles_panel_result['style_search_bar']
-                style_selections = styles_panel_result['style_selections']
-                gradio_receiver_style_selections = styles_panel_result['gradio_receiver_style_selections']
+
+            with gr.Tab(label='Models'):
+                models_panel_result = models_panel.build_models_tab()
+                base_model = models_panel_result['base_model']
+                vae_model = models_panel_result['vae_model']
+                clip_model = models_panel_result['clip_model']
+                
+                style_search_bar = models_panel_result['style_search_bar']
+                style_selections = models_panel_result['style_selections']
+                gradio_receiver_style_selections = models_panel_result['gradio_receiver_style_selections']
+                style_selections_accordion = models_panel_result['style_selections_accordion']
+
+                lora_ctrls = models_panel_result['lora_ctrls']
+                refresh_files = models_panel_result['refresh_files']
 
                 shared.gradio_root.load(
                     lambda: gr.update(
@@ -522,30 +540,29 @@ with shared.gradio_root:
                                                        show_progress=False).then(
                     lambda: None, js='()=>{refresh_style_localization();}')
 
-            with gr.Tab(label='Models'):
-                models_panel_result = models_panel.build_models_tab()
-                base_model = models_panel_result['base_model']
-                vae_model = models_panel_result['vae_model']
-                clip_model = models_panel_result['clip_model']
-                lora_ctrls = models_panel_result['lora_ctrls']
-                refresh_files = models_panel_result['refresh_files']
-            with gr.Tab(label='Advanced'):
-                advanced_panel_result = advanced_panel.build_advanced_tab()
-                guidance_scale = advanced_panel_result['guidance_scale']
-                sharpness = advanced_panel_result['sharpness']
+                def update_style_label(selections):
+                    if not selections or len(selections) == 0:
+                        return gr.update(label='Styles')
+                    
+                    visible_styles = selections[:2]
+                    label = f"Styles: {', '.join(visible_styles)}"
+                    if len(selections) > 2:
+                        label += f" ... (+{len(selections) - 2} more)"
+                    
+                    return gr.update(label=label)
 
+                style_selections.change(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False)
+            with gr.Tab(label='Advanced'):
                 with gr.Column(visible=True) as dev_tools:
                     with gr.Tab(label='Debug Tools'):
                         debug_panel_result = advanced_panel.build_debug_tab()
+                        sharpness = debug_panel_result['sharpness']
+                        output_format = debug_panel_result['output_format']
                         adm_scaler_positive = debug_panel_result['adm_scaler_positive']
                         adm_scaler_negative = debug_panel_result['adm_scaler_negative']
                         adm_scaler_end = debug_panel_result['adm_scaler_end']
                         adaptive_cfg = debug_panel_result['adaptive_cfg']
-                        clip_skip = debug_panel_result['clip_skip']
-                        sampler_name = debug_panel_result['sampler_name']
-                        scheduler_name = debug_panel_result['scheduler_name']
                         generate_image_grid = debug_panel_result['generate_image_grid']
-                        overwrite_step = debug_panel_result['overwrite_step']
                         overwrite_width = debug_panel_result['overwrite_width']
                         overwrite_height = debug_panel_result['overwrite_height']
                         overwrite_vary_strength = debug_panel_result['overwrite_vary_strength']
@@ -575,7 +592,6 @@ with shared.gradio_root:
                         inpaint_outpaint_expansion_size = outpaint_panel_result['inpaint_outpaint_expansion_size']
 
                         outpaint_ctrls = [outpaint_engine, outpaint_strength,
-                                          outpaint_advanced_masking_checkbox, outpaint_invert_mask_checkbox,
                                           inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
 
                     with gr.Tab(label='Inpaint'):
@@ -617,7 +633,7 @@ with shared.gradio_root:
         state_is_generating = gr.State(False)
 
         load_data_outputs = [image_number, prompt, negative_prompt, style_selections,
-                             performance_selection, overwrite_step, aspect_ratios_selection,
+                             overwrite_step, aspect_ratios_selection,
                              overwrite_width, overwrite_height, guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
                              base_model, vae_model, clip_model, sampler_name, scheduler_name, 
@@ -657,15 +673,6 @@ with shared.gradio_root:
                 .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
                 .then(lambda: None, js='()=>{refresh_style_localization();}')
 
-        performance_selection.change(lambda x: [gr.update(interactive=not flags.Performance.has_restricted_features(x))] * 8 +
-                                               [gr.update(visible=not flags.Performance.has_restricted_features(x))] * 1 +
-                                               [gr.update(value=flags.Performance.has_restricted_features(x))] * 1,
-                                     inputs=performance_selection,
-                                     outputs=[
-                                         guidance_scale, sharpness, adm_scaler_end, adm_scaler_positive,
-                                         adm_scaler_negative, sampler_name,
-                                         scheduler_name, adaptive_cfg, negative_prompt, disable_intermediate_results
-                                     ], queue=False, show_progress=False)
 
         output_format.input(lambda x: gr.update(output_format=x), inputs=output_format)
 
@@ -679,7 +686,7 @@ with shared.gradio_root:
         ctrls = [currentTask, generate_image_grid]
         ctrls += [
             prompt, negative_prompt, style_selections,
-            performance_selection, aspect_ratios_selection, image_number, output_format, image_seed,
+            aspect_ratios_selection, image_number, output_format, image_seed,
             read_wildcards_in_order, sharpness, guidance_scale
         ]
 

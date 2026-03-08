@@ -14,9 +14,6 @@ from modules.task_state import TaskState
 from modules.pipeline import (
     apply_overrides,
     patch_samplers,
-    set_hyper_sd_defaults,
-    set_lightning_defaults,
-    set_lcm_defaults,
     process_prompt,
     apply_image_input,
     apply_control_nets,
@@ -51,13 +48,14 @@ class AsyncTask:
 
         args.reverse()
         s = self.state
+        _ = args.pop() # currentTask
         s.generate_image_grid = args.pop()
         s.prompt = args.pop()
         s.negative_prompt = args.pop()
         s.style_selections = args.pop()
 
-        s.performance_selection = Performance(args.pop())
-        s.steps = s.performance_selection.steps()
+        s.performance_selection = Performance.SPEED # Fallback or remove if unused elsewhere
+        s.steps = 30 # Default steps
         s.original_steps = s.steps
 
         s.aspect_ratios_selection = args.pop()
@@ -122,8 +120,6 @@ class AsyncTask:
         
         s.outpaint_engine = args.pop()
         s.outpaint_strength = args.pop()
-        s.outpaint_advanced_masking_checkbox = args.pop()
-        s.outpaint_invert_mask_checkbox = args.pop()
         
         inpaint_outpaint_expansion_size_val = args.pop()
         if inpaint_outpaint_expansion_size_val is None or inpaint_outpaint_expansion_size_val == '':
@@ -174,12 +170,6 @@ def handler(async_task: AsyncTask):
     s.processing = True
     s.current_progress = 0
 
-    if s.performance_selection == flags.Performance.EXTREME_SPEED:
-        set_lcm_defaults(s, progressbar)
-    elif s.performance_selection == flags.Performance.LIGHTNING:
-        set_lightning_defaults(s, progressbar)
-    elif s.performance_selection == flags.Performance.HYPER_SD:
-        set_hyper_sd_defaults(s, progressbar)
 
     print(f'[Parameters] Seed = {s.seed}')
     dims = re.findall(r'\d+', str(s.aspect_ratios_selection))

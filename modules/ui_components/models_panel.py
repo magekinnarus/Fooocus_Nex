@@ -1,6 +1,7 @@
 import gradio as gr
 import modules.config
 import modules.flags as flags
+import modules.ui_components.styles_panel as styles_panel
 
 def build_models_tab():
     """
@@ -33,6 +34,11 @@ def build_models_tab():
             value=modules.config.default_clip, 
             show_label=True
         )
+
+    with gr.Accordion(label='Styles', open=False, elem_id='style_selections_accordion') as style_selections_accordion:
+        results['style_selections_accordion'] = style_selections_accordion
+        styles_result = styles_panel.build_styles_tab()
+        results.update(styles_result)
 
     with gr.Group():
         lora_ctrls = []

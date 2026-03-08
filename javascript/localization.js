@@ -46,7 +46,7 @@ function processTextNode(node) {
     if (tl !== undefined) {
         node.textContent = tl;
         if (text && node.parentElement) {
-          node.parentElement.setAttribute("data-original-text", text);
+            node.parentElement.setAttribute("data-original-text", text);
         }
     }
 }
@@ -71,7 +71,7 @@ function processNode(node) {
         }
     }
 
-    textNodesUnder(node).forEach(function(node) {
+    textNodesUnder(node).forEach(function (node) {
         processTextNode(node);
     });
 }
@@ -83,7 +83,17 @@ function refresh_style_localization() {
 }
 
 function refresh_aspect_ratios_label(value) {
-    label = document.querySelector('#aspect_ratios_accordion div span');
+    const root = gradioApp();
+    const label = root.querySelector('#aspect_ratios_accordion summary .label-wrap span') ||
+        root.querySelector('#aspect_ratios_accordion .label-wrap span') ||
+        root.querySelector('#aspect_ratios_accordion summary span') ||
+        root.querySelector('#aspect_ratios_accordion span');
+
+    if (!label) {
+        console.log('[Fooocus Nex] Aspect ratio label not found in accordion');
+        return;
+    }
+
     translation = getTranslation("Aspect Ratios");
     if (typeof translation == "undefined") {
         translation = "Aspect Ratios";
@@ -120,14 +130,14 @@ function localizeWholePage() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", function() {
+document.addEventListener("DOMContentLoaded", function () {
     if (!hasLocalization()) {
         return;
     }
 
-    onUiUpdate(function(m) {
-        m.forEach(function(mutation) {
-            mutation.addedNodes.forEach(function(node) {
+    onUiUpdate(function (m) {
+        m.forEach(function (mutation) {
+            mutation.addedNodes.forEach(function (node) {
                 processNode(node);
             });
         });
@@ -150,6 +160,6 @@ document.addEventListener("DOMContentLoaded", function() {
                     }
                 });
             });
-        })).observe(gradioApp(), {childList: true});
+        })).observe(gradioApp(), { childList: true });
     }
 });

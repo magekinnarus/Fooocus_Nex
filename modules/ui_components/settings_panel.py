@@ -21,13 +21,6 @@ def build_settings_tab():
             interactive=True
         )
 
-    results['performance_selection'] = gr.Radio(
-        label='Performance',
-        choices=flags.Performance.values(),
-        value=modules.config.default_performance,
-        elem_classes=['performance_selection']
-    )
-
     with gr.Accordion(label='Aspect Ratios', open=False, elem_id='aspect_ratios_accordion') as aspect_ratios_accordion:
         results['aspect_ratios_accordion'] = aspect_ratios_accordion
         results['aspect_ratios_selection'] = gr.Radio(
@@ -47,11 +40,35 @@ def build_settings_tab():
         value=modules.config.default_image_number
     )
 
-    results['output_format'] = gr.Radio(
-        label='Output Format',
-        choices=flags.OutputFormat.list(),
-        value=modules.config.default_output_format
+    results['overwrite_step'] = gr.Slider(
+        label='Sampling Steps',
+        minimum=1, maximum=200, step=1,
+        value=modules.config.default_overwrite_step,
+        info='Number of sampling steps.'
     )
+
+    results['sampler_name'] = gr.Dropdown(
+        label='Sampler', choices=flags.sampler_list,
+        value=modules.config.default_sampler
+    )
+
+    results['scheduler_name'] = gr.Dropdown(
+        label='Scheduler', choices=flags.scheduler_list,
+        value=modules.config.default_scheduler
+    )
+
+    results['guidance_scale'] = gr.Slider(
+        label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
+        value=modules.config.default_cfg_scale,
+        info='Higher value means following prompt more strictly.'
+    )
+
+    results['clip_skip'] = gr.Slider(
+        label='CLIP Skip', minimum=1, maximum=flags.clip_skip_max, step=1,
+        value=modules.config.default_clip_skip,
+        info='Bypass CLIP layers to avoid overfitting (2 is recommended).'
+    )
+
 
     results['negative_prompt'] = gr.Textbox(
         label='Negative Prompt',
