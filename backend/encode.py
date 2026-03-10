@@ -58,7 +58,6 @@ def encode_pixels(vae, pixels):
     
     # Offload VAE from VRAM — it must not compete with UNet during inference.
     # It will be reloaded automatically by resources.load_models_gpu when needed for decode.
-    vae.first_stage_model.to(device=vae.patcher.offload_device)
-    resources.soft_empty_cache()
+    resources.eject_model(vae.patcher)
     
     return {'samples': output}

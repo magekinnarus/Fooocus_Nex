@@ -177,6 +177,11 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
                 progressbar_callback(task_state, task_state.current_progress, f'Encoding negative #{i + 1} ...')
                 t['uc'] = pipeline.clip_encode(texts=t['negative'], pool_top_k=t['negative_top_k'])
     
+    # Offload CLIP after encoding is finished for all tasks
+    if pipeline.final_clip is not None:
+        import backend.resources as resources
+        resources.eject_model(pipeline.final_clip.patcher)
+
     task_state.use_expansion = use_expansion
     task_state.loras_processed = loras # Storing back to state if needed
     return tasks

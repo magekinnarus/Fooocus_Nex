@@ -91,7 +91,7 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
     )
     
     del positive_cond, negative_cond  # Save memory
-    
+
     if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
         from modules.pipeline.inpaint import InpaintPipeline
         inpaint = InpaintPipeline()

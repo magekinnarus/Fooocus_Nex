@@ -318,6 +318,14 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         disable_preview=disable_preview,
         quality=quality
     )
+
+    # Phase: Sampling \u2192 Decoding (Immediate Cleanup)
+    import gc
+    from backend import resources
+    gc.collect()
+    resources.soft_empty_cache()
+    print(f'[Nex-Memory] Phase: Sampling \u2192 Decoding')
+
     decoded_latent = core.decode_vae(vae=target_vae, latent_image=sampled_latent, tiled=tiled)
 
     images = core.pytorch_to_numpy(decoded_latent)

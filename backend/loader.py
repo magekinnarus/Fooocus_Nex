@@ -186,9 +186,12 @@ def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
     original_forward = unet.forward
     
     def nex_patched_forward(x, timesteps, context=None, y=None, control=None, transformer_options={}, **kwargs):
-        # NOTE: cast_unet_inputs is NOT needed here. model_base.apply_model() already
-        # casts x, context, y, and extra_conds to the correct dtype before calling
-        # this function. Adding .to() calls here was pure overhead (~2 calls per step × steps).
+        # Prevent per-layer upcasting slowness (~3-4x penalty on Windows/NVIDIA)
+        # model_base.apply_model() does NOT cast everything correctly on all paths.
+        from backend import precision
+        x, timesteps, context, y, control = precision.cast_unet_inputs(
+            x, timesteps, context=context, y=y, control=control, weight_dtype=unet.dtype
+        )
 
         if y is not None:
              # timed_adm(y, timestep, model, adm_scaler_end)

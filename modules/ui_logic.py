@@ -215,15 +215,13 @@ def expand_mask(outpaint_selections, inpaint_mask_image):
 def stop_clicked(currentTask):
     import backend.resources as resources
     currentTask.last_stop = 'stop'
-    if (currentTask.processing):
-        resources.interrupt_current_processing()
+    resources.interrupt_current_processing()
     return currentTask
 
 def skip_clicked(currentTask):
     import backend.resources as resources
     currentTask.last_stop = 'skip'
-    if (currentTask.processing):
-        resources.interrupt_current_processing()
+    resources.interrupt_current_processing()
     return currentTask
 
 def ip_advance_checked(x):

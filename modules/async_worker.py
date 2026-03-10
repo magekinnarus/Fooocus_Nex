@@ -205,6 +205,11 @@ def handler(async_task: AsyncTask):
     tasks = []
     if not res.get('skip_prompt_processing', False):
         tasks = process_prompt(s, base_model_additional_loras, progressbar)
+        
+        # Phase Boundary: Encoding -> Diffusion
+        print('[Nex-Memory] Phase: Encoding → Diffusion')
+        gc.collect()
+        resources.soft_empty_cache()
 
     if len(s.goals) > 0:
         s.current_progress += 1

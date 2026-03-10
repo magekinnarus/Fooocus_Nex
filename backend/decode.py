@@ -119,4 +119,8 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
 
     # Convert CHW to HWC: [B, 3, H, W] -> [B, H, W, 3]
     pixel_samples = pixel_samples.movedim(1, -1)
+
+    # Offload VAE after decoding to free VRAM for the next generation
+    resources.eject_model(vae.patcher)
+    
     return pixel_samples
