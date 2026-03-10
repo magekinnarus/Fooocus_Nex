@@ -28,7 +28,12 @@ def log(img, metadata, metadata_parser: MetadataParser | None = None, output_for
     os.makedirs(os.path.dirname(local_temp_filename), exist_ok=True)
 
     parsed_parameters = metadata_parser.to_string(metadata.copy()) if metadata_parser is not None else ''
-    image = Image.fromarray(img)
+    
+    if isinstance(img, str):
+        image = Image.open(img).convert('RGB')
+    else:
+        # np array
+        image = Image.fromarray(img)
 
     if output_format == OutputFormat.PNG.value:
         if parsed_parameters != '':

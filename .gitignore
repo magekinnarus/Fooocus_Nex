@@ -31,7 +31,6 @@ config.txt
 /config_states/
 /auth.json
 .DS_Store
-/tests/
 /models/
 /venv/
 /.agent/

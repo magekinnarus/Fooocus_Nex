@@ -4,6 +4,7 @@
             rootId: 'inpaint_canvas',
             fieldId: 'inpaint_context_mask_data',
             canvasId: 'inpaint-context-mask-overlay',
+            statusId: 'inpaint-mask-status',
             emptyStatus: 'Load a source image, then paint the Step 1 context mask.',
             capturedStatus: 'Step 1 context mask captured.',
             clearedStatus: 'Step 1 context mask cleared.',
@@ -12,6 +13,16 @@
             rootId: 'inpaint_bb_canvas',
             fieldId: 'inpaint_bb_mask_data',
             canvasId: 'inpaint-bb-mask-overlay',
+            statusId: 'inpaint-mask-status',
+            emptyStatus: 'Load a BB image, then paint the Step 2 BB mask.',
+            capturedStatus: 'Step 2 BB mask captured.',
+            clearedStatus: 'Step 2 BB mask cleared.',
+        },
+        outpaint_bb: {
+            rootId: 'outpaint_bb_canvas',
+            fieldId: 'outpaint_bb_mask_data',
+            canvasId: 'outpaint-bb-mask-overlay',
+            statusId: 'outpaint-mask-status',
             emptyStatus: 'Load a BB image, then paint the Step 2 BB mask.',
             capturedStatus: 'Step 2 BB mask captured.',
             clearedStatus: 'Step 2 BB mask cleared.',
@@ -26,6 +37,7 @@
         surfaces: {
             context: createSurface('context'),
             bb: createSurface('bb'),
+            outpaint_bb: createSurface('outpaint_bb'),
         },
     };
 
@@ -66,12 +78,12 @@
         return document.querySelector(`#${fieldId} textarea, #${fieldId} input`);
     }
 
-    function getStatus() {
-        return document.getElementById('inpaint-mask-status');
+    function getStatus(mode = state.activeMode) {
+        return document.getElementById(MODES[mode].statusId);
     }
 
-    function setStatus(text) {
-        const status = getStatus();
+    function setStatus(text, mode = state.activeMode) {
+        const status = getStatus(mode);
         if (status) {
             status.textContent = text;
         }
@@ -88,19 +100,27 @@
     function updateModeButtons() {
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
+        const outpaintBtn = document.getElementById('outpaint-mask-mode-bb');
+
         if (contextBtn) contextBtn.classList.toggle('active', state.activeMode === 'context');
         if (bbBtn) bbBtn.classList.toggle('active', state.activeMode === 'bb');
+        if (outpaintBtn) outpaintBtn.classList.toggle('active', state.activeMode === 'outpaint_bb');
     }
 
     function updateToolButtons() {
-        const brushBtn = document.getElementById('inpaint-mask-brush');
-        const eraseBtn = document.getElementById('inpaint-mask-erase');
-        if (brushBtn) brushBtn.classList.toggle('active', state.tool === 'brush');
-        if (eraseBtn) eraseBtn.classList.toggle('active', state.tool === 'erase');
+        ['inpaint', 'outpaint'].forEach(prefix => {
+            const brushBtn = document.getElementById(`${prefix}-mask-brush`);
+            const eraseBtn = document.getElementById(`${prefix}-mask-erase`);
+            if (brushBtn) brushBtn.classList.toggle('active', state.tool === 'brush');
+            if (eraseBtn) eraseBtn.classList.toggle('active', state.tool === 'erase');
+        });
     }
 
     function currentModeName() {
-        return state.activeMode === 'context' ? 'Context mask' : 'BB mask';
+        if (state.activeMode === 'context') return 'Context mask';
+        if (state.activeMode === 'bb') return 'Inpaint BB mask';
+        if (state.activeMode === 'outpaint_bb') return 'Outpaint BB mask';
+        return 'Mask';
     }
 
     function setTool(tool) {
@@ -119,7 +139,8 @@
             setStatus(MODES[mode].emptyStatus);
             return;
         }
-        setStatus(mode === 'context' ? 'Step 1 context mask ready.' : 'Step 2 BB mask ready.');
+        setStatus(mode === 'context' ? 'Step 1 context mask ready.' :
+            mode === 'bb' ? 'Step 2 Inpaint BB mask ready.' : 'Step 2 Outpaint BB mask ready.');
     }
 
     function hasPaint(surface) {
@@ -355,6 +376,45 @@
             bbBtn.addEventListener('click', () => setActiveMode('bb'));
         }
 
+        // --- Outpaint Tab Controls ---
+        const outpaintBrushBtn = document.getElementById('outpaint-mask-brush');
+        const outpaintEraseBtn = document.getElementById('outpaint-mask-erase');
+        const outpaintClearBtn = document.getElementById('outpaint-mask-clear');
+        const outpaintSizeInput = document.getElementById('outpaint-mask-size');
+
+        if (outpaintBrushBtn && !outpaintBrushBtn.dataset.bound) {
+            outpaintBrushBtn.dataset.bound = '1';
+            outpaintBrushBtn.addEventListener('click', () => {
+                setActiveMode('outpaint_bb');
+                setTool('brush');
+            });
+        }
+        if (outpaintEraseBtn && !outpaintEraseBtn.dataset.bound) {
+            outpaintEraseBtn.dataset.bound = '1';
+            outpaintEraseBtn.addEventListener('click', () => {
+                setActiveMode('outpaint_bb');
+                setTool('erase');
+            });
+        }
+        if (outpaintClearBtn && !outpaintClearBtn.dataset.bound) {
+            outpaintClearBtn.dataset.bound = '1';
+            outpaintClearBtn.addEventListener('click', () => {
+                setActiveMode('outpaint_bb');
+                clearMask('outpaint_bb');
+            });
+        }
+        if (outpaintSizeInput && !outpaintSizeInput.dataset.bound) {
+            outpaintSizeInput.dataset.bound = '1';
+            outpaintSizeInput.addEventListener('input', () => {
+                state.brushSize = parseInt(outpaintSizeInput.value, 10) || 36;
+            });
+        }
+        const outpaintModeBtn = document.getElementById('outpaint-mask-mode-bb');
+        if (outpaintModeBtn && !outpaintModeBtn.dataset.bound) {
+            outpaintModeBtn.dataset.bound = '1';
+            outpaintModeBtn.addEventListener('click', () => setActiveMode('outpaint_bb'));
+        }
+
         updateModeButtons();
         updateToolButtons();
     }
@@ -391,6 +451,7 @@
         attachControls();
         refreshMode('context');
         refreshMode('bb');
+        refreshMode('outpaint_bb');
     }
 
     function start() {

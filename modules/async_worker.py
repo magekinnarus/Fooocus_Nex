@@ -41,9 +41,9 @@ class AsyncTask:
         self.state = TaskState()
         self.yields = self.state.yields
         self.results = self.state.results # Shared reference
-        self.args = args.copy()
+        self.is_valid = len(args) > 0
         
-        if len(args) == 0:
+        if not self.is_valid:
             return
 
         if isinstance(args, list):
@@ -167,20 +167,21 @@ def handler(async_task: AsyncTask):
             return
 
     if save_step1_result is not None:
-        inpaint_image, inpaint_mask = save_step1_result
+        # Handle variable number of images (Outpaint: [canvas, bb], Inpaint: [bb])
+        if not isinstance(save_step1_result, (list, tuple)):
+            save_step1_result = [save_step1_result]
+            
+        images_to_save = []
+        for img in save_step1_result:
+            if isinstance(img, np.ndarray) and img.ndim == 2:
+                images_to_save.append(np.stack([img]*3, axis=-1))
+            else:
+                images_to_save.append(img)
+                
         from modules.pipeline.output import save_and_log
         
         description = 'Phase 1 Outpaint Expansion' if 'outpaint' in s.goals else 'Phase 1 Inpaint BB'
         progressbar(s, 100, f'Saving {description} ...')
-        
-        if inpaint_mask is not None:
-            if inpaint_mask.ndim == 2:
-                inpaint_mask_save = np.stack([inpaint_mask]*3, axis=-1)
-            else:
-                inpaint_mask_save = inpaint_mask
-            images_to_save = [inpaint_image, inpaint_mask_save]
-        else:
-            images_to_save = [inpaint_image]
         
         img_paths = save_and_log(
             s, s.height, s.width, images_to_save, 
@@ -283,7 +284,7 @@ def handler(async_task: AsyncTask):
     s.negative_cond = None
     s.uov_input_image = None
     s.inpaint_input_image = None
-    s.inpaint_mask_image_upload = None
+    s.inpaint_mask_image = None
 
 
 def worker():

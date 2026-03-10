@@ -29,6 +29,7 @@ def apply_vary(task_state, progressbar_callback=None):
     uov_method = task_state.uov_method
     denoising_strength = task_state.denoising_strength
     uov_input_image = task_state.uov_input_image
+    uov_input_image = mask_proc.ensure_numpy(uov_input_image)
 
     if 'subtle' in uov_method:
         denoising_strength = 0.5
@@ -69,11 +70,13 @@ def apply_vary(task_state, progressbar_callback=None):
 
 def apply_outpaint_expansion(task_state, inpaint_image, inpaint_mask):
     """
-    Phase 1 Outpaint: Pads the image and returns the composite image + new area mask.
-    Now exclusively using OutpaintPipeline.
+    Phase 1 Outpaint: Pads the image and returns BOTH the expanded canvas and 
+    the auto-calculated BB image for Step 2 external editing.
     """
     if task_state.current_tab == 'outpaint' and task_state.outpaint_direction is not None:
         direction = task_state.outpaint_direction
+        if isinstance(direction, list) and len(direction) > 0:
+            direction = direction[0].lower()
         
         if getattr(task_state, 'inpaint_pixelate_primer', False):
             return inpaint_image, inpaint_mask
@@ -81,20 +84,32 @@ def apply_outpaint_expansion(task_state, inpaint_image, inpaint_mask):
         from modules.pipeline.outpaint import OutpaintPipeline
         outpaint = OutpaintPipeline()
         
-        inpaint_image, generated_mask = outpaint.prepare_outpaint_canvas_only(
+        # 1. Expand canvas
+        expanded_image, generated_mask = outpaint.prepare_outpaint_canvas_only(
             inpaint_image, direction, expansion_size=task_state.inpaint_outpaint_expansion_size, pixelate=False
         )
         
-        # Combine existing UI mask with the new generated outpaint area mask
-        inpaint_mask = np.maximum(
-            resample_image(inpaint_mask, width=inpaint_image.shape[1], height=inpaint_image.shape[0]), 
+        # 2. Combine with existing mask
+        expanded_mask = np.maximum(
+            resample_image(inpaint_mask, width=expanded_image.shape[1], height=expanded_image.shape[0]), 
             generated_mask
         )
 
-        inpaint_image = np.ascontiguousarray(inpaint_image.copy())
-        inpaint_mask = np.ascontiguousarray(inpaint_mask.copy())
+        # 3. Pre-calculate the BB image that Step 2 inference will use
+        ctx = outpaint.prepare(
+            image=expanded_image,
+            mask=expanded_mask,
+            outpaint_direction=direction,
+            extend_factor=1.2
+        )
+
+        # 4. Save to temp PNGs for Filepath Invariant
+        from modules.mask_processing import save_to_temp_png
+        canvas_path = save_to_temp_png(expanded_image)
+        bb_path = save_to_temp_png(ctx.bb_image)
         
-        raise EarlyReturnException(payload=(inpaint_image, inpaint_mask))
+        # Payload is a list of [Canvas, BB] for the Gradio Gallery
+        raise EarlyReturnException(payload=[canvas_path, bb_path])
         
     return inpaint_image, inpaint_mask
 
@@ -118,6 +133,8 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
     denoising_strength = getattr(task_state, 'outpaint_strength', 1.0)
         
     outpaint_direction = getattr(task_state, 'outpaint_direction', None)
+    if isinstance(outpaint_direction, list) and len(outpaint_direction) > 0:
+        outpaint_direction = outpaint_direction[0].lower()
         
     ctx = outpaint.prepare(
         image=inpaint_image,
@@ -126,7 +143,33 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
         extend_factor=1.2
     )
     
-    print(f"[Debug] outpaint.prepare() returned BB of size: {ctx.bb_image.shape}")
+    # --- Step 2 Refactor: Explicit BB and BB Mask Support ---
+    # If the user has provided an edited BB image or a manual BB mask, override the context.
+    import modules.mask_processing as mask_proc
+    
+    raw_bb_image = getattr(task_state, 'outpaint_bb_image', None)
+    raw_bb_mask = getattr(task_state, 'outpaint_mask_image', None) # Upload slot
+    # Hidden mask field from brush drawing on BB image
+    brush_mask_data = getattr(task_state, 'outpaint_bb_mask_data', '')
+    
+    bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
+    if bb_img_data is not None:
+        ctx.bb_image = bb_img_data
+        ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
+        print(f"[Debug] Outpaint Step 2: Using explicit BB image from slot: {ctx.target_w}x{ctx.target_h}")
+        
+    # Combine uploaded mask with brush-drawn mask
+    manual_mask = mask_proc.unpack_gradio_data(raw_bb_mask)
+    brush_mask = mask_proc.unpack_gradio_data(brush_mask_data)
+    
+    combined_bb_mask = mask_proc.combine_masks(manual_mask, brush_mask)
+    if combined_bb_mask is not None:
+        # Ensure mask matches BB image resolution
+        combined_bb_mask = resample_image(combined_bb_mask, width=ctx.target_w, height=ctx.target_h)
+        ctx.bb_mask = combined_bb_mask
+        print(f"[Debug] Outpaint Step 2: Using explicit BB mask (manual or brush).")
+
+    print(f"[Debug] outpaint.prepare() final BB size: {ctx.bb_image.shape}")
     
     candidate_vae, _ = pipeline.get_candidate_vae(
         steps=task_state.steps,
@@ -268,7 +311,7 @@ def apply_upscale(task_state, progressbar_callback=None):
     """
     uov_input_image = task_state.uov_input_image
     uov_method = task_state.uov_method
-    
+    uov_input_image = mask_proc.ensure_numpy(uov_input_image)
     H, W, C = uov_input_image.shape
     if progressbar_callback:
         task_state.current_progress += 1

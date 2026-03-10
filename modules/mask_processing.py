@@ -384,6 +384,31 @@ def expand_mask_direction(mask_2d, direction, pixels=32):
     return result
 
 
+def save_to_temp_png(numpy_img):
+    """
+    Saves a numpy array to a temporary PNG file and returns the filepath.
+    Critical for the 'type=filepath' UI memory invariant to prevent RAM bloat.
+    """
+    if numpy_img is None:
+        return None
+    from PIL import Image
+    import modules.util
+    import modules.config
+    import os
+    
+    # Handle single channel (mask) or multi-channel
+    if numpy_img.ndim == 2:
+        img = Image.fromarray(numpy_img, mode='L')
+    else:
+        img = Image.fromarray(numpy_img)
+        
+    _, temp_path, _ = modules.util.generate_temp_filename(
+        folder=modules.config.path_temp_outputs, extension='png')
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    img.save(temp_path)
+    return temp_path
+
+
 def compute_inpaint_step1_context(img_data, mask_b64):
     import gradio as gr
     if not img_data or not mask_b64:
@@ -406,7 +431,11 @@ def compute_inpaint_step1_context(img_data, mask_b64):
         extend_factor=1.2
     )
     
-    return gr.update(value=context_mask), gr.update(value=ctx.bb_image), gr.update(value="")
+    # Save to disk to satisfy gr.Image(type='filepath') RAM invariant
+    context_path = save_to_temp_png(context_mask)
+    bb_path = save_to_temp_png(ctx.bb_image)
+    
+    return gr.update(value=context_path), gr.update(value=bb_path), gr.update(value="")
 
 
 def compute_inpaint_step2_mask(mask_b64):
@@ -418,5 +447,11 @@ def compute_inpaint_step2_mask(mask_b64):
     if bb_mask is None:
         return gr.update(), gr.update()
         
-    return gr.update(value=bb_mask), gr.update(value="")
+    bb_mask_path = save_to_temp_png(bb_mask)
+    return gr.update(value=bb_mask_path), gr.update(value="")
+
+
+def compute_outpaint_step2_mask(mask_b64):
+    """Mirror of inpaint step 2 mask computation for outpaint BB."""
+    return compute_inpaint_step2_mask(mask_b64)
 

@@ -122,11 +122,11 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_scheduler": "karras",
     "default_vae": "sdxl_vae.safetensors",
     "default_styles": [
-        "Fooocus Enhance",
-        "Fooocus Sharp"
+        "Dj Illustrious",
+        "Dj Hyperrealism"
     ],
     "default_prompt_negative": "ugly, duplicate, mutilated, out of frame, hand, feet, fingers, mutation, deformed, blurry, out of focus, cropped",
-    "default_prompt": "masterpiece, best quality, amazing quality, very aesthetic, promotional art, newest, dynamic angle, dramatic light, intricate details, cinematic, detailed background,",
+    "default_prompt": "masterpiece, best quality, amazing quality, very aesthetic, promotional art, newest, dynamic angle, dramatic light, intricate details, cinematic, detailed background",
     "default_image_prompt_checkbox": false,
     "default_advanced_checkbox": false,
     "default_developer_debug_mode_checkbox": false,

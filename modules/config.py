@@ -221,6 +221,8 @@ else:
 
 path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_outputs = get_path_output()
+path_temp_outputs = os.path.join(path_outputs, 'temp')
+os.makedirs(path_temp_outputs, exist_ok=True)
 
 
 def get_config_item_or_set_default(key, default_value, validator, disable_empty_as_none=False, expected_type=None):

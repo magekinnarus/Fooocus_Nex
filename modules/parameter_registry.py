@@ -49,6 +49,8 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),
     ParamDef('outpaint_input_image', 'outpaint_input_image', None),
     ParamDef('outpaint_mask_image', 'outpaint_mask_image', None),
+    ParamDef('outpaint_bb_image', 'outpaint_bb_image', None),
+    ParamDef('outpaint_bb_mask_data', 'outpaint_bb_mask_data', '', str),
     ParamDef('outpaint_step2_checkbox', 'outpaint_step2_checkbox', False, bool),
     ParamDef('outpaint_engine', 'outpaint_engine', 'None', str),
     ParamDef('outpaint_strength', 'outpaint_strength', 1.0, float),

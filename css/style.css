@@ -533,6 +533,21 @@ div:has(> #positive_prompt) {
   box-shadow: 0 0 8px #ff4d4d !important;
 }
 
-#inpaint-mask-clear::before {
+#inpaint-mask-clear::before, #outpaint-mask-clear::before {
   display: none !important;
+}
+
+#outpaint-mask-mode-bb.active::before {
+  background: #ffcc00 !important;
+  box-shadow: 0 0 8px #ffcc00, 0 0 12px rgba(255, 204, 0, 0.4) !important;
+}
+
+#outpaint-mask-brush.active::before {
+  background: #00ffc3 !important;
+  box-shadow: 0 0 8px #00ffc3 !important;
+}
+
+#outpaint-mask-erase.active::before {
+  background: #ff4d4d !important;
+  box-shadow: 0 0 8px #ff4d4d !important;
 }

@@ -360,7 +360,10 @@ def encode_vae_inpaint(vae, pixels, mask):
     w = mask.round()[..., None]
     pixels = pixels * (1 - w) + 0.5 * w
 
+    resources.load_models_gpu([vae.patcher])
     latent = vae.encode(pixels)['samples']
+    resources.eject_model(vae.patcher)
+    
     B, C, H, W = latent.shape
 
     latent_mask = mask[:, None, :, :]

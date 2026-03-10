@@ -125,8 +125,12 @@ def get_metadata_parser(metadata_scheme: MetadataScheme) -> MetadataParser:
     raise NotImplementedError
 
 
-def read_info_from_image(file) -> tuple[str | None, MetadataScheme | None]:
-    items = (file.info or {}).copy()
+def read_info_from_image(file_or_path) -> tuple[str | None, MetadataScheme | None]:
+    if isinstance(file_or_path, str):
+        with Image.open(file_or_path) as img:
+            items = (img.info or {}).copy()
+    else:
+        items = (file_or_path.info or {}).copy()
 
     parameters = items.pop('parameters', None)
     metadata_scheme = items.pop('fooocus_scheme', None)

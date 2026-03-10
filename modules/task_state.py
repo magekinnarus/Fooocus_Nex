@@ -28,6 +28,8 @@ class TaskState:
     uov_input_image: Optional[np.ndarray] = None
     outpaint_selections: List[str] = field(default_factory=list)
     outpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
+    outpaint_bb_image: Optional[np.ndarray] = None
+    outpaint_bb_mask_data: str = ""
     outpaint_mask_image: Optional[np.ndarray] = None
     inpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     inpaint_context_mask_image: Optional[np.ndarray] = None
