@@ -63,7 +63,6 @@ class TaskState:
     inpaint_engine: str = "None"
     inpaint_strength: float = 1.0
     inpaint_respective_field: float = 0.618
-    inpaint_advanced_masking_checkbox: bool = False
     invert_mask_checkbox: bool = False
     inpaint_erode_or_dilate: int = 0
     inpaint_step2_checkbox: bool = False

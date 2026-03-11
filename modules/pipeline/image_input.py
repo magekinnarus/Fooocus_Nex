@@ -474,14 +474,12 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         inpaint_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
         context_mask = np.zeros(inpaint_image.shape[:2], dtype=np.uint8)
 
-        raw_context_mask = mask_proc.ensure_numpy(getattr(task_state, 'inpaint_context_mask_data', None), mode='RGBA')
-        if raw_context_mask is not None:
-            context_mask = mask_proc.to_binary_mask(raw_context_mask)
-            context_mask = resample_image(context_mask, width=inpaint_image.shape[1], height=inpaint_image.shape[0])
-
         task_state.context_mask = context_mask
 
-        if not task_state.inpaint_advanced_masking_checkbox and not getattr(task_state, 'inpaint_step2_checkbox', False):
+        current_inpaint_img = inpaint.base_image
+
+        if not getattr(task_state, 'inpaint_step2_checkbox', False):
+            # Normal inpaint: check mask
             merged_upload = mask_proc.combine_image_and_mask(task_state.inpaint_mask_image)
             if merged_upload is not None:
                 H, W, C = inpaint_image.shape

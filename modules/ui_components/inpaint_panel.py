@@ -2,13 +2,12 @@ import gradio as gr
 import modules.config
 import modules.flags as flags
 
-def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox, 
+def build_inpaint_tab(invert_mask_checkbox, 
                       inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image):
     """
     Builds the Inpaint tab (Advanced section): engine, strength, field, etc.
     
     Args:
-        inpaint_advanced_masking_checkbox: Gradio component from Image Input section.
         invert_mask_checkbox: Gradio component from Image Input section.
         inpaint_mask_image: Gradio component from Image Input section.
         inpaint_mask_generation_col: Gradio component from Image Input section.
@@ -40,13 +39,7 @@ def build_inpaint_tab(inpaint_advanced_masking_checkbox, invert_mask_checkbox,
 
 
     # Event bindings that depend on components from other tabs
-    inpaint_advanced_masking_checkbox.change(
-        lambda x: [gr.update(visible=not x)] * 2,
-        inputs=inpaint_advanced_masking_checkbox,
-        outputs=[inpaint_mask_image, inpaint_mask_generation_col],
-        queue=False, 
-        show_progress=False
-    )
+    # (Removed advanced masking toggle binding)
 
 
     return results
