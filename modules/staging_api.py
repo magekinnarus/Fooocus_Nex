@@ -148,6 +148,58 @@ async def clear_staging_images():
         print(f"Staging clear error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@staging_router.post("/staging_api/gimp_target")
+async def set_gimp_target(name: str):
+    """Sets a specific image as the current target for GIMP retrieval."""
+    staging_dir = get_staging_dir()
+    filepath = os.path.join(staging_dir, name)
+    
+    # Security check
+    if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        target_file = os.path.join(staging_dir, ".gimp_target.txt")
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write(name)
+        return JSONResponse(content={"status": "success", "target": name})
+    except Exception as e:
+        print(f"Staging GIMP target error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@staging_router.get("/staging_api/gimp_target")
+async def get_gimp_target():
+    """Returns the current GIMP target image file."""
+    staging_dir = get_staging_dir()
+    target_file = os.path.join(staging_dir, ".gimp_target.txt")
+    
+    if not os.path.exists(target_file):
+        raise HTTPException(status_code=404, detail="No GIMP target set")
+        
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            name = f.read().strip()
+            
+        filepath = os.path.join(staging_dir, name)
+        
+        # Security check
+        if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
+            raise HTTPException(status_code=403, detail="Forbidden")
+            
+        if os.path.exists(filepath):
+            from fastapi.responses import FileResponse
+            return FileResponse(filepath)
+            
+        raise HTTPException(status_code=404, detail="Targeted image no longer exists")
+    except Exception as e:
+        print(f"Staging GIMP retrieval error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @staging_router.get("/staging_api/image/{name}")
 async def get_staging_image(name: str):
     """Serves a specific image from the staging directory."""

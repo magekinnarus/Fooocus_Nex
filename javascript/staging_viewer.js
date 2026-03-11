@@ -35,9 +35,9 @@
 
         // Snap Logic: default position at top-right, aligned with tab titles
         const snapToDefault = () => {
-             panel.style.top = '60px'; // Raised from 100px to align with tabs
-             panel.style.right = '20px';
-             panel.style.left = 'auto'; // Clear drag left property
+            panel.style.top = '60px'; // Raised from 100px to align with tabs
+            panel.style.right = '20px';
+            panel.style.left = 'auto'; // Clear drag left property
         };
 
         // Drag logic
@@ -49,7 +49,7 @@
         // Controls
         panel.querySelector('#staging-panel-refresh').addEventListener('click', fetchImages);
         panel.querySelector('#staging-panel-clear').addEventListener('click', clearStaging);
-        
+
         panel.querySelector('#staging-panel-toggle').addEventListener('click', () => {
             const isMinimized = panel.classList.toggle('minimized');
             if (isMinimized) {
@@ -90,7 +90,7 @@
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         };
-        panel.style.right = 'auto'; 
+        panel.style.right = 'auto';
         panel.style.left = rect.left + 'px';
         panel.style.top = rect.top + 'px';
         panel.classList.add('dragging');
@@ -166,10 +166,24 @@
             gimpBtn.className = 'item-action-btn btn-gimp';
             gimpBtn.innerHTML = 'G';
             gimpBtn.title = 'Send to GIMP';
-            gimpBtn.onclick = (e) => {
+            gimpBtn.onclick = async (e) => {
                 e.stopPropagation();
-                alert('GIMP Bridge: Sending ' + img.name + ' to GIMP via outputs/staging...');
-                // Integration code for GIMP will go here
+                try {
+                    const res = await fetch(`/staging_api/gimp_target?name=${encodeURIComponent(img.name)}`, {
+                        method: 'POST'
+                    });
+                    const result = await res.json();
+                    if (result.status === 'success') {
+                        console.log('[Staging] GIMP Target set:', img.name);
+                        item.classList.add('gimp-targeted');
+                        // Remove visual tag from others
+                        panel.querySelectorAll('.staging-item').forEach(el => {
+                            if (el !== item) el.classList.remove('gimp-targeted');
+                        });
+                    }
+                } catch (err) {
+                    console.error('[Staging] GIMP Target error:', err);
+                }
             };
             actionsContainer.appendChild(gimpBtn);
 
@@ -226,7 +240,7 @@
         panel.classList.remove('drag-over');
 
         const dataTransfer = e.dataTransfer;
-        
+
         // Prevent duplicate upload if dragged from within the staging panel
         if (dataTransfer.types.includes('fooocus/staging-internal')) {
             console.log('[Staging] Ignored internal drag to prevent duplication.');
