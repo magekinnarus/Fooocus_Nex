@@ -78,6 +78,24 @@ if __name__ == "__main__":
             print("[Cleanup] Cleanup successful")
         else:
             print(f"[Cleanup] Failed to delete content of temp dir.")
+            
+        staging_dir = os.path.join(config.path_outputs, "staging")
+        if os.path.exists(staging_dir):
+            print(f'[Cleanup] Attempting to delete content of staging dir {staging_dir}')
+            result_staging = delete_folder_content(staging_dir, '[Cleanup Staging] ')
+            if result_staging:
+                print("[Cleanup] Staging cleanup successful")
+            else:
+                print(f"[Cleanup] Failed to delete content of staging dir.")
+                
+        outputs_temp_dir = os.path.join(config.path_outputs, "temp")
+        if os.path.exists(outputs_temp_dir):
+            print(f'[Cleanup] Attempting to delete content of outputs/temp dir {outputs_temp_dir}')
+            result_outputs_temp = delete_folder_content(outputs_temp_dir, '[Cleanup Outputs Temp] ')
+            if result_outputs_temp:
+                print("[Cleanup] Outputs temp cleanup successful")
+            else:
+                print(f"[Cleanup] Failed to delete content of outputs temp dir.")
 
     config.default_base_model_name, config.checkpoint_downloads = download_models(
         config.default_base_model_name, config.checkpoint_downloads,

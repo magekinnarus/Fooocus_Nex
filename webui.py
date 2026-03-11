@@ -25,6 +25,7 @@ import modules.ui_components.advanced_panel as advanced_panel
 import modules.ui_components.control_panel as control_panel
 import modules.ui_components.inpaint_panel as inpaint_panel
 import modules.ui_components.outpaint_panel as outpaint_panel
+import modules.ui_components.staging_panel as staging_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -37,6 +38,7 @@ from modules.util import is_json
 
 
 import modules.ui_logic as ui_logic
+from modules.staging_api import staging_router
 
 
 
@@ -145,7 +147,8 @@ with shared.gradio_root:
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
     <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">OUTPAINT MASK</span>
     <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
-      <button type="button" class="mask-tool-btn" id="outpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
+      <button type="button" class="mask-tool-btn" id="outpaint-mask-mode-bb" title="Enable BB Mask">BB Mask</button>
+      <button type="button" class="mask-tool-btn active" id="outpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
     <div style="width:1px; height:22px; background:rgba(128,128,128,0.3); margin:0 4px;"></div>
     <div style="display:flex; gap:8px;">
@@ -180,6 +183,7 @@ with shared.gradio_root:
     <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-context" title="Step 1: Paint Context">Context Mask</button>
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
+      <button type="button" class="mask-tool-btn active" id="inpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
     <div style="width:1px; height:22px; background:rgba(128,128,128,0.3); margin:0 4px;"></div>
     <div style="display:flex; gap:8px;">
@@ -233,6 +237,9 @@ with shared.gradio_root:
 
 
         with gr.Column(scale=1, visible=True) as advanced_column:
+            with gr.Row():
+                gr.HTML('<button id="staging-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">🗂️ Open Staging Palette</button>')
+            
             with gr.Tab(label='Settings'):
                 settings_panel_result = settings_panel.build_settings_tab()
                 if not args_manager.args.disable_preset_selection:
@@ -325,6 +332,7 @@ with shared.gradio_root:
                                          inpaint_strength,
                                          inpaint_advanced_masking_checkbox, invert_mask_checkbox, inpaint_erode_or_dilate,
                                          inpaint_step2_checkbox]
+
 
 
 
@@ -475,7 +483,11 @@ with shared.gradio_root:
             'inpaint_bb_mask_data': inpaint_bb_mask_data,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
             'gallery': gallery,
-            'seed_random': seed_random
+            'seed_random': seed_random,
+            'gallery': gallery,
+            'seed_random': seed_random,
+            'inpaint_tab': inpaint_tab,
+            'outpaint_tab': outpaint_tab
         }
 
         if not args_manager.args.disable_preset_selection:
@@ -490,6 +502,19 @@ def dump_default_english_config():
 
 
 # dump_default_english_config()
+
+# Hijack Gradio's app creation to mount our staging router
+import gradio.routes
+old_create_app = gradio.routes.App.create_app
+
+@staticmethod
+def patched_create_app(*args, **kwargs):
+    app = old_create_app(*args, **kwargs)
+    from modules.staging_api import staging_router
+    app.include_router(staging_router)
+    return app
+
+gradio.routes.App.create_app = patched_create_app
 
 shared.gradio_root.launch(
     inbrowser=args_manager.args.in_browser,

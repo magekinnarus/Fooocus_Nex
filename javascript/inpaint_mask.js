@@ -34,6 +34,22 @@
         tool: 'brush',
         brushSize: 36,
         resizeBound: false,
+        initialized: false,
+        enabledModes: {
+            context: false,
+            bb: false,
+            outpaint_bb: false
+        },
+        retries: {
+            context: 0,
+            bb: 0,
+            outpaint_bb: 0
+        },
+        refreshPending: {
+            context: false,
+            bb: false,
+            outpaint_bb: false
+        },
         surfaces: {
             context: createSurface('context'),
             bb: createSurface('bb'),
@@ -101,10 +117,15 @@
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
         const outpaintBtn = document.getElementById('outpaint-mask-mode-bb');
+        const inpaintDisableBtn = document.getElementById('inpaint-mask-mode-disable');
+        const outpaintDisableBtn = document.getElementById('outpaint-mask-mode-disable');
 
-        if (contextBtn) contextBtn.classList.toggle('active', state.activeMode === 'context');
-        if (bbBtn) bbBtn.classList.toggle('active', state.activeMode === 'bb');
-        if (outpaintBtn) outpaintBtn.classList.toggle('active', state.activeMode === 'outpaint_bb');
+        if (contextBtn) contextBtn.classList.toggle('active', state.enabledModes.context);
+        if (bbBtn) bbBtn.classList.toggle('active', state.enabledModes.bb);
+        if (outpaintBtn) outpaintBtn.classList.toggle('active', state.enabledModes.outpaint_bb);
+        
+        if (inpaintDisableBtn) inpaintDisableBtn.classList.toggle('active', !state.enabledModes.context && !state.enabledModes.bb);
+        if (outpaintDisableBtn) outpaintDisableBtn.classList.toggle('active', !state.enabledModes.outpaint_bb);
     }
 
     function updateToolButtons() {
@@ -131,16 +152,43 @@
 
     function setActiveMode(mode) {
         if (!MODES[mode]) return;
+        
+        // --- Isolation Logic ---
+        if (mode === 'context') {
+            state.enabledModes.context = true;
+            state.enabledModes.bb = false;
+        } else if (mode === 'bb') {
+            state.enabledModes.context = false;
+            state.enabledModes.bb = true;
+        } else if (mode === 'outpaint_bb') {
+            state.enabledModes.outpaint_bb = true;
+        }
+
         state.activeMode = mode;
         updateModeButtons();
         syncCanvasInteractivity();
+        
         const surface = getSurface(mode);
+        refreshMode(mode); // Trigger immediate refresh for priority activation
+
         if (!surface.img || !surface.img.src || surface.img.style.display === 'none') {
             setStatus(MODES[mode].emptyStatus);
             return;
         }
         setStatus(mode === 'context' ? 'Step 1 context mask ready.' :
             mode === 'bb' ? 'Step 2 Inpaint BB mask ready.' : 'Step 2 Outpaint BB mask ready.');
+    }
+
+    function disableMasking(group) {
+        if (group === 'inpaint') {
+            state.enabledModes.context = false;
+            state.enabledModes.bb = false;
+        } else if (group === 'outpaint') {
+            state.enabledModes.outpaint_bb = false;
+        }
+        updateModeButtons();
+        refreshAll();
+        setStatus(group === 'inpaint' ? 'Inpaint masking disabled.' : 'Outpaint masking disabled.');
     }
 
     function hasPaint(surface) {
@@ -153,19 +201,31 @@
     }
 
     function exportMask(mode) {
-        const surface = getSurface(mode);
-        if (!surface.canvas || !surface.ctx) return;
-        if (!hasPaint(surface)) {
-            setMaskValue(mode, '');
-            if (mode === state.activeMode) {
-                setStatus(MODES[mode].emptyStatus);
-            }
-            return;
+        if (state.exportTimers && state.exportTimers[mode]) {
+            clearTimeout(state.exportTimers[mode]);
         }
-        setMaskValue(mode, surface.canvas.toDataURL('image/png'));
+        
+        if (!state.exportTimers) state.exportTimers = {};
+        
         if (mode === state.activeMode) {
-            setStatus(MODES[mode].capturedStatus);
+            setStatus('Processing mask...');
         }
+        
+        state.exportTimers[mode] = setTimeout(() => {
+            const surface = getSurface(mode);
+            if (!surface.canvas || !surface.ctx) return;
+            if (!hasPaint(surface)) {
+                setMaskValue(mode, '');
+                if (mode === state.activeMode) {
+                    setStatus(MODES[mode].emptyStatus);
+                }
+                return;
+            }
+            setMaskValue(mode, surface.canvas.toDataURL('image/png'));
+            if (mode === state.activeMode) {
+                setStatus(MODES[mode].capturedStatus);
+            }
+        }, 800); // Debounce: wait 800ms after the last stroke
     }
 
     function clearMask(mode = state.activeMode) {
@@ -211,7 +271,7 @@
     function attachCanvasEvents(mode) {
         const surface = getSurface(mode);
         surface.canvas.addEventListener('pointerdown', (event) => {
-            if (state.activeMode !== mode || !surface.img || !surface.img.src) return;
+            if (state.activeMode !== mode || !state.enabledModes[mode] || !surface.img || !surface.img.src) return;
             const point = pointerToCanvas(surface, event);
             if (!point) return;
             surface.drawing = true;
@@ -222,7 +282,7 @@
         });
 
         surface.canvas.addEventListener('pointermove', (event) => {
-            if (state.activeMode !== mode || !surface.drawing) return;
+            if (state.activeMode !== mode || !state.enabledModes[mode] || !surface.drawing) return;
             const point = pointerToCanvas(surface, event);
             if (!point || !surface.lastPoint) return;
             drawLine(surface, surface.lastPoint, point);
@@ -261,7 +321,7 @@
         });
         surface.host.appendChild(canvas);
         surface.canvas = canvas;
-        surface.ctx = canvas.getContext('2d');
+        surface.ctx = canvas.getContext('2d', { willReadFrequently: true });
         attachCanvasEvents(mode);
     }
 
@@ -321,17 +381,26 @@
         Object.keys(MODES).forEach((mode) => {
             const surface = getSurface(mode);
             if (!surface.canvas) return;
-            const active = mode === state.activeMode && surface.img && surface.img.src && surface.img.style.display !== 'none';
+            const active = mode === state.activeMode && state.enabledModes[mode] && surface.img && surface.img.src && surface.img.style.display !== 'none';
             surface.canvas.style.pointerEvents = active ? 'auto' : 'none';
             surface.canvas.style.cursor = active ? 'crosshair' : 'default';
             surface.canvas.style.opacity = active ? '1' : '0.35';
+            surface.canvas.style.display = state.enabledModes[mode] ? 'block' : 'none';
         });
     }
 
     function ensureObservers(mode) {
         const surface = getSurface(mode);
         if (surface.observersAttached || !surface.root) return;
-        const observer = new MutationObserver(() => refreshMode(mode));
+        const observer = new MutationObserver(() => {
+            if (!state.refreshPending[mode]) {
+                state.refreshPending[mode] = true;
+                window.requestAnimationFrame(() => {
+                    state.refreshPending[mode] = false;
+                    refreshMode(mode);
+                });
+            }
+        });
         observer.observe(surface.root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'style', 'class'] });
         surface.observersAttached = true;
         if (!state.resizeBound) {
@@ -341,12 +410,15 @@
     }
 
     function attachControls() {
+        if (state.initialized) return;
+        
         const brushBtn = document.getElementById('inpaint-mask-brush');
         const eraseBtn = document.getElementById('inpaint-mask-erase');
         const clearBtn = document.getElementById('inpaint-mask-clear');
         const sizeInput = document.getElementById('inpaint-mask-size');
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
+        const inpaintDisableBtn = document.getElementById('inpaint-mask-mode-disable');
 
         if (brushBtn && !brushBtn.dataset.bound) {
             brushBtn.dataset.bound = '1';
@@ -375,12 +447,18 @@
             bbBtn.dataset.bound = '1';
             bbBtn.addEventListener('click', () => setActiveMode('bb'));
         }
+        if (inpaintDisableBtn && !inpaintDisableBtn.dataset.bound) {
+            inpaintDisableBtn.dataset.bound = '1';
+            inpaintDisableBtn.addEventListener('click', () => disableMasking('inpaint'));
+        }
 
         // --- Outpaint Tab Controls ---
         const outpaintBrushBtn = document.getElementById('outpaint-mask-brush');
         const outpaintEraseBtn = document.getElementById('outpaint-mask-erase');
         const outpaintClearBtn = document.getElementById('outpaint-mask-clear');
         const outpaintSizeInput = document.getElementById('outpaint-mask-size');
+        const outpaintModeBtn = document.getElementById('outpaint-mask-mode-bb');
+        const outpaintDisableBtn = document.getElementById('outpaint-mask-mode-disable');
 
         if (outpaintBrushBtn && !outpaintBrushBtn.dataset.bound) {
             outpaintBrushBtn.dataset.bound = '1';
@@ -409,17 +487,44 @@
                 state.brushSize = parseInt(outpaintSizeInput.value, 10) || 36;
             });
         }
-        const outpaintModeBtn = document.getElementById('outpaint-mask-mode-bb');
         if (outpaintModeBtn && !outpaintModeBtn.dataset.bound) {
             outpaintModeBtn.dataset.bound = '1';
             outpaintModeBtn.addEventListener('click', () => setActiveMode('outpaint_bb'));
         }
+        if (outpaintDisableBtn && !outpaintDisableBtn.dataset.bound) {
+            outpaintDisableBtn.dataset.bound = '1';
+            outpaintDisableBtn.addEventListener('click', () => disableMasking('outpaint'));
+        }
 
         updateModeButtons();
         updateToolButtons();
+        
+        // Mark as initialized if we found the main controls
+        if (brushBtn && outpaintBrushBtn) {
+            state.initialized = true;
+        }
     }
 
     function refreshMode(mode) {
+        const root = getRoot(mode);
+        // --- Auto-Disable if Tab is Hidden ---
+        if (root && root.offsetParent === null) {
+            if (state.enabledModes[mode]) {
+                console.log(`[Masking] Auto-disabling hidden mode: ${mode}`);
+                state.enabledModes[mode] = false;
+                updateModeButtons();
+            }
+            const surface = getSurface(mode);
+            if (surface.canvas) surface.canvas.style.display = 'none';
+            return;
+        }
+
+        if (!state.enabledModes[mode]) {
+            const surface = getSurface(mode);
+            if (surface.canvas) surface.canvas.style.display = 'none';
+            return;
+        }
+
         const surface = getSurface(mode);
         surface.root = getRoot(mode);
         if (!surface.root) return;
@@ -439,6 +544,15 @@
             syncCanvasInteractivity();
             return;
         }
+
+        // --- Priority Activation: Retry if Connection is Queued ---
+        if (surface.img.naturalWidth === 0 && state.retries[mode] < 10) {
+            state.retries[mode]++;
+            console.log(`[Masking] Priority Activation: Retrying ${mode} (${state.retries[mode]}/10)...`);
+            window.setTimeout(() => refreshMode(mode), 200);
+            return;
+        }
+        state.retries[mode] = 0; // Reset on success
 
         const nextKey = `${surface.img.currentSrc || surface.img.src}|${surface.img.naturalWidth}x${surface.img.naturalHeight}`;
         const clearForNewImage = nextKey !== surface.sourceKey;
