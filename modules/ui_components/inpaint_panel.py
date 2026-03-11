@@ -2,17 +2,10 @@ import gradio as gr
 import modules.config
 import modules.flags as flags
 
-def build_inpaint_tab(invert_mask_checkbox, 
-                      inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image):
+def build_inpaint_tab():
     """
     Builds the Inpaint tab (Advanced section): engine, strength, field, etc.
     
-    Args:
-        invert_mask_checkbox: Gradio component from Image Input section.
-        inpaint_mask_image: Gradio component from Image Input section.
-        inpaint_mask_generation_col: Gradio component from Image Input section.
-        inpaint_input_image: Gradio component from Image Input section.
-
     Returns:
         dict: Gradio components mapping name to instance.
     """

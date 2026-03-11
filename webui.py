@@ -140,6 +140,12 @@ with shared.gradio_root:
                                 with gr.Column(elem_classes=["step2-toolbox"]):
                                     outpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
                                     gr.HTML('<p class="step2-desc">Using base image, BB image, and BB mask to expand the image.</p>')
+
+                                outpaint_panel_result = outpaint_panel.build_outpaint_tab()
+                                outpaint_engine = outpaint_panel_result['outpaint_engine']
+                                outpaint_strength = outpaint_panel_result['outpaint_strength']
+                                inpaint_outpaint_expansion_size = outpaint_panel_result['inpaint_outpaint_expansion_size']
+
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=True) as outpaint_mask_generation_col:
@@ -171,7 +177,6 @@ with shared.gradio_root:
                                 outpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="outpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 outpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
                                 outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)', visible=False)
-                                
 
                     with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
                         with gr.Row():
@@ -205,22 +210,28 @@ with shared.gradio_root:
 """)
                                 inpaint_toggle_toolbar = gr.Button("Toggle Canvas Toolbar", size="sm", visible=False)
                                 inpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to inpaint.", elem_id='inpaint_additional_prompt', label='Inpaint Additional Prompt', visible=True)
-                                with gr.Column(elem_classes=["step2-toolbox"]):
-                                    inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
-                                    gr.HTML('<p class="step2-desc">Using base image, context mask, BB image, and BB mask to modify the image.</p>')
                                 example_inpaint_prompts = gr.Dataset(samples=modules.config.example_inpaint_prompts,
                                                                      label='Additional Prompt Quick List',
                                                                      components=[inpaint_additional_prompt],
                                                                      visible=True)
-                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">Documentation</a>')
+                                with gr.Column(elem_classes=["step2-toolbox"]):
+                                    inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    gr.HTML('<p class="step2-desc">Using base image, context mask, BB image, and BB mask to modify the image.</p>')
 
+                                inpaint_panel_result = inpaint_panel.build_inpaint_tab()
+                                debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
+                                inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
+                                inpaint_engine = inpaint_panel_result['inpaint_engine']
+                                inpaint_strength = inpaint_panel_result['inpaint_strength']
+                                inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
+
+                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=True) as inpaint_mask_generation_col:
                                 inpaint_context_mask_image = gr.Image(label='Step 1: Context Mask Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_canvas')
                                 inpaint_bb_image = gr.Image(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
                                 inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 inpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload (Optional)', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
-                                invert_mask_checkbox = gr.Checkbox(label='Invert Mask When Generating', value=modules.config.default_invert_mask_checkbox)
 
 
 
@@ -311,29 +322,14 @@ with shared.gradio_root:
                         canny_low_threshold = control_panel_result['canny_low_threshold']
                         canny_high_threshold = control_panel_result['canny_high_threshold']
 
-                    with gr.Tab(label='Outpaint'):
-                        outpaint_panel_result = outpaint_panel.build_outpaint_tab()
-                        outpaint_engine = outpaint_panel_result['outpaint_engine']
-                        outpaint_strength = outpaint_panel_result['outpaint_strength']
-                        inpaint_outpaint_expansion_size = outpaint_panel_result['inpaint_outpaint_expansion_size']
+                    # (Removed outpaint advanced tab)
 
-                        outpaint_ctrls = [outpaint_engine, outpaint_strength,
-                                          inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
-
-                    with gr.Tab(label='Inpaint'):
-                        inpaint_panel_result = inpaint_panel.build_inpaint_tab(
-                            invert_mask_checkbox,
-                            inpaint_mask_image, inpaint_mask_generation_col, inpaint_input_image
-                        )
-                        debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
-                        inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
-                        inpaint_engine = inpaint_panel_result['inpaint_engine']
-                        inpaint_strength = inpaint_panel_result['inpaint_strength']
-                        inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
-
-                        inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                         inpaint_strength, invert_mask_checkbox, inpaint_erode_or_dilate,
-                                         inpaint_step2_checkbox]
+                    # (Removed inpaint advanced tab)
+                    
+                    outpaint_ctrls = [outpaint_engine, outpaint_strength,
+                                      inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
+                    inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
+                                     inpaint_strength, inpaint_erode_or_dilate, inpaint_step2_checkbox]
 
 
 
@@ -413,7 +409,6 @@ with shared.gradio_root:
             'inpaint_disable_initial_latent': inpaint_disable_initial_latent,
             'inpaint_engine': inpaint_engine,
             'inpaint_strength': inpaint_strength,
-            'invert_mask_checkbox': invert_mask_checkbox,
             'inpaint_erode_or_dilate': inpaint_erode_or_dilate,
             'inpaint_step2_checkbox': inpaint_step2_checkbox,
 

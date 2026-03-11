@@ -490,9 +490,6 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         if int(task_state.inpaint_erode_or_dilate) != 0:
             inpaint_mask = erode_or_dilate(inpaint_mask, task_state.inpaint_erode_or_dilate)
 
-        if task_state.invert_mask_checkbox:
-            inpaint_mask = 255 - inpaint_mask
-
         inpaint_image = HWC3(inpaint_image)
         task_state.goals.append('inpaint')
         

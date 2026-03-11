@@ -207,7 +207,6 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_save_metadata_to_images": true,
     "default_metadata_scheme": "fooocus",
     "metadata_created_by": "",
-    "default_invert_mask_checkbox": false,
     "default_inpaint_mask_model": "isnet-general-use",
     "default_inpaint_mask_cloth_category": "full"
 }

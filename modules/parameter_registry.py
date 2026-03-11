@@ -67,7 +67,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('inpaint_step2_checkbox', 'inpaint_step2_checkbox', False, bool),
     ParamDef('inpaint_engine', 'inpaint_engine', 'None', str),
     ParamDef('inpaint_strength', 'inpaint_strength', 0.5, float),
-    ParamDef('invert_mask_checkbox', 'invert_mask_checkbox', False, bool),
     ParamDef('inpaint_erode_or_dilate', 'inpaint_erode_or_dilate', 0, int),
     ParamDef('debugging_inpaint_preprocessor', 'debugging_inpaint_preprocessor', False, bool),
     ParamDef('inpaint_disable_initial_latent', 'inpaint_disable_initial_latent', False, bool),
