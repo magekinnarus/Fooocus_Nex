@@ -18,12 +18,8 @@ def build_control_tab():
         info='Do not preprocess images. (Inputs are already canny/depth/cropped-face/etc.)'
     )
 
-    results['mixing_image_prompt_and_vary_upscale'] = gr.Checkbox(
-        label='Mixing Image Prompt and Vary/Upscale',
-        value=False
-    )
     results['mixing_image_prompt_and_inpaint'] = gr.Checkbox(
-        label='Mixing Image Prompt and Inpaint',
+        label='Add Controlnet to Inpainting/outpainting',
         value=False
     )
 

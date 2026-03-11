@@ -20,22 +20,17 @@ def build_styles_tab():
 
     results['style_search_bar'] = gr.Textbox(
         show_label=False, container=False,
-        placeholder="\U0001F50E Type here to search styles ...",
+        placeholder="\U0001F50E Type here to search presets ...",
         value="",
-        label='Search Styles'
+        label='Search Prompt Presets'
     )
     
     results['style_selections'] = gr.CheckboxGroup(
         show_label=False, container=False,
         choices=copy.deepcopy(style_sorter.all_styles),
         value=copy.deepcopy(default_selected),
-        label='Selected Styles',
+        label='Selected Prompt Presets',
         elem_classes=['style_selections']
-    )
-    
-    results['gradio_receiver_style_selections'] = gr.Textbox(
-        elem_id='gradio_receiver_style_selections', 
-        visible=False
     )
 
     return results

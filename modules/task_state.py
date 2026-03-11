@@ -51,7 +51,6 @@ class TaskState:
     overwrite_height: int = -1
     overwrite_vary_strength: float = -1.0
     overwrite_upscale_strength: float = -1.0
-    mixing_image_prompt_and_vary_upscale: bool = False
     mixing_image_prompt_and_inpaint: bool = False
     debugging_cn_preprocessor: bool = False
     skipping_cn_preprocessor: bool = False

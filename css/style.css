@@ -645,12 +645,33 @@ div:has(> #positive_prompt) {
   padding: 12px;
   overflow-y: auto;
   min-height: 100px;
-  max-height: 600px;
+  max-height: calc(100vh - 100px); /* Responsive max height */
+}
+
+.resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.2) 50%);
+  border-bottom-right-radius: 12px;
+  z-index: 1001;
+}
+
+.resize-handle:hover {
+  background: linear-gradient(135deg, transparent 50%, var(--button-primary-background-fill) 50%);
+}
+
+.floating-panel.resizing {
+  user-select: none;
+  border-color: var(--button-primary-background-fill);
 }
 
 .staging-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); /* Dynamic columns */
   gap: 12px;
 }
 

@@ -224,13 +224,6 @@ def skip_clicked(currentTask):
     resources.interrupt_current_processing()
     return currentTask
 
-def ip_advance_checked(x):
-    global ip_ad_cols, ip_types, ip_stops, ip_weights
-    return [gr.update(visible=x)] * len(ip_ad_cols) + \
-        [flags.default_ip] * len(ip_types) + \
-        [flags.default_parameters[flags.default_ip][0]] * len(ip_stops) + \
-        [flags.default_parameters[flags.default_ip][1]] * len(ip_weights)
-
 def outpaint_selection_change(choices):
     if len(choices) <= 1:
         return choices
@@ -271,10 +264,10 @@ def update_history_link():
 
 def update_style_label(selections):
     if not selections or len(selections) == 0:
-        return gr.update(label='Styles')
+        return gr.update(label='Prompt Presets')
     
     visible_styles = selections[:2]
-    label = f"Styles: {', '.join(visible_styles)}"
+    label = f"Presets: {', '.join(visible_styles)}"
     if len(selections) > 2:
         label += f" ... (+{len(selections) - 2} more)"
     
@@ -408,7 +401,6 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     input_image_checkbox.change(lambda x: gr.update(visible=x), inputs=input_image_checkbox,
                                 outputs=image_input_panel, queue=False, show_progress=False, js=switch_js)
-    ip_advanced.change(lambda: None, queue=False, show_progress=False, js=down_js)
 
     outpaint_selections.change(outpaint_selection_change, inputs=outpaint_selections, outputs=outpaint_selections, queue=False, show_progress=False)
 
@@ -443,13 +435,6 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
                             outputs=style_selections,
                             queue=False,
                             show_progress=False).then(
-        lambda: None, js='()=>{refresh_style_localization();}')
-
-    gradio_receiver_style_selections.input(style_sorter.sort_styles,
-                                           inputs=style_selections,
-                                           outputs=style_selections,
-                                           queue=False,
-                                           show_progress=False).then(
         lambda: None, js='()=>{refresh_style_localization();}')
 
     refresh_files_output = [base_model, vae_model, clip_model]

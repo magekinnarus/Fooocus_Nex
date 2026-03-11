@@ -98,44 +98,61 @@ with shared.gradio_root:
                             with gr.Column():
                                 uov_method = gr.Radio(label='Upscale or Variation:', choices=flags.uov_list, value=modules.config.default_uov_method)
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
-                    with gr.Tab(label='Image Prompt', id='ip_tab') as ip_tab:
+                    with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
+                        ip_images = []
+                        ip_types = []
+                        ip_stops = []
+                        ip_weights = []
+                        ip_ctrls = []
+                        ip_ad_cols = []
+
+                        def create_ip_slot(image_count):
+                            with gr.Column():
+                                ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count])
+                                ip_images.append(ip_image)
+                                ip_ctrls.append(ip_image)
+                                with gr.Column(visible=True) as ad_col:
+                                    with gr.Row():
+                                        ip_stop = gr.Slider(label='Stop At', minimum=0.0, maximum=1.0, step=0.001, value=modules.config.default_ip_stop_ats[image_count])
+                                        ip_stops.append(ip_stop)
+                                        ip_ctrls.append(ip_stop)
+
+                                        ip_weight = gr.Slider(label='Weight', minimum=0.0, maximum=2.0, step=0.001, value=modules.config.default_ip_weights[image_count])
+                                        ip_weights.append(ip_weight)
+                                        ip_ctrls.append(ip_weight)
+
+                                    ip_type = gr.Radio(label='Type', choices=flags.ip_list, value=modules.config.default_ip_types[image_count], container=False)
+                                    ip_types.append(ip_type)
+                                    ip_ctrls.append(ip_type)
+
+                                ip_ad_cols.append(ad_col)
+
                         with gr.Row():
-                            ip_images = []
-                            ip_types = []
-                            ip_stops = []
-                            ip_weights = []
-                            ip_ctrls = []
-                            ip_ad_cols = []
-                            for image_count in range(modules.config.default_controlnet_image_count):
-                                image_count += 1
-                                with gr.Column():
-                                    ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count])
-                                    ip_images.append(ip_image)
-                                    ip_ctrls.append(ip_image)
-                                    with gr.Column(visible=modules.config.default_image_prompt_advanced_checkbox) as ad_col:
-                                        with gr.Row():
-                                            ip_stop = gr.Slider(label='Stop At', minimum=0.0, maximum=1.0, step=0.001, value=modules.config.default_ip_stop_ats[image_count])
-                                            ip_stops.append(ip_stop)
-                                            ip_ctrls.append(ip_stop)
+                            with gr.Column(scale=1):
+                                create_ip_slot(1)
+                                
+                                with gr.Group():
+                                    gr.HTML('<div style="margin-top:20px; border-top:1px solid rgba(128,128,128,0.2); padding-top:15px; font-weight:bold;">Advanced Control</div>')
+                                    control_panel_result = control_panel.build_control_tab()
+                                    debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
+                                    skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
+                                    mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
+                                    controlnet_softness = control_panel_result['controlnet_softness']
+                                    canny_low_threshold = control_panel_result['canny_low_threshold']
+                                    canny_high_threshold = control_panel_result['canny_high_threshold']
 
-                                            ip_weight = gr.Slider(label='Weight', minimum=0.0, maximum=2.0, step=0.001, value=modules.config.default_ip_weights[image_count])
-                                            ip_weights.append(ip_weight)
-                                            ip_ctrls.append(ip_weight)
+                            with gr.Column(scale=1):
+                                for image_count in range(2, modules.config.default_controlnet_image_count + 1):
+                                    create_ip_slot(image_count)
 
-                                        ip_type = gr.Radio(label='Type', choices=flags.ip_list, value=modules.config.default_ip_types[image_count], container=False)
-                                        ip_types.append(ip_type)
-                                        ip_ctrls.append(ip_type)
-
-                                    ip_ad_cols.append(ad_col)
-                        ip_advanced = gr.Checkbox(label='Advanced', value=modules.config.default_image_prompt_advanced_checkbox, container=False)
-                        gr.HTML('* \"Image Prompt\" is powered by Fooocus Image Mixture Engine (v1.0.1). <a href="https://github.com/lllyasviel/Fooocus/discussions/557" target="_blank">\U0001F4D4 Documentation</a>')
+                        gr.HTML('* \"Controlnet\" is powered by Fooocus Image Mixture Engine (v1.0.1). <a href="https://github.com/lllyasviel/Fooocus/discussions/557" target="_blank">\U0001F4D4 Documentation</a>')
 
 
 
                     with gr.Tab(label='Outpaint', id='outpaint_tab') as outpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                outpaint_input_image = gr.Image(label='Image', sources='upload', type='filepath', height=500, show_label=False)
+                                outpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=['Left'], label='Outpaint Direction')
                                 with gr.Column(elem_classes=["step2-toolbox"]):
                                     outpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
@@ -149,7 +166,7 @@ with shared.gradio_root:
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=True) as outpaint_mask_generation_col:
-                                outpaint_bb_image = gr.Image(label='Step 2: BB Image Upload', sources='upload', type='filepath', height=500, elem_id='outpaint_bb_canvas')
+                                outpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='outpaint_bb_canvas')
                                 gr.HTML("""
 <div id="outpaint-mask-tools" class="mask-workflow-toolbar" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
@@ -175,18 +192,18 @@ with shared.gradio_root:
 </div>
 """)
                                 outpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="outpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
-                                outpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
+                                outpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
                                 outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)', visible=False)
 
                     with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                inpaint_input_image = gr.Image(label='Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_canvas', show_label=False)
+                                inpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, elem_id='inpaint_canvas', show_label=False)
                                 inpaint_context_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_context_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 gr.HTML("""
 <div id="inpaint-mask-tools" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
-    <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">MASK WORKFLOW</span>
+    <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">Inpaint Mask</span>
     <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-context" title="Step 1: Paint Context">Context Mask</button>
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
@@ -228,10 +245,10 @@ with shared.gradio_root:
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=True) as inpaint_mask_generation_col:
-                                inpaint_context_mask_image = gr.Image(label='Step 1: Context Mask Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_canvas')
-                                inpaint_bb_image = gr.Image(label='Step 2: Edited BB Image Upload', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
+                                inpaint_context_mask_image = gr.Image(label='Context Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_canvas')
+                                inpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
                                 inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
-                                inpaint_mask_image = gr.Image(label='Step 2: BB Mask Upload (Optional)', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
+                                inpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
 
 
 
@@ -283,53 +300,40 @@ with shared.gradio_root:
                 
                 style_search_bar = models_panel_result['style_search_bar']
                 style_selections = models_panel_result['style_selections']
-                gradio_receiver_style_selections = models_panel_result['gradio_receiver_style_selections']
                 style_selections_accordion = models_panel_result['style_selections_accordion']
 
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
 
             with gr.Tab(label='Advanced'):
-                with gr.Column(visible=True) as dev_tools:
-                    with gr.Tab(label='Debug Tools'):
-                        debug_panel_result = advanced_panel.build_debug_tab()
-                        sharpness = debug_panel_result['sharpness']
-                        output_format = debug_panel_result['output_format']
-                        adm_scaler_positive = debug_panel_result['adm_scaler_positive']
-                        adm_scaler_negative = debug_panel_result['adm_scaler_negative']
-                        adm_scaler_end = debug_panel_result['adm_scaler_end']
-                        adaptive_cfg = debug_panel_result['adaptive_cfg']
-                        generate_image_grid = debug_panel_result['generate_image_grid']
-                        overwrite_width = debug_panel_result['overwrite_width']
-                        overwrite_height = debug_panel_result['overwrite_height']
-                        overwrite_vary_strength = debug_panel_result['overwrite_vary_strength']
-                        overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
-                        disable_preview = debug_panel_result['disable_preview']
-                        disable_intermediate_results = debug_panel_result['disable_intermediate_results']
-                        disable_seed_increment = debug_panel_result['disable_seed_increment']
-                        read_wildcards_in_order = debug_panel_result['read_wildcards_in_order']
-                        if not args_manager.args.disable_metadata:
-                            save_metadata_to_images = debug_panel_result['save_metadata_to_images']
-                            metadata_scheme = debug_panel_result['metadata_scheme']
+                debug_panel_result = advanced_panel.build_debug_tab()
+                sharpness = debug_panel_result['sharpness']
+                output_format = debug_panel_result['output_format']
+                adm_scaler_positive = debug_panel_result['adm_scaler_positive']
+                adm_scaler_negative = debug_panel_result['adm_scaler_negative']
+                adm_scaler_end = debug_panel_result['adm_scaler_end']
+                adaptive_cfg = debug_panel_result['adaptive_cfg']
+                generate_image_grid = debug_panel_result['generate_image_grid']
+                overwrite_width = debug_panel_result['overwrite_width']
+                overwrite_height = debug_panel_result['overwrite_height']
+                overwrite_vary_strength = debug_panel_result['overwrite_vary_strength']
+                overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
+                disable_preview = debug_panel_result['disable_preview']
+                disable_intermediate_results = debug_panel_result['disable_intermediate_results']
+                disable_seed_increment = debug_panel_result['disable_seed_increment']
+                read_wildcards_in_order = debug_panel_result['read_wildcards_in_order']
+                if not args_manager.args.disable_metadata:
+                    save_metadata_to_images = debug_panel_result['save_metadata_to_images']
+                    metadata_scheme = debug_panel_result['metadata_scheme']
 
-                    with gr.Tab(label='Control'):
-                        control_panel_result = control_panel.build_control_tab()
-                        debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
-                        skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
-                        mixing_image_prompt_and_vary_upscale = control_panel_result['mixing_image_prompt_and_vary_upscale']
-                        mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
-                        controlnet_softness = control_panel_result['controlnet_softness']
-                        canny_low_threshold = control_panel_result['canny_low_threshold']
-                        canny_high_threshold = control_panel_result['canny_high_threshold']
-
-                    # (Removed outpaint advanced tab)
-
-                    # (Removed inpaint advanced tab)
-                    
-                    outpaint_ctrls = [outpaint_engine, outpaint_strength,
-                                      inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
-                    inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                     inpaint_strength, inpaint_erode_or_dilate, inpaint_step2_checkbox]
+                # Control settings moved to Image Prompt tab
+                # (Removed outpaint advanced tab)
+                # (Removed inpaint advanced tab)
+                
+                outpaint_ctrls = [outpaint_engine, outpaint_strength,
+                                  inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
+                inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
+                                 inpaint_strength, inpaint_erode_or_dilate, inpaint_step2_checkbox]
 
 
 
@@ -396,7 +400,6 @@ with shared.gradio_root:
             'overwrite_height': overwrite_height,
             'overwrite_vary_strength': overwrite_vary_strength,
             'overwrite_upscale_strength': overwrite_upscale_strength,
-            'mixing_image_prompt_and_vary_upscale': mixing_image_prompt_and_vary_upscale,
             'mixing_image_prompt_and_inpaint': mixing_image_prompt_and_inpaint,
             'debugging_cn_preprocessor': debugging_cn_preprocessor,
             'skipping_cn_preprocessor': skipping_cn_preprocessor,
@@ -465,9 +468,7 @@ with shared.gradio_root:
             'ip_stops': ip_stops,
             'ip_weights': ip_weights,
             'lora_ctrls': lora_ctrls,
-            'ip_advanced': ip_advanced,
             'style_search_bar': style_search_bar,
-            'gradio_receiver_style_selections': gradio_receiver_style_selections,
             'refresh_files': refresh_files,
             'inpaint_engine_state': inpaint_engine_state,
             'outpaint_engine_state': outpaint_engine_state,

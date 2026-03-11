@@ -35,7 +35,7 @@ def build_models_tab():
             show_label=True
         )
 
-    with gr.Accordion(label='Styles', open=False, elem_id='style_selections_accordion') as style_selections_accordion:
+    with gr.Accordion(label='Prompt Presets', open=False, elem_id='style_selections_accordion') as style_selections_accordion:
         results['style_selections_accordion'] = style_selections_accordion
         styles_result = styles_panel.build_styles_tab()
         results.update(styles_result)

@@ -417,8 +417,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
     skip_prompt_processing = False
 
     # UoV handling
-    if (task_state.current_tab == 'uov' or (
-            task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_vary_upscale)) \
+    if task_state.current_tab == 'uov' \
             and task_state.uov_method != flags.disabled.casefold() and task_state.uov_input_image is not None:
         skip_prompt_processing = prepare_upscale(task_state, progressbar_callback)
 
@@ -476,8 +475,6 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 
         task_state.context_mask = context_mask
 
-        current_inpaint_img = inpaint.base_image
-
         if not getattr(task_state, 'inpaint_step2_checkbox', False):
             # Normal inpaint: check mask
             merged_upload = mask_proc.combine_image_and_mask(task_state.inpaint_mask_image)
@@ -516,10 +513,8 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             else:
                 inpaint_patch_model_path = None
 
-    # Image Prompt (ControlNet/IP-Adapter) handling
-    if task_state.current_tab == 'ip' or \
-            task_state.mixing_image_prompt_and_vary_upscale or \
-            task_state.mixing_image_prompt_and_inpaint:
+    # ControlNet (IP-Adapter) handling
+    if task_state.current_tab == 'ip' or task_state.mixing_image_prompt_and_inpaint:
         task_state.goals.append('cn')
         if progressbar_callback:
             progressbar_callback(task_state, 1, 'Downloading control models ...')

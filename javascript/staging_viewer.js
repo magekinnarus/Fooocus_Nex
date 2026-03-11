@@ -28,6 +28,7 @@
                     <div class="empty-msg">Drop images here to stage</div>
                 </div>
             </div>
+            <div class="resize-handle" id="staging-panel-resize"></div>
         `;
 
         document.body.appendChild(panel);
@@ -43,8 +44,18 @@
         // Drag logic
         const header = panel.querySelector('#staging-panel-header');
         header.addEventListener('mousedown', startDragging);
-        document.addEventListener('mousemove', drag);
-        document.addEventListener('mouseup', stopDragging);
+        document.addEventListener('mousemove', (e) => {
+            drag(e);
+            resize(e);
+        });
+        document.addEventListener('mouseup', () => {
+            stopDragging();
+            stopResizing();
+        });
+
+        // Resize logic
+        const resizeHandle = panel.querySelector('#staging-panel-resize');
+        resizeHandle.addEventListener('mousedown', startResizing);
 
         // Controls
         panel.querySelector('#staging-panel-refresh').addEventListener('click', fetchImages);
@@ -74,9 +85,11 @@
         panel.addEventListener('dragleave', () => panel.classList.remove('drag-over'));
         panel.addEventListener('drop', handleDrop);
 
-        // Load position from localStorage
+        // Load position and size from localStorage
         const pos = JSON.parse(localStorage.getItem('staging-panel-pos') || '{"top": "60px", "right": "20px"}');
+        const size = JSON.parse(localStorage.getItem('staging-panel-size') || '{"width": "440px", "height": "auto"}');
         Object.assign(panel.style, pos);
+        Object.assign(panel.style, size);
 
         fetchImages();
         pollInterval = setInterval(fetchImages, 3000);
@@ -111,6 +124,44 @@
         localStorage.setItem('staging-panel-pos', JSON.stringify({
             top: panel.style.top,
             left: panel.style.left
+        }));
+    }
+
+    let isResizing = false;
+    let resizeStartSize = { w: 0, h: 0 };
+    let resizeStartPos = { x: 0, y: 0 };
+
+    function startResizing(e) {
+        isResizing = true;
+        resizeStartSize = {
+            w: panel.offsetWidth,
+            h: panel.offsetHeight
+        };
+        resizeStartPos = {
+            x: e.clientX,
+            y: e.clientY
+        };
+        panel.classList.add('resizing');
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    function resize(e) {
+        if (!isResizing) return;
+        const deltaX = e.clientX - resizeStartPos.x;
+        const deltaY = e.clientY - resizeStartPos.y;
+        panel.style.width = (resizeStartSize.w + deltaX) + 'px';
+        panel.style.height = (resizeStartSize.h + deltaY) + 'px';
+    }
+
+    function stopResizing() {
+        if (!isResizing) return;
+        isResizing = false;
+        panel.classList.remove('resizing');
+        // Save size
+        localStorage.setItem('staging-panel-size', JSON.stringify({
+            width: panel.style.width,
+            height: panel.style.height
         }));
     }
 

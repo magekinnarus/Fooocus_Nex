@@ -91,7 +91,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('overwrite_upscale_strength', 'overwrite_upscale_strength', -1.0, float),
     
     # --- Control / Image Prompts ---
-    ParamDef('mixing_image_prompt_and_vary_upscale', 'mixing_image_prompt_and_vary_upscale', False, bool),
     ParamDef('mixing_image_prompt_and_inpaint', 'mixing_image_prompt_and_inpaint', False, bool),
     ParamDef('debugging_cn_preprocessor', 'debugging_cn_preprocessor', False, bool),
     ParamDef('skipping_cn_preprocessor', 'skipping_cn_preprocessor', False, bool),
