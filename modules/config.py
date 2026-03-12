@@ -196,9 +196,7 @@ path_vae = get_dir_or_set_default('path_vae', '../models/vae/')
 path_unet = get_dir_or_set_default('path_unet', '../models/unet/', True)
 path_clip = get_dir_or_set_default('path_clip', '../models/clip/', True)
 path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/', True)
-path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/')
-path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/', True)
-path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/')
+
 
 # Add unet path to checkpoints for base model selection
 if not isinstance(paths_checkpoints, list):
@@ -862,12 +860,6 @@ def downloading_ip_adapters(v):
     return results
 
 
-def downloading_upscale_model():
-    load_file_from_url(
-        url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_upscaler_s409985e5.bin',
-        model_dir=path_upscale_models[0],
-        file_name='fooocus_upscaler_s409985e5.bin',
-    )
-    return os.path.join(path_upscale_models[0], 'fooocus_upscaler_s409985e5.bin')
+
 
 

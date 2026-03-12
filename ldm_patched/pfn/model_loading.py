@@ -14,6 +14,8 @@ from .architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 from .architecture.SwiftSRGAN import Generator as SwiftSRGAN
 from .architecture.Swin2SR import Swin2SR
 from .architecture.SwinIR import SwinIR
+from .architecture.RealPLKSR import RealPLKSR
+from .architecture.SCET import SCET
 from .types import PyTorchModel
 
 
@@ -89,6 +91,12 @@ def load_state_dict(state_dict) -> PyTorchModel:
     # DAT
     elif "layers.0.blocks.2.attn.attn_mask_0" in state_dict_keys:
         model = DAT(state_dict)
+    # RealPLKSR
+    elif "feats.0.weight" in state_dict_keys:
+        model = RealPLKSR(state_dict)
+    # SCET (SCHAT)
+    elif "relative_position_index_SA" in state_dict_keys or "conv3.weight" in state_dict_keys and "path1.0.arr.0.conv1_a.weight" in state_dict_keys:
+        model = SCET(state_dict)
     # Regular ESRGAN, "new-arch" ESRGAN, Real-ESRGAN v1
     else:
         try:

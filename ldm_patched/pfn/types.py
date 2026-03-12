@@ -14,6 +14,8 @@ from .architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 from .architecture.SwiftSRGAN import Generator as SwiftSRGAN
 from .architecture.Swin2SR import Swin2SR
 from .architecture.SwinIR import SwinIR
+from .architecture.RealPLKSR import RealPLKSR
+from .architecture.SCET import SCET
 
 PyTorchSRModels = (
     RealESRGANv2,
@@ -26,6 +28,8 @@ PyTorchSRModels = (
     OmniSR,
     SCUNet,
     DAT,
+    RealPLKSR,
+    SCET,
 )
 PyTorchSRModel = Union[
     RealESRGANv2,
@@ -38,6 +42,8 @@ PyTorchSRModel = Union[
     OmniSR,
     SCUNet,
     DAT,
+    RealPLKSR,
+    SCET,
 ]
 
 
