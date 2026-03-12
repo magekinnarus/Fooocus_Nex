@@ -46,6 +46,10 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('uov_input_image', 'uov_input_image', None),
     ParamDef('upscale_model', 'upscale_model', 'None', str),
     ParamDef('upscale_scale_override', 'upscale_scale_override', 0, float),
+    ParamDef('upscale_diffusion_refinement', 'upscale_diffusion_refinement', False, bool),
+    ParamDef('upscale_tile_size', 'upscale_tile_size', 1024, int),
+    ParamDef('upscale_tile_overlap', 'upscale_tile_overlap', 128, int),
+    ParamDef('upscale_denoise', 'upscale_denoise', 0.3, float),
 
     # --- Outpaint ---
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),

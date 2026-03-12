@@ -184,4 +184,10 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
 
     task_state.use_expansion = use_expansion
     task_state.loras_processed = loras # Storing back to state if needed
+    
+    # For pipeline components (e.g. upscaler) that need conditioning
+    if len(tasks) > 0:
+        task_state.positive_cond = tasks[0]['c']
+        task_state.negative_cond = tasks[0]['uc']
+        
     return tasks

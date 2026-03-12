@@ -99,7 +99,10 @@ def perform_upscale(img, model_name=None, scale_override=None):
     if model_name is None:
         available = list_available_models()
         if available:
-            model_name = available[0]
+            if '4xNomos2_otf_esrgan.pth' in available:
+                model_name = '4xNomos2_otf_esrgan.pth'
+            else:
+                model_name = available[0]
         else:
             # Fallback for when no models are present (e.g. fresh install)
             # This will fail unless we keep the old default logic, but mission says rewritten
