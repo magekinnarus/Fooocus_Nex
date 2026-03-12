@@ -63,12 +63,6 @@ def build_debug_tab():
         info='Set as -1 to disable. For developer debugging. Results will be worse for non-standard numbers that SDXL is not trained on.'
     )
     
-    results['overwrite_vary_strength'] = gr.Slider(
-        label='Forced Overwrite of Denoising Strength of "Vary"',
-        minimum=-1, maximum=1.0, step=0.001, value=-1,
-        info='Set as negative number to disable. For developer debugging.'
-    )
-    
     results['overwrite_upscale_strength'] = gr.Slider(
         label='Forced Overwrite of Denoising Strength of "Upscale"',
         minimum=-1, maximum=1.0, step=0.001,

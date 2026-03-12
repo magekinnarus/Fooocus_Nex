@@ -26,6 +26,8 @@ class TaskState:
     current_tab: str = "uov"
     uov_method: str = "Disabled"
     uov_input_image: Optional[np.ndarray] = None
+    upscale_model: str = "None"
+    upscale_scale_override: float = 0
     outpaint_selections: List[str] = field(default_factory=list)
     outpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     outpaint_bb_image: Optional[np.ndarray] = None
@@ -49,7 +51,6 @@ class TaskState:
     overwrite_step: int = -1
     overwrite_width: int = -1
     overwrite_height: int = -1
-    overwrite_vary_strength: float = -1.0
     overwrite_upscale_strength: float = -1.0
     mixing_image_prompt_and_inpaint: bool = False
     debugging_cn_preprocessor: bool = False

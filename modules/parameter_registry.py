@@ -44,6 +44,8 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('current_tab', 'current_tab', 'uov', str),
     ParamDef('uov_method', 'uov_method', 'Disabled', str),
     ParamDef('uov_input_image', 'uov_input_image', None),
+    ParamDef('upscale_model', 'upscale_model', 'None', str),
+    ParamDef('upscale_scale_override', 'upscale_scale_override', 0, float),
 
     # --- Outpaint ---
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),
@@ -87,7 +89,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('overwrite_step', 'overwrite_step', -1, int),
     ParamDef('overwrite_width', 'overwrite_width', -1, int),
     ParamDef('overwrite_height', 'overwrite_height', -1, int),
-    ParamDef('overwrite_vary_strength', 'overwrite_vary_strength', -1.0, float),
     ParamDef('overwrite_upscale_strength', 'overwrite_upscale_strength', -1.0, float),
     
     # --- Control / Image Prompts ---

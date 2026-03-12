@@ -4,13 +4,11 @@ from backend.schedulers import SCHEDULER_NAMES
 
 disabled = 'Disabled'
 enabled = 'Enabled'
-subtle_variation = 'Vary (Subtle)'
-strong_variation = 'Vary (Strong)'
 upscale_15 = 'Upscale (1.5x)'
 upscale_2 = 'Upscale (2x)'
 upscale_fast = 'Upscale (Fast 2x)'
 
-uov_list = [disabled, subtle_variation, strong_variation, upscale_15, upscale_2, upscale_fast]
+uov_list = [disabled, upscale_15, upscale_2, upscale_fast]
 
 
 CIVITAI_NO_KARRAS = ["euler", "euler_ancestral", "heun", "dpm_fast", "dpm_adaptive", "ddim", "uni_pc"]

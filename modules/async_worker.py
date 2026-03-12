@@ -17,7 +17,6 @@ from modules.pipeline import (
     process_prompt,
     apply_image_input,
     apply_control_nets,
-    apply_vary,
     apply_outpaint_expansion,
     apply_outpaint_inference_setup,
     apply_upscale,
@@ -215,9 +214,6 @@ def handler(async_task: AsyncTask):
         s.current_progress += 1
         progressbar(s, s.current_progress, 'Image processing ...')
 
-    if 'vary' in s.goals:
-        apply_vary(s, progressbar)
-    
     if 'upscale' in s.goals:
         direct_return = apply_upscale(s, progressbar)
         if direct_return:

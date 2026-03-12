@@ -22,50 +22,6 @@ class EarlyReturnException(BaseException):
 LAST_INPAINT_STEP1_CONTEXT = None
 
 
-def apply_vary(task_state, progressbar_callback=None):
-    """
-    Sets up variation parameters and encodes the initial latent.
-    """
-    uov_method = task_state.uov_method
-    denoising_strength = task_state.denoising_strength
-    uov_input_image = task_state.uov_input_image
-    uov_input_image = mask_proc.ensure_numpy(uov_input_image)
-
-    if 'subtle' in uov_method:
-        denoising_strength = 0.5
-    if 'strong' in uov_method:
-        denoising_strength = 0.85
-    if task_state.overwrite_vary_strength > 0:
-        denoising_strength = task_state.overwrite_vary_strength
-    
-    shape_ceil = get_image_shape_ceil(uov_input_image)
-    if shape_ceil < 1024:
-        print(f'[Vary] Image is resized because it is too small.')
-        shape_ceil = 1024
-    elif shape_ceil > 2048:
-        print(f'[Vary] Image is resized because it is too big.')
-        shape_ceil = 2048
-    
-    uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
-    initial_pixels = core.numpy_to_pytorch(uov_input_image)
-    
-    if progressbar_callback:
-        task_state.current_progress += 1
-        progressbar_callback(task_state, task_state.current_progress, 'VAE encoding ...')
-    
-    candidate_vae, _ = pipeline.get_candidate_vae(
-        steps=task_state.steps,
-        denoise=denoising_strength
-    )
-    initial_latent = core.encode_vae(vae=candidate_vae, pixels=initial_pixels)
-    B, C, H, W = initial_latent['samples'].shape
-    
-    task_state.uov_input_image = uov_input_image
-    task_state.denoising_strength = denoising_strength
-    task_state.initial_latent = initial_latent
-    task_state.width = W * 8
-    task_state.height = H * 8
-    print(f'Final resolution is {str((task_state.width, task_state.height))}.')
 
 
 def apply_outpaint_expansion(task_state, inpaint_image, inpaint_mask):
@@ -313,40 +269,40 @@ def apply_upscale(task_state, progressbar_callback=None):
     uov_method = task_state.uov_method
     uov_input_image = mask_proc.ensure_numpy(uov_input_image)
     H, W, C = uov_input_image.shape
+    
     if progressbar_callback:
         task_state.current_progress += 1
         progressbar_callback(task_state, task_state.current_progress, f'Upscaling image from {str((W, H))} ...')
     
-    uov_input_image = perform_upscale(uov_input_image)
-    print(f'Image upscaled.')
+    # 1. GAN Upscale with new multi-model engine
+    from modules.upscaler import perform_upscale
+    uov_input_image = perform_upscale(
+        uov_input_image, 
+        model_name=task_state.upscale_model if task_state.upscale_model != "None" else None,
+        scale_override=task_state.upscale_scale_override if task_state.upscale_scale_override > 0 else None
+    )
+    print(f'Image upscaled to {str(uov_input_image.shape[:2])}.')
+
+    # 2. Ensure dimension alignment for diffusion (64px multiples)
+    uov_input_image = set_image_shape_ceil(uov_input_image)
+    new_h, new_w = uov_input_image.shape[:2]
     
-    if '1.5x' in uov_method:
-        f = 1.5
-    elif '2x' in uov_method:
-        f = 2.0
-    else:
-        f = 1.0
-    
-    shape_ceil = get_shape_ceil(H * f, W * f)
-    if shape_ceil < 1024:
-        print(f'[Upscale] Image is resized because it is too small.')
-        uov_input_image = set_image_shape_ceil(uov_input_image, 1024)
-        shape_ceil = 1024
-    else:
-        uov_input_image = resample_image(uov_input_image, width=W * f, height=H * f)
-    
-    image_is_super_large = shape_ceil > 2800
+    # 3. Determine if we should skip diffusion (Fast Upscale or super large images)
+    image_is_super_large = max(new_h, new_w) > 2800
     direct_return = False
-    if 'fast' in uov_method:
-        direct_return = True
-    elif image_is_super_large:
-        print('Image is too large. Directly returned the SR image.')
+    
+    if 'fast' in uov_method or image_is_super_large:
+        if image_is_super_large:
+            print(f'Image is too large ({new_w}x{new_h}). Skipping diffusion refinement.')
         direct_return = True
     
     if direct_return:
         task_state.uov_input_image = uov_input_image
+        task_state.width = new_w
+        task_state.height = new_h
         return direct_return
 
+    # 4. Prepare for diffusion refinement pass
     task_state.tiled = True
     denoising_strength = 0.382
     if task_state.overwrite_upscale_strength > 0:
@@ -362,39 +318,40 @@ def apply_upscale(task_state, progressbar_callback=None):
         denoise=denoising_strength
     )
     initial_latent = core.encode_vae(vae=candidate_vae, pixels=initial_pixels)
-    B, C, H, W = initial_latent['samples'].shape
+    B, C, H_latent, W_latent = initial_latent['samples'].shape
     
     task_state.uov_input_image = uov_input_image
     task_state.denoising_strength = denoising_strength
     task_state.initial_latent = initial_latent
-    task_state.width = W * 8
-    task_state.height = H * 8
+    task_state.width = W_latent * 8
+    task_state.height = H_latent * 8
     print(f'Final resolution is {str((task_state.width, task_state.height))}.')
     return direct_return
 
 
 def prepare_upscale(task_state, progressbar_callback=None):
     """
-    Determines if vary or upscale is needed and sets the appropriate goals.
+    Determines if upscale is needed and sets the appropriate goals.
     """
     task_state.uov_input_image = HWC3(mask_proc.ensure_numpy(task_state.uov_input_image))
-    uov_method = task_state.uov_method
+    uov_method = task_state.uov_method.lower()
     
     skip_prompt_processing = False
-    if 'vary' in uov_method:
-        task_state.goals.append('vary')
-    elif 'upscale' in uov_method:
+    if 'upscale' in uov_method:
         task_state.goals.append('upscale')
+        
+        # Validate selected model exists (if not "None")
+        if task_state.upscale_model != "None":
+            from modules.upscaler import list_available_models
+            available = list_available_models()
+            if task_state.upscale_model not in available:
+                print(f"[Warning] Selected upscale model {task_state.upscale_model} not found. Fallback will be used.")
+        
         if 'fast' in uov_method:
             skip_prompt_processing = True
             task_state.steps = 0
         else:
             task_state.steps = task_state.performance_selection.steps_uov()
-
-        if progressbar_callback:
-            task_state.current_progress += 1
-            progressbar_callback(task_state, task_state.current_progress, 'Downloading upscale models ...')
-        config.downloading_upscale_model()
     
     return skip_prompt_processing
 
@@ -497,8 +454,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         
         if isinstance(working_image, np.ndarray) and isinstance(working_mask, np.ndarray):
             if progressbar_callback:
-                progressbar_callback(task_state, 1, 'Downloading upscale models ...')
-            config.downloading_upscale_model()
+                progressbar_callback(task_state, 1, 'Initializing inpainter ...')
             
             engine = getattr(task_state, 'inpaint_engine', 'None')
             if task_state.current_tab == 'outpaint':
