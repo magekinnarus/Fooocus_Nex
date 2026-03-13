@@ -278,6 +278,7 @@ with shared.gradio_root:
         with gr.Column(scale=1, visible=True) as advanced_column:
             with gr.Row():
                 gr.HTML('<button id="staging-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">🗂️ Open Staging Palette</button>')
+                gr.HTML('<button id="monitor-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">📊 Monitor Dashboard</button>')
             
             with gr.Tab(label='Settings'):
                 settings_panel_result = settings_panel.build_settings_tab()
@@ -518,7 +519,9 @@ old_create_app = gradio.routes.App.create_app
 def patched_create_app(*args, **kwargs):
     app = old_create_app(*args, **kwargs)
     from modules.staging_api import staging_router
+    from modules.monitor_api import monitor_router
     app.include_router(staging_router)
+    app.include_router(monitor_router)
     return app
 
 gradio.routes.App.create_app = patched_create_app
