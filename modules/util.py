@@ -16,7 +16,7 @@ from PIL import Image
 
 import modules.config
 import modules.sdxl_styles
-from modules.flags import Performance
+
 
 LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
 

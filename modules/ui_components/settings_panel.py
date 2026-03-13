@@ -40,7 +40,7 @@ def build_settings_tab():
         value=modules.config.default_image_number
     )
 
-    results['overwrite_step'] = gr.Slider(
+    results['steps'] = gr.Slider(
         label='Sampling Steps',
         minimum=1, maximum=200, step=1,
         value=modules.config.default_overwrite_step,

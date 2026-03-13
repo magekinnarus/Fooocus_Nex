@@ -29,9 +29,8 @@ class TaskState:
     upscale_model: str = "None"
     upscale_scale_override: float = 0
     upscale_diffusion_refinement: bool = False
-    upscale_tile_size: int = 1024
-    upscale_tile_overlap: int = 128
-    upscale_denoise: float = 0.3
+    upscale_refinement_tile_overlap: int = 128
+    upscale_refinement_denoise: float = 0.3
     outpaint_selections: List[str] = field(default_factory=list)
     outpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     outpaint_bb_image: Optional[np.ndarray] = None
@@ -52,7 +51,6 @@ class TaskState:
     clip_skip: int = 1
     sampler_name: str = "dpmpp_2m_sde_gpu"
     scheduler_name: str = "karras"
-    overwrite_step: int = -1
     overwrite_width: int = -1
     overwrite_height: int = -1
     overwrite_upscale_strength: float = -1.0
@@ -87,7 +85,6 @@ class TaskState:
     enhance_input_image: Optional[np.ndarray] = None
 
     # --- Runtime State ---
-    performance_loras: List[Any] = field(default_factory=list)
     yields: List[Any] = field(default_factory=list)
     results: List[Any] = field(default_factory=list)
     last_stop: Union[bool, str] = False

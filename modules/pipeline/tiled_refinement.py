@@ -1,14 +1,10 @@
-import numpy as np
-import torch
 import math
-import logging
+import numpy as np
 from typing import List, NamedTuple
-import modules.flags as flags
 import modules.core as core
 import modules.default_pipeline as pipeline
-from modules.util import set_image_shape_ceil, resample_image
-
-logger = logging.getLogger(__name__)
+import modules.flags as flags
+from backend import resources
 
 class TileInfo(NamedTuple):
     crop: tuple  # (x1, y1, x2, y2)
@@ -18,129 +14,124 @@ class TileInfo(NamedTuple):
     w: int
     h: int
 
-def select_tile_resolution(width, height):
+def select_tile_resolution(full_w, full_h, min_overlap=128):
     """
-    Select best SDXL bucket for tile aspect ratio matching global ratio.
+    Smart Auto-Tiling 2.0: Iterates through all buckets and selects the one 
+    that minimizes the total tile count (nx * ny).
     """
-    target_ratio = width / height
-    resolutions = []
+    buckets = []
     for s in flags.sdxl_aspect_ratios:
         w, h = map(int, s.split('*'))
-        resolutions.append((w, h))
-    
-    # Minimize ratio error
-    best_res = min(resolutions, key=lambda r: abs(r[0] / r[1] - target_ratio))
-    print(f'[Tiled Refinement] Global AR {target_ratio:.2f} matched to SDXL bucket {best_res[0]}x{best_res[1]}')
-    return best_res
+        buckets.append((w, h))
 
-def split_into_tiles(image: np.ndarray, tile_w: int, tile_h: int, overlap: int) -> List[TileInfo]:
-    """
-    Splits image into overlapping tiles. 
-    Handles edge tiles by shifting them to ensure full coverage without creating small slivers.
-    """
+    best_config = None
+    min_total_tiles = float('inf')
+    min_waste = float('inf')
+
+    for bw, bh in buckets:
+        # Calculate nx: how many tiles of width bw to cover full_w with min_overlap
+        if full_w <= bw:
+            nx = 1
+            overlap_w = 0
+        else:
+            nx = math.ceil((full_w - min_overlap) / (bw - min_overlap))
+            overlap_w = (nx * bw - full_w) / (nx - 1)
+        
+        # Calculate ny: how many tiles of height bh to cover full_h with min_overlap
+        if full_h <= bh:
+            ny = 1
+            overlap_h = 0
+        else:
+            ny = math.ceil((full_h - min_overlap) / (bh - min_overlap))
+            overlap_h = (ny * bh - full_h) / (ny - 1)
+
+        total_tiles = nx * ny
+        # Total waste is a combination of overlaps and aspect ratio mismatch
+        waste = (overlap_w if nx > 1 else (bw - full_w)) + (overlap_h if ny > 1 else (bh - full_h))
+
+        if total_tiles < min_total_tiles or (total_tiles == min_total_tiles and waste < min_waste):
+            min_total_tiles = total_tiles
+            min_waste = waste
+            best_config = ((bw, bh), nx, ny, int(overlap_w), int(overlap_h))
+
+    bucket, nx, ny, overlap_w, overlap_h = best_config
+    print(f'[Smart Tiling] Optimized Layout: {nx}x{ny} grid using {bucket[0]}x{bucket[1]} bucket.')
+    print(f'[Smart Tiling] Actual Overlap: {overlap_w}px (Horiz), {overlap_h}px (Vert)')
+    
+    return bucket, nx, ny, overlap_w, overlap_h
+
+def split_into_tiles(image: np.ndarray, bucket_w: int, bucket_h: int, nx: int, ny: int, overlap_w: int, overlap_h: int) -> List[TileInfo]:
     H, W, C = image.shape
     tiles = []
     
-    # Effective stride (tile size minus overlap)
-    stride_w = tile_w - overlap
-    stride_h = tile_h - overlap
-    
-    # Calculate grid size
-    nx = math.ceil((W - overlap) / stride_w) if W > tile_w else 1
-    ny = math.ceil((H - overlap) / stride_h) if H > tile_h else 1
+    stride_w = bucket_w - overlap_w
+    stride_h = bucket_h - overlap_h
     
     for i in range(ny):
         for j in range(nx):
-            # Candidate top-left
             x1 = j * stride_w
             y1 = i * stride_h
             
-            # Shift back if overflow to ensure tiles are always exactly tile_w x tile_h
-            if x1 + tile_w > W:
-                x1 = max(0, W - tile_w)
-            if y1 + tile_h > H:
-                y1 = max(0, H - tile_h)
+            # Boundary correction
+            if x1 + bucket_w > W: x1 = W - bucket_w
+            if y1 + bucket_h > H: y1 = H - bucket_h
             
-            x2 = x1 + tile_w
-            y2 = y1 + tile_h
+            x1, y1 = max(0, int(x1)), max(0, int(y1))
+            x2, y2 = x1 + bucket_w, y1 + bucket_h
             
             tile_image = image[y1:y2, x1:x2]
             
+            # Final check: Ensure we ARE at bucket size (in case of very small images)
+            if tile_image.shape[0] != bucket_h or tile_image.shape[1] != bucket_w:
+                import cv2
+                tile_image = cv2.resize(tile_image, (bucket_w, bucket_h), interpolation=cv2.INTER_LANCZOS4)
+
             tiles.append(TileInfo(
                 crop=(x1, y1, x2, y2),
                 tile_image=tile_image.copy(),
-                x=x1, y=y1, w=tile_w, h=tile_h
+                x=x1, y=y1, w=bucket_w, h=bucket_h
             ))
             
     return tiles
 
-def generate_gaussian_weights(tile_w, tile_h, overlap):
-    """
-    Generate 2D Gaussian weight map for alpha blending.
-    Sigma is proportional to tile size to ensure smooth roll-off.
-    """
-    # Create 1D Gaussian distributions
+def generate_gaussian_weights(tile_w, tile_h):
     def get_gaussian_1d(size):
         center = (size - 1) / 2.0
         sigma = size / 4.0
-        x = np.arange(size)
-        return np.exp(-0.5 * ((x - center) / sigma) ** 2)
+        return np.exp(-((np.arange(size) - center) ** 2) / (2 * sigma ** 2))
 
     w_x = get_gaussian_1d(tile_w)
     w_y = get_gaussian_1d(tile_h)
-    
-    # 2D weight map
-    weight_map = np.outer(w_y, w_x).astype(np.float32)
-    return weight_map
+    return np.outer(w_y, w_x).astype(np.float32)
 
-def stitch_tiles(tiles: List[TileInfo], full_size: tuple, tile_w: int, tile_h: int, overlap: int) -> np.ndarray:
-    """
-    Stitches tiles using Gaussian-weighted accumulation and normalization.
-    """
+def stitch_tiles(tiles: List[TileInfo], full_size: tuple, bucket_w: int, bucket_h: int) -> np.ndarray:
     H, W, C = full_size
     output = np.zeros((H, W, C), dtype=np.float32)
-    weights = np.zeros((H, W, 1), dtype=np.float32)
+    weights = np.zeros((H, W), dtype=np.float32)
     
-    # Base weight map for a standard tile
-    base_weight_map = generate_gaussian_weights(tile_w, tile_h, overlap)[:, :, None]
+    base_weight_map = generate_gaussian_weights(bucket_w, bucket_h)
     
     for t in tiles:
         x1, y1, x2, y2 = t.crop
-        tile_h_actual, tile_w_actual = t.tile_image.shape[:2]
+        output[y1:y2, x1:x2] += t.tile_image.astype(np.float32) * base_weight_map[:, :, None]
+        weights[y1:y2, x1:x2] += base_weight_map
         
-        # Slice weight map if tile is smaller than standard (rare due to shift-back logic)
-        weight_map = base_weight_map[:tile_h_actual, :tile_w_actual]
-        
-        output[y1:y2, x1:x2] += t.tile_image.astype(np.float32) * weight_map
-        weights[y1:y2, x1:x2] += weight_map
-        
-    # Normalize to prevent overlap brightening
-    output /= np.maximum(weights, 1e-5)
-    
+    output /= np.maximum(weights[:, :, None], 1e-5)
     return np.clip(output, 0, 255).astype(np.uint8)
 
 def refine_tile(tile_image: np.ndarray, task_state, denoise_strength: float) -> np.ndarray:
-    """
-    Runs a single tile through the diffusion pipeline.
-    """
     import gc
-    from backend import resources
-    
     h, w = tile_image.shape[:2]
     
-    # 1. Encode to latent
     pixels = core.numpy_to_pytorch(tile_image)
     candidate_vae, _ = pipeline.get_candidate_vae(steps=task_state.steps, denoise=denoise_strength)
     resources.load_models_gpu([candidate_vae.patcher])
     latent_dict = core.encode_vae(vae=candidate_vae, pixels=pixels)
     
-    # 2. Diffusion
-    def noop_callback(*args, **kwargs):
-        pass
-
     import modules.pipeline.preprocessing as preprocessing
     final_scheduler_name = preprocessing.patch_samplers(task_state)
 
+    # Note: refined_images is already a list of numpy arrays from process_diffusion
     refined_images = pipeline.process_diffusion(
         positive_cond=task_state.positive_cond,
         negative_cond=task_state.negative_cond,
@@ -148,56 +139,58 @@ def refine_tile(tile_image: np.ndarray, task_state, denoise_strength: float) -> 
         width=w,
         height=h,
         image_seed=task_state.seed,
-        callback=noop_callback,
+        callback=None,
         sampler_name=task_state.sampler_name,
         scheduler_name=final_scheduler_name,
         latent=latent_dict,
         denoise=denoise_strength,
         tiled=False,
-        cfg_scale=task_state.cfg_scale
+        cfg_scale=task_state.cfg_scale,
+        quality={'sharpness': task_state.sharpness}
     )
-    
-    # Cleanup tile-specific tensors
-    del latent_dict, pixels
     
     return refined_images[0]
 
 def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, progressbar_callback=None):
-    """
-    Main orchestrator for tiled diffusion refinement.
-    """
     import gc
     from backend import resources
     
+    # Pre-flight cleanup: Clear everything to maximize tile headroom
+    resources.unload_all_models()
+    gc.collect()
+    resources.soft_empty_cache()
+    
     H, W, C = upscaled_image.shape
     
-    # 1. Setup parameters
-    tile_w, tile_h = select_tile_resolution(W, H)
-    overlap = getattr(task_state, 'upscale_tile_overlap', 128)
-    denoise = getattr(task_state, 'upscale_denoise', 0.3)
+    min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
+    bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
+    bucket_w, bucket_h = bucket
     
-    # 2. Split
-    tiles = split_into_tiles(upscaled_image, tile_w, tile_h, overlap)
-    total_tiles = len(tiles)
+    denoise = getattr(task_state, 'upscale_refinement_denoise', 0.382)
+    tiles = split_into_tiles(upscaled_image, bucket_w, bucket_h, nx, ny, overlap_w, overlap_h)
     
-    print(f'[Tiled Refinement] Processing {total_tiles} tiles of size {tile_w}x{tile_h} with overlap {overlap} ...')
+    print(f'[Tiled Refinement] Processing {len(tiles)} tiles...')
     
     refined_tiles = []
     for i, t in enumerate(tiles):
         if progressbar_callback:
-            progressbar_callback(task_state, task_state.current_progress, f'Refining tile {i+1}/{total_tiles} ...')
+            progressbar_callback(task_state, int(task_state.current_progress + (i/len(tiles))*10), f'Refining tile {i+1}/{len(tiles)} ...')
         
         refined_img = refine_tile(t.tile_image, task_state, denoise)
         refined_tiles.append(t._replace(tile_image=refined_img))
         
-        # Immediate per-tile cleanup to minimize VRAM footprint
+        # Post-tile cleanup
         gc.collect()
         resources.soft_empty_cache()
     
-    # 3. Stitch
     if progressbar_callback:
-        progressbar_callback(task_state, task_state.current_progress, 'Stitching tiles ...')
+        progressbar_callback(task_state, task_state.current_progress + 10, 'Stitching tiles ...')
         
-    final_image = stitch_tiles(refined_tiles, (H, W, C), tile_w, tile_h, overlap)
+    result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
     
-    return final_image
+    # Final sweep: Leave the GPU clean
+    resources.unload_all_models()
+    gc.collect()
+    resources.soft_empty_cache()
+    
+    return result

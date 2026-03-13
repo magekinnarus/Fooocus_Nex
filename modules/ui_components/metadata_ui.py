@@ -3,7 +3,7 @@ import gradio as gr
 from pathlib import Path
 import modules.config
 import modules.flags
-from modules.flags import Performance, Steps, SAMPLERS
+from modules.flags import SAMPLERS
 from modules.util import unquote, get_file_from_folder_list
 import modules.meta_parser
 
@@ -54,12 +54,7 @@ def get_steps(key: str, fallback: str | None, source_dict: dict, results: list, 
         h = source_dict.get(key, source_dict.get(fallback, default))
         assert h is not None
         h = int(h)
-        performance_name = source_dict.get('performance', '').replace(' ', '_').replace('-', '_').casefold()
-        performance_candidates = [key for key in Steps.keys() if key.casefold() == performance_name and Steps[key] == h]
-        if len(performance_candidates) == 0:
-            results.append(h)
-            return
-        results.append(-1)
+        results.append(h)
     except:
         results.append(-1)
 
@@ -138,7 +133,7 @@ def get_adm_guidance(key: str, fallback: str | None, source_dict: dict, results:
         results.append(gr.update())
         results.append(gr.update())
 
-def get_lora(key: str, fallback: str | None, source_dict: dict, results: list, performance_filename: str | None):
+def get_lora(key: str, fallback: str | None, source_dict: dict, results: list):
     try:
         split_data = source_dict.get(key, source_dict.get(fallback)).split(' : ')
         enabled = True
@@ -150,8 +145,7 @@ def get_lora(key: str, fallback: str | None, source_dict: dict, results: list, p
             name = split_data[1]
             weight = split_data[2]
 
-        if name == performance_filename:
-            raise Exception
+        # name validation could be added here if needed
 
         weight = float(weight)
         results.append(enabled)
@@ -199,10 +193,8 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
 
     results.append(gr.update(visible=False))
 
-    performance_filename = None
-
     for i in range(modules.config.default_max_lora_number):
-        get_lora(f'lora_combined_{i + 1}', f'LoRA {i + 1}', loaded_parameter_dict, results, performance_filename)
+        get_lora(f'lora_combined_{i + 1}', f'LoRA {i + 1}', loaded_parameter_dict, results)
 
     return results
 

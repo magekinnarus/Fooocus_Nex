@@ -91,12 +91,20 @@ with shared.gradio_root:
                 input_image_checkbox = gr.Checkbox(label='Input Image', value=modules.config.default_image_prompt_checkbox, container=False, elem_classes='min_check')
             with gr.Row(visible=modules.config.default_image_prompt_checkbox) as image_input_panel:
                 with gr.Tabs(selected=modules.config.default_selected_image_input_tab_id):
-                    with gr.Tab(label='Upscale or Variation', id='uov_tab') as uov_tab:
+                    with gr.Tab(label='Upscale/Superupscale', id='uov_tab') as uov_tab:
                         with gr.Row():
                             with gr.Column():
                                 uov_input_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False)
                             with gr.Column():
-                                uov_method = gr.Radio(label='Upscale or Variation:', choices=flags.uov_list, value=modules.config.default_uov_method)
+                                uov_method = gr.Radio(label='Method:', choices=['Upscale', 'Super-Upscale'], value='Upscale')
+                                upscale_model = gr.Dropdown(label='Upscale Model', choices=['None'], value='None')
+                                upscale_scale_info = gr.HTML(value="<b>Scale:</b> Auto-detecting...", elem_id='upscale_scale_info')
+                                upscale_scale_override = gr.Slider(label='Scale Override', minimum=0.0, maximum=8.0, step=0.1, value=0.0, info='Set to 0.0 to use model default scale.')
+                                
+                                with gr.Group(visible=False) as upscale_refinement_container:
+                                    upscale_refinement_denoise = gr.Slider(label='Refinement Denoise', minimum=0.0, maximum=1.0, step=0.001, value=0.382)
+                                    upscale_refinement_tile_overlap = gr.Slider(label='Refinement Tile Overlap', minimum=0, maximum=256, step=1, value=128)
+                                
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
@@ -277,7 +285,7 @@ with shared.gradio_root:
                     preset_selection = settings_panel_result['preset_selection']
                 aspect_ratios_selection = settings_panel_result['aspect_ratios_selection']
                 image_number = settings_panel_result['image_number']
-                overwrite_step = settings_panel_result['overwrite_step']
+                steps = settings_panel_result['steps']
                 sampler_name = settings_panel_result['sampler_name']
                 scheduler_name = settings_panel_result['scheduler_name']
                 guidance_scale = settings_panel_result['guidance_scale']
@@ -316,7 +324,6 @@ with shared.gradio_root:
                 generate_image_grid = debug_panel_result['generate_image_grid']
                 overwrite_width = debug_panel_result['overwrite_width']
                 overwrite_height = debug_panel_result['overwrite_height']
-                overwrite_vary_strength = debug_panel_result['overwrite_vary_strength']
                 overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
                 disable_preview = debug_panel_result['disable_preview']
                 disable_intermediate_results = debug_panel_result['disable_intermediate_results']
@@ -342,7 +349,7 @@ with shared.gradio_root:
         state_is_generating = gr.State(False)
 
         load_data_outputs = [image_number, prompt, negative_prompt, style_selections,
-                             overwrite_step, aspect_ratios_selection,
+                             steps, aspect_ratios_selection,
                              overwrite_width, overwrite_height, guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
                              base_model, vae_model, clip_model, sampler_name, scheduler_name, 
@@ -377,6 +384,10 @@ with shared.gradio_root:
             'current_tab': current_tab,
             'uov_method': uov_method,
             'uov_input_image': uov_input_image,
+            'upscale_model': upscale_model,
+            'upscale_scale_override': upscale_scale_override,
+            'upscale_refinement_denoise': upscale_refinement_denoise,
+            'upscale_refinement_tile_overlap': upscale_refinement_tile_overlap,
             'outpaint_selections': outpaint_selections,
             'outpaint_input_image': outpaint_input_image,
             'outpaint_mask_image': outpaint_mask_image,
@@ -395,10 +406,8 @@ with shared.gradio_root:
             'clip_skip': clip_skip,
             'sampler_name': sampler_name,
             'scheduler_name': scheduler_name,
-            'overwrite_step': overwrite_step,
             'overwrite_width': overwrite_width,
             'overwrite_height': overwrite_height,
-            'overwrite_vary_strength': overwrite_vary_strength,
             'overwrite_upscale_strength': overwrite_upscale_strength,
             'mixing_image_prompt_and_inpaint': mixing_image_prompt_and_inpaint,
             'debugging_cn_preprocessor': debugging_cn_preprocessor,
@@ -414,6 +423,7 @@ with shared.gradio_root:
             'inpaint_strength': inpaint_strength,
             'inpaint_erode_or_dilate': inpaint_erode_or_dilate,
             'inpaint_step2_checkbox': inpaint_step2_checkbox,
+            'steps': steps,
 
             # outpaint_ctrls
             'outpaint_engine': outpaint_engine,
@@ -479,8 +489,8 @@ with shared.gradio_root:
             'inpaint_context_mask_data': inpaint_context_mask_data,
             'inpaint_bb_mask_data': inpaint_bb_mask_data,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
-            'gallery': gallery,
-            'seed_random': seed_random,
+            'upscale_refinement_container': upscale_refinement_container,
+            'upscale_scale_info': upscale_scale_info,
             'gallery': gallery,
             'seed_random': seed_random,
             'inpaint_tab': inpaint_tab,

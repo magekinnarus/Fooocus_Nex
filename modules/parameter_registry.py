@@ -46,10 +46,8 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('uov_input_image', 'uov_input_image', None),
     ParamDef('upscale_model', 'upscale_model', 'None', str),
     ParamDef('upscale_scale_override', 'upscale_scale_override', 0, float),
-    ParamDef('upscale_diffusion_refinement', 'upscale_diffusion_refinement', False, bool),
-    ParamDef('upscale_tile_size', 'upscale_tile_size', 1024, int),
-    ParamDef('upscale_tile_overlap', 'upscale_tile_overlap', 128, int),
-    ParamDef('upscale_denoise', 'upscale_denoise', 0.3, float),
+    ParamDef('upscale_refinement_tile_overlap', 'upscale_refinement_tile_overlap', 128, int),
+    ParamDef('upscale_refinement_denoise', 'upscale_refinement_denoise', 0.3, float),
 
     # --- Outpaint ---
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),
@@ -90,7 +88,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('clip_skip', 'clip_skip', 2, int),
     ParamDef('sampler_name', 'sampler_name', 'dpmpp_2m_sde_gpu', str),
     ParamDef('scheduler_name', 'scheduler_name', 'karras', str),
-    ParamDef('overwrite_step', 'overwrite_step', -1, int),
+    ParamDef('steps', 'steps', 30, int),
     ParamDef('overwrite_width', 'overwrite_width', -1, int),
     ParamDef('overwrite_height', 'overwrite_height', -1, int),
     ParamDef('overwrite_upscale_strength', 'overwrite_upscale_strength', -1.0, float),

@@ -32,7 +32,7 @@ class AsyncTask:
     callback_steps: float = 0.0
 
     def __init__(self, args):
-        from modules.flags import Performance, MetadataScheme
+        from modules.flags import MetadataScheme
         from modules.util import get_enabled_loras
         from modules.config import default_max_lora_number
         import args_manager
@@ -63,8 +63,6 @@ class AsyncTask:
                     val = param.default
             setattr(s, param.task_field, val)
 
-        s.performance_selection = Performance.SPEED 
-        s.steps = 30 
         s.original_steps = s.steps
 
         lora_data = []
@@ -216,14 +214,20 @@ def handler(async_task: AsyncTask):
 
     if 'upscale' in s.goals:
         direct_return = apply_upscale(s, progressbar)
-        if direct_return:
-            from modules.pipeline.output import save_and_log
-            progressbar(s, 100, 'Saving image to system ...')
-            img_paths = save_and_log(s, s.height, s.width, [s.uov_input_image], {'log_positive_prompt': s.prompt, 'log_negative_prompt': s.negative_prompt, 'positive': [], 'negative': [], 'styles': s.style_selections, 'task_seed': s.seed}, s.use_expansion, s.loras)
-            yield_result(s, img_paths, 100, do_not_show_finished_images=True)
-            s.yields.append(['finish', s.results])
-            s.processing = False
-            return
+        
+        # If apply_upscale returns False, it means we need refinement (Super-Upscale)
+        if not direct_return:
+            from modules.pipeline.tiled_refinement import apply_tiled_diffusion_refinement
+            s.uov_input_image = apply_tiled_diffusion_refinement(s, s.uov_input_image, progressbar)
+            
+        # Final Save and Return for either Upscale or Super-Upscale
+        from modules.pipeline.output import save_and_log
+        progressbar(s, 100, 'Saving image to system ...')
+        img_paths = save_and_log(s, s.height, s.width, [s.uov_input_image], {'log_positive_prompt': s.prompt, 'log_negative_prompt': s.negative_prompt, 'positive': [], 'negative': [], 'styles': s.style_selections, 'task_seed': s.seed}, s.use_expansion, s.loras)
+        yield_result(s, img_paths, 100, do_not_show_finished_images=True)
+        s.yields.append(['finish', s.results])
+        s.processing = False
+        return
 
 
     if 'cn' in s.goals:

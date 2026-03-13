@@ -4,11 +4,8 @@ from backend.schedulers import SCHEDULER_NAMES
 
 disabled = 'Disabled'
 enabled = 'Enabled'
-upscale_15 = 'Upscale (1.5x)'
-upscale_2 = 'Upscale (2x)'
-upscale_fast = 'Upscale (Fast 2x)'
 
-uov_list = [disabled, upscale_15, upscale_2, upscale_fast]
+uov_list = [disabled, 'Upscale', 'Super-Upscale']
 
 
 CIVITAI_NO_KARRAS = ["euler", "euler_ancestral", "heun", "dpm_fast", "dpm_adaptive", "ddim", "uni_pc"]
@@ -109,66 +106,3 @@ class OutputFormat(Enum):
     @classmethod
     def list(cls) -> list:
         return list(map(lambda c: c.value, cls))
-
-
-class PerformanceLoRA(Enum):
-    QUALITY = None
-    SPEED = None
-    EXTREME_SPEED = 'sdxl_lcm_lora.safetensors'
-    LIGHTNING = 'sdxl_lightning_4step_lora.safetensors'
-    HYPER_SD = 'sdxl_hyper_sd_4step_lora.safetensors'
-
-
-class Steps(IntEnum):
-    QUALITY = 60
-    SPEED = 30
-    EXTREME_SPEED = 8
-    LIGHTNING = 4
-    HYPER_SD = 4
-
-    @classmethod
-    def keys(cls) -> list:
-        return list(map(lambda c: c, Steps.__members__))
-
-
-class StepsUOV(IntEnum):
-    QUALITY = 36
-    SPEED = 18
-    EXTREME_SPEED = 8
-    LIGHTNING = 4
-    HYPER_SD = 4
-
-
-class Performance(Enum):
-    QUALITY = 'Quality'
-    SPEED = 'Speed'
-    EXTREME_SPEED = 'Extreme Speed'
-    LIGHTNING = 'Lightning'
-    HYPER_SD = 'Hyper-SD'
-
-    @classmethod
-    def list(cls) -> list:
-        return list(map(lambda c: (c.name, c.value), cls))
-
-    @classmethod
-    def values(cls) -> list:
-        return list(map(lambda c: c.value, cls))
-
-    @classmethod
-    def by_steps(cls, steps: int | str):
-        return cls[Steps(int(steps)).name]
-
-    @classmethod
-    def has_restricted_features(cls, x) -> bool:
-        if isinstance(x, Performance):
-            x = x.value
-        return x in [cls.EXTREME_SPEED.value, cls.LIGHTNING.value, cls.HYPER_SD.value]
-
-    def steps(self) -> int | None:
-        return Steps[self.name].value if self.name in Steps.__members__ else None
-
-    def steps_uov(self) -> int | None:
-        return StepsUOV[self.name].value if self.name in StepsUOV.__members__ else None
-
-    def lora_filename(self) -> str | None:
-        return PerformanceLoRA[self.name].value if self.name in PerformanceLoRA.__members__ else None

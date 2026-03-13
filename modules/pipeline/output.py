@@ -75,7 +75,6 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
             ('Prompt', 'prompt', task_dict['log_positive_prompt']),
             ('Negative Prompt', 'negative_prompt', task_dict['log_negative_prompt']),
             ('Styles', 'styles', str(task_dict['styles'])),
-            ('Performance', 'performance', task_state.performance_selection.value),
             ('Steps', 'steps', task_state.steps),
             ('Resolution', 'resolution', str((width, height))),
             ('Guidance Scale', 'guidance_scale', task_state.cfg_scale),

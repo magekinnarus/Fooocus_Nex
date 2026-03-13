@@ -35,6 +35,16 @@ def load_state_dict(state_dict) -> PyTorchModel:
     elif "params" in state_dict_keys:
         state_dict = state_dict["params"]
 
+    # Try Spandrel first (ChaiNNer/Modern standard)
+    try:
+        from spandrel import ModelLoader
+        # Spandrel handles architecture detection and state_dict loading internally
+        model = ModelLoader().load_from_state_dict(state_dict)
+        logger.info(f"Model loaded via Spandrel: {model.architecture.id}")
+        return model
+    except Exception as e:
+        logger.debug(f"Spandrel loading skipped or failed: {e}. Falling back to manual detection.")
+
     state_dict_keys = list(state_dict.keys())
     # SRVGGNet Real-ESRGAN (v2)
     if "body.0.weight" in state_dict_keys and "body.1.weight" in state_dict_keys:

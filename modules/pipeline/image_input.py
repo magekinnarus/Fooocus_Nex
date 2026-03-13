@@ -266,7 +266,7 @@ def apply_upscale(task_state, progressbar_callback=None):
     Performs image upscaling and sets up the latent for the diffusion pass.
     """
     uov_input_image = task_state.uov_input_image
-    uov_method = task_state.uov_method
+    uov_method = task_state.uov_method.lower()
     uov_input_image = mask_proc.ensure_numpy(uov_input_image)
     H, W, C = uov_input_image.shape
     
@@ -274,59 +274,57 @@ def apply_upscale(task_state, progressbar_callback=None):
         task_state.current_progress += 1
         progressbar_callback(task_state, task_state.current_progress, f'Upscaling image from {str((W, H))} ...')
     
+    # Pre-upscale memory cleanup: Clear UNet/VAE/CLIP to make room for GAN
+    from backend import resources
+    resources.unload_all_models()
+    resources.soft_empty_cache()
+    import gc
+    gc.collect()
+
     # 1. GAN Upscale with new multi-model engine
-    from modules.upscaler import perform_upscale
+    from modules.upscaler import perform_upscale, clear_model_cache
+    
+    # Super-Upscale should use the lightest default model (Nomos2) to save memory
+    upscale_model_to_use = task_state.upscale_model
+    if uov_method == 'super-upscale':
+        upscale_model_to_use = '4xNomos2_otf_esrgan.pth'
+        print(f'Super-Upscale detected: Forcing light model {upscale_model_to_use} for initial pass.')
+
+    import gc
+    from backend import resources
+    
+    # Pre-upscale cleanup: Offload everything to make room for GAN model
+    resources.unload_all_models()
+    gc.collect()
+    resources.soft_empty_cache()
+
     uov_input_image = perform_upscale(
         uov_input_image, 
-        model_name=task_state.upscale_model if task_state.upscale_model != "None" else None,
+        model_name=upscale_model_to_use if upscale_model_to_use != "None" else None,
         scale_override=task_state.upscale_scale_override if task_state.upscale_scale_override > 0 else None
     )
-    print(f'Image upscaled to {str(uov_input_image.shape[:2])}.')
+    print(f'Image upscaled via GAN to {str(uov_input_image.shape[:2])}.')
 
-    # 2. Ensure dimension alignment for diffusion (64px multiples)
-    uov_input_image = set_image_shape_ceil(uov_input_image)
-    new_h, new_w = uov_input_image.shape[:2]
-    
-    # 3. Determine if we should skip diffusion (Fast Upscale or super large images)
-    image_is_super_large = max(new_h, new_w) > 2800
-    direct_return = False
-    
-    if 'fast' in uov_method or image_is_super_large:
-        if image_is_super_large:
-            print(f'Image is too large ({new_w}x{new_h}). Skipping diffusion refinement.')
-        direct_return = True
-    
-    if direct_return:
+    # Post-upscale cleanup: Purge GAN model and ensure GPU is clear
+    clear_model_cache()
+    gc.collect()
+    resources.soft_empty_cache()
+
+    # 2. Handle "Upscale" (Light) or "Super-Upscale" (Stage 1)
+    if uov_method == 'upscale':
         task_state.uov_input_image = uov_input_image
-        task_state.width = new_w
-        task_state.height = new_h
-        return direct_return
+        task_state.width = uov_input_image.shape[1]
+        task_state.height = uov_input_image.shape[0]
+        print('Upscale (Light) completed.')
+        return True
 
-    # 4. Prepare for diffusion refinement pass
-    task_state.tiled = True
-    denoising_strength = 0.382
-    if task_state.overwrite_upscale_strength > 0:
-        denoising_strength = task_state.overwrite_upscale_strength
-    
-    initial_pixels = core.numpy_to_pytorch(uov_input_image)
-    if progressbar_callback:
-        task_state.current_progress += 1
-        progressbar_callback(task_state, task_state.current_progress, 'VAE encoding ...')
-    
-    candidate_vae, _ = pipeline.get_candidate_vae(
-        steps=task_state.steps,
-        denoise=denoising_strength
-    )
-    initial_latent = core.encode_vae(vae=candidate_vae, pixels=initial_pixels)
-    B, C, H_latent, W_latent = initial_latent['samples'].shape
-    
-    task_state.uov_input_image = uov_input_image
-    task_state.denoising_strength = denoising_strength
-    task_state.initial_latent = initial_latent
-    task_state.width = W_latent * 8
-    task_state.height = H_latent * 8
-    print(f'Final resolution is {str((task_state.width, task_state.height))}.')
-    return direct_return
+    if uov_method == 'super-upscale':
+        # Prepare for sequential tiled refinement. NO VAE encode here to save VRAM.
+        task_state.uov_input_image = uov_input_image
+        task_state.width = uov_input_image.shape[1]
+        task_state.height = uov_input_image.shape[0]
+        print('Super-Upscale Stage 1 (GAN) completed. Passing to Tiled Refinement.')
+        return False # False triggers refinement in worker
 
 
 def prepare_upscale(task_state, progressbar_callback=None):
@@ -347,11 +345,14 @@ def prepare_upscale(task_state, progressbar_callback=None):
             if task_state.upscale_model not in available:
                 print(f"[Warning] Selected upscale model {task_state.upscale_model} not found. Fallback will be used.")
         
-        if 'fast' in uov_method:
+        if uov_method == 'upscale':
             skip_prompt_processing = True
             task_state.steps = 0
-        else:
-            task_state.steps = task_state.performance_selection.steps_uov()
+            # Note: bypass_alignment is implicit since skip_prompt_processing avoids SDXL specific steps
+        else: # Super-Upscale
+             # Use the current steps from state (user can still tweak them in Settings)
+             # But for UoV it usually defaults to something reasonable.
+             pass
     
     return skip_prompt_processing
 

@@ -10,7 +10,7 @@ import modules.sdxl_styles
 
 from modules.model_loader import load_file_from_url
 from modules.extra_utils import makedirs_with_log, get_files_from_folder, try_eval_env_var
-from modules.flags import OutputFormat, Performance, MetadataScheme
+from modules.flags import OutputFormat, MetadataScheme
 
 
 def get_config_path(key, default_value):
@@ -784,18 +784,18 @@ def downloading_sdxl_lcm_lora():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/sdxl_lcm_lora.safetensors',
         model_dir=paths_loras[0],
-        file_name=modules.flags.PerformanceLoRA.EXTREME_SPEED.value
+        file_name='sdxl_lcm_lora.safetensors'
     )
-    return modules.flags.PerformanceLoRA.EXTREME_SPEED.value
+    return 'sdxl_lcm_lora.safetensors'
 
 
 def downloading_sdxl_lightning_lora():
     load_file_from_url(
         url='https://huggingface.co/mashb1t/misc/resolve/main/sdxl_lightning_4step_lora.safetensors',
         model_dir=paths_loras[0],
-        file_name=modules.flags.PerformanceLoRA.LIGHTNING.value
+        file_name='sdxl_lightning_4step_lora.safetensors'
     )
-    return modules.flags.PerformanceLoRA.LIGHTNING.value
+    return 'sdxl_lightning_4step_lora.safetensors'
 
 
 def downloading_sdxl_hyper_sd_lora():

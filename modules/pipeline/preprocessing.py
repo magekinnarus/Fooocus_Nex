@@ -11,20 +11,18 @@ from modules.util import safe_str, remove_empty_str, parse_lora_references_from_
 
 def apply_overrides(task_state):
     """
-    Applies user-defined overrides for steps, width, and height.
+    Applies user-defined overrides for width and height.
+    Steps are now controlled directly by task_state.steps.
     """
     steps = task_state.steps
     width = task_state.width
     height = task_state.height
 
-    if task_state.overwrite_step > 0:
-        steps = task_state.overwrite_step
     if task_state.overwrite_width > 0:
         width = task_state.overwrite_width
     if task_state.overwrite_height > 0:
         height = task_state.overwrite_height
     
-    task_state.steps = steps
     task_state.width = width
     task_state.height = height
     return steps, width, height

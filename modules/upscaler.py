@@ -81,7 +81,16 @@ def clear_model_cache():
     global _cached_model, _cached_model_name
     _cached_model = None
     _cached_model_name = None
+    
+    import gc
+    gc.collect()
+    
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    
     ldm_patched.modules.model_management.soft_empty_cache()
+    print("Upscale model cache cleared and memory reclaimed.")
 
 def perform_upscale(img, model_name=None, scale_override=None):
     """
@@ -112,45 +121,55 @@ def perform_upscale(img, model_name=None, scale_override=None):
 
     model = load_model(model_name)
     device = ldm_patched.modules.model_management.get_torch_device()
+    
+    # Precision selection: prefer Float32 for GANs by default for maximum compatibility.
+    # Pascal (10x0) and older GPUs see massive performance hits in FP16.
+    model.float()
+    
+    # Optional: logic to re-enable FP16 for Ampere+ could go here, 
+    # but FP32 is currently the 'safe' baseline for global 30s target.
+    
     model.to(device)
 
-    # Detect scale
-    native_scale = get_model_scale(model)
+    # Detect scale and color space via Spandrel (chaiNNer standard)
+    native_scale = 4
+    is_bgr = True
+    
+    if hasattr(model, "architecture"):
+        # Spandrel Unified Metadata
+        native_scale = getattr(model, "scale", 4)
+        arch_id = model.architecture.id
+        
+        # Check tags and architecture for color space
+        if "RGB" in model.tags:
+            is_bgr = False
+        elif "BGR" in model.tags:
+            is_bgr = True
+        elif any(x in arch_id for x in ["RealESRGANv2", "RealPLKSR", "SCET", "SwinIR", "HAT"]):
+            is_bgr = False
+            
     target_scale = scale_override if scale_override is not None else native_scale
-
-    # Prepare image
-    in_img = core.numpy_to_pytorch(img).movedim(-1, -3).to(device)
-    # in_img is [1, C, H, W]
     
-    tile = 512
-    overlap = 32
+    from modules.upscale_engine import NexUpscaleEngine
+    import backend.resources as resources
+    import gc
     
-    oom = True
-    while oom:
-        try:
-            # tiled_scale expects [B, C, H, W]
-            # upscale_amount is the factor
-            s = ldm_patched.modules.utils.tiled_scale(
-                in_img, 
-                lambda a: model(a), 
-                tile_x=tile, 
-                tile_y=tile, 
-                overlap=overlap, 
-                upscale_amount=native_scale
-            )
-            oom = False
-        except ldm_patched.modules.model_management.OOM_EXCEPTION as e:
-            tile //= 2
-            if tile < 128:
-                model.cpu()
-                raise e
+    def upscale_fn(t):
+        return model(t)
+        
+    print(f"[Fooocus] Upscaling image via Nex-Engine (Native Space: {'BGR' if is_bgr else 'RGB'})...")
+    
+    # Get the model's actual dtype for perfect precision matching in the engine
+    m_dtype = next(model.model.parameters()).dtype if hasattr(model, "model") else torch.float32
+    
+    engine = NexUpscaleEngine()
+    result = engine.process(img, upscale_fn, native_scale, device, is_bgr=is_bgr, dtype=m_dtype)
 
-    # Offload
+    # Aggressive memory reclamation after the heavy GAN pass
     model.cpu()
-    
-    # Process output
-    s = torch.clamp(s.movedim(1, -1), min=0, max=1.0) # [1, H, W, C]
-    result = core.pytorch_to_numpy(s)[0]
+    resources.unload_all_models()
+    gc.collect()
+    resources.soft_empty_cache()
 
     # Handle scale override via bicubic resize if needed
     if target_scale != native_scale:

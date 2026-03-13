@@ -38,7 +38,7 @@ from modules.util import is_json
 def get_task(*args):
     global ctrls_keys
     named_args = dict(zip(ctrls_keys, args))
-    del named_args['_currentTask']
+    named_args.pop('_currentTask', None)
     return worker.AsyncTask(args=named_args)
 
 def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
@@ -211,6 +211,42 @@ def expand_mask(outpaint_selections, inpaint_mask_image):
     result_img.save(temp_path)
     
     return temp_path
+
+def uov_method_change(method):
+    if method == 'Super-Upscale':
+        # Force light model for Super-Upscale and disable dropdown
+        return gr.update(visible=True), gr.update(interactive=False, value='4xNomos2_otf_esrgan.pth'), gr.update(visible=True)
+    return gr.update(visible=False), gr.update(interactive=True), gr.update(visible=True)
+
+def update_upscale_scale_info(image_path, model_name, scale_override):
+    if image_path is None:
+        return gr.update(value="<b>Scale:</b> No image uploaded.")
+    
+    if model_name == 'None' or model_name is None:
+         return gr.update(value="<b>Scale:</b> No model selected.")
+    
+    import modules.upscaler as upscaler
+    try:
+        model = upscaler.load_model(model_name)
+        native_scale = upscaler.get_model_scale(model)
+        
+        if scale_override > 0:
+            return gr.update(value=f"<b>Scale:</b> {scale_override}x (Overridden)")
+        else:
+            return gr.update(value=f"<b>Scale:</b> {native_scale}x (Model default)")
+    except Exception as e:
+        return gr.update(value=f"<b>Scale:</b> Error detection: {str(e)}")
+
+def refresh_upscale_models():
+    import modules.upscaler as upscaler
+    models = upscaler.list_available_models()
+    default_model = 'None'
+    if '4xNomos2_otf_esrgan.pth' in models:
+        default_model = '4xNomos2_otf_esrgan.pth'
+    elif len(models) > 0:
+        default_model = models[0]
+        
+    return gr.update(choices=['None'] + models, value=default_model)
     
 def stop_clicked(currentTask):
     import backend.resources as resources
@@ -409,6 +445,15 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     outpaint_tab.select(lambda: 'outpaint', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     ip_tab.select(lambda: 'ip', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     metadata_tab.select(lambda: 'metadata', outputs=current_tab, queue=False, js=down_js, show_progress=False)
+
+    uov_method.change(uov_method_change, inputs=uov_method, outputs=[upscale_refinement_container, upscale_model, upscale_scale_override], queue=False, show_progress=False)
+    
+    uov_input_image.upload(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
+    uov_input_image.clear(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
+    upscale_model.change(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
+    upscale_scale_override.change(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
+
+    shared.gradio_root.load(refresh_upscale_models, outputs=upscale_model, queue=False, show_progress=False)
 
     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
