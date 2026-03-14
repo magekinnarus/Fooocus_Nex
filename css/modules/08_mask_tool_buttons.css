@@ -1,0 +1,106 @@
+#inpaint_canvas .canvas-tooltip-info {
+  top: 2px;
+}
+
+#inpaint_brush_color input[type=color] {
+  background: none;
+}
+
+.inpaint-hidden-mask-field {
+  display: none !important;
+}
+
+/* Custom Mask Tool Buttons & Indicators */
+.mask-tool-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 8px 14px !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  background: var(--button-secondary-background-fill) !important;
+  border: 1px solid var(--button-secondary-border-color) !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  color: var(--button-secondary-text-color) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: var(--button-secondary-shadow) !important;
+  user-select: none !important;
+}
+
+.mask-tool-btn:hover {
+  background: var(--button-secondary-background-fill-hover) !important;
+  border-color: var(--button-secondary-border-color-hover) !important;
+  transform: translateY(-1px);
+}
+
+.mask-tool-btn.active {
+  background: var(--button-secondary-background-fill-hover) !important;
+  border-color: var(--button-primary-background-fill) !important;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2) !important;
+}
+
+/* The "Light" indicator dot */
+.mask-tool-btn::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.3s ease;
+}
+
+/* Active light states */
+.mask-tool-btn.active::before {
+  background: #00ff00;
+  /* Default green */
+  box-shadow: 0 0 6px #00ff00, 0 0 10px rgba(0, 255, 0, 0.4);
+}
+
+#inpaint-mask-mode-context.active::before {
+  background: #00b4ff !important;
+  box-shadow: 0 0 8px #00b4ff, 0 0 12px rgba(0, 180, 255, 0.4) !important;
+}
+
+#inpaint-mask-mode-bb.active::before {
+  background: #ffcc00 !important;
+  box-shadow: 0 0 8px #ffcc00, 0 0 12px rgba(255, 204, 0, 0.4) !important;
+}
+
+#inpaint-mask-mode-disable.active::before,
+#outpaint-mask-mode-disable.active::before {
+  background: #888 !important;
+  box-shadow: 0 0 4px #888 !important;
+}
+
+#inpaint-mask-brush.active::before {
+  background: #00ffc3 !important;
+  box-shadow: 0 0 8px #00ffc3 !important;
+}
+
+#inpaint-mask-erase.active::before {
+  background: #ff4d4d !important;
+  box-shadow: 0 0 8px #ff4d4d !important;
+}
+
+#inpaint-mask-clear::before,
+#outpaint-mask-clear::before {
+  display: none !important;
+}
+
+#outpaint-mask-mode-bb.active::before {
+  background: #ffcc00 !important;
+  box-shadow: 0 0 8px #ffcc00, 0 0 12px rgba(255, 204, 0, 0.4) !important;
+}
+
+#outpaint-mask-brush.active::before {
+  background: #00ffc3 !important;
+  box-shadow: 0 0 8px #00ffc3 !important;
+}
+
+#outpaint-mask-erase.active::before {
+  background: #ff4d4d !important;
+  box-shadow: 0 0 8px #ff4d4d !important;
+}

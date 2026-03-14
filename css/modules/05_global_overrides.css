@@ -1,0 +1,30 @@
+.styler {
+  overflow: inherit !important;
+}
+
+.gradio-container {
+  overflow: visible;
+}
+
+/* Gradio 5 can keep hidden blocks in layout; collapse hidden preview/gallery containers */
+.main_view.hidden,
+.main_view[style*="display: none"] {
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+.main_view {
+  width: 100%;
+}
+
+.preview_panel img,
+.preview_panel canvas,
+.preview_panel video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}

@@ -1,0 +1,84 @@
+/* Nex-Monitor Premium Dashboard */
+#floating-monitor-panel {
+    z-index: 1000;
+}
+
+#floating-monitor-panel .panel-content {
+    padding: 10px;
+}
+
+.nex-monitor-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.nex-monitor-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.nex-monitor-ring-container {
+    position: relative;
+    width: 52px;
+    height: 52px;
+}
+
+.nex-monitor-ring-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.1);
+    stroke-width: 4;
+}
+
+.nex-monitor-ring-bar {
+    fill: none;
+    stroke: #4CAF50; /* Initial Green */
+    stroke-width: 4;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s ease, stroke 0.5s ease;
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+}
+
+.nex-monitor-label {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px;
+    font-weight: bold;
+    color: #fff;
+}
+
+.nex-monitor-title {
+    margin-top: 4px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* Color Thresholds for Rings */
+.nex-monitor-ring-bar.ring-warning { stroke: #FFC107 !important; }
+.nex-monitor-ring-bar.ring-danger { stroke: #F44336 !important; }
+
+/* Dynamic Colors */
+.ring-warning { stroke: #FFC107 !important; }
+.ring-danger { stroke: #F44336 !important; }
+
+/* Custom VRAM Details */
+.vram-info {
+    grid-column: span 3;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    text-align: center;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 6px;
+}

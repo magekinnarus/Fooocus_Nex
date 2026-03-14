@@ -1,0 +1,96 @@
+/* Step 2 Toolbox Outline */
+.step2-toolbox {
+  margin: 16px 0 !important;
+  padding: 18px !important;
+  border: 1px solid rgba(128, 128, 128, 0.25) !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  align-items: flex-start !important;
+  /* Prevents children from stretching */
+}
+
+/* Premium Status Light Button (for Step 2) */
+.step2-status-btn {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 10px 20px !important;
+  background: #666 !important;
+  /* light grey background */
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  /* Neutral outline when off */
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  width: max-content !important;
+  /* Wraps tightly to text */
+}
+
+/* Hide native checkbox box */
+.step2-status-btn input[type="checkbox"] {
+  display: none !important;
+}
+
+.step2-status-btn span {
+  font-weight: 700 !important;
+  font-size: 1rem !important;
+  color: #fff !important;
+  /* White lettering */
+  transition: color 0.3s !important;
+}
+
+/* Status Light Dot (Default: Off) */
+.step2-status-btn::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #222;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  flex-shrink: 0;
+}
+
+/* ACTIVE STATE - Orange Outline & Status Light */
+.step2-status-btn:has(input:checked) {
+  background: #777 !important;
+  border: 1px solid #ff8c00 !important;
+  /* Orange outline only when checked */
+  box-shadow: 0 0 12px rgba(255, 140, 0, 0.2) !important;
+}
+
+.step2-status-btn:has(input:checked)::before {
+  background: #ff8c00;
+  /* Orange */
+  box-shadow: 0 0 8px #ff8c00, 0 0 16px rgba(255, 140, 0, 0.8);
+}
+
+.step2-desc {
+  margin: 4px 0 0 !important;
+  font-size: 0.8rem !important;
+  color: #888 !important;
+  font-style: italic !important;
+}
+
+/* GIMP Targeting Highlight */
+.staging-item.gimp-targeted {
+  border: 2px solid #0096ff !important;
+  box-shadow: 0 0 12px rgba(0, 150, 255, 0.4);
+}
+
+.staging-item.gimp-targeted::after {
+  content: 'Targeted for GIMP';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 150, 255, 0.8);
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  text-align: center;
+  padding: 2px 0;
+}

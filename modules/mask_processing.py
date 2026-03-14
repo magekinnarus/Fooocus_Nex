@@ -382,17 +382,13 @@ def expand_mask_direction(mask_2d, direction, pixels=32):
     return result
 
 
-def save_to_temp_png(numpy_img):
+def save_to_png(numpy_img, filepath):
     """
-    Saves a numpy array to a temporary PNG file and returns the filepath.
-    Critical for the 'type=filepath' UI memory invariant to prevent RAM bloat.
+    Saves a numpy array to a specific PNG file.
     """
     if numpy_img is None:
         return None
     from PIL import Image
-    import modules.util
-    import modules.config
-    import os
     
     # Handle single channel (mask) or multi-channel
     if numpy_img.ndim == 2:
@@ -400,11 +396,41 @@ def save_to_temp_png(numpy_img):
     else:
         img = Image.fromarray(numpy_img)
         
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    img.save(filepath)
+    return filepath
+
+
+def save_to_temp_png(numpy_img):
+    """
+    Saves a numpy array to a temporary PNG file and returns the filepath.
+    Critical for the 'type=filepath' UI memory invariant to prevent RAM bloat.
+    """
+    if numpy_img is None:
+        return None
+    import modules.util
+    import modules.config
+    
     _, temp_path, _ = modules.util.generate_temp_filename(
         folder=modules.config.path_temp_outputs, extension='png')
-    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-    img.save(temp_path)
-    return temp_path
+    
+    return save_to_png(numpy_img, temp_path)
+
+
+def core_compute_inpaint_step1_context(original_image, context_mask):
+    """
+    Core logic for inpaint step 1 context computation.
+    Decoupled from Gradio and file saving.
+    """
+    from modules.pipeline.inpaint import InpaintPipeline
+    inpaint = InpaintPipeline()
+    ctx = inpaint.prepare(
+        image=original_image,
+        mask=context_mask,
+        context_mask=None,
+        extend_factor=1.2
+    )
+    return ctx
 
 
 def compute_inpaint_step1_context(img_data, mask_b64):
@@ -420,14 +446,7 @@ def compute_inpaint_step1_context(img_data, mask_b64):
     if context_mask is None:
         return gr.update(), gr.update(), gr.update()
         
-    from modules.pipeline.inpaint import InpaintPipeline
-    inpaint = InpaintPipeline()
-    ctx = inpaint.prepare(
-        image=original_image,
-        mask=context_mask,
-        context_mask=None,
-        extend_factor=1.2
-    )
+    ctx = core_compute_inpaint_step1_context(original_image, context_mask)
     
     # Save to disk to satisfy gr.Image(type='filepath') RAM invariant
     context_path = save_to_temp_png(context_mask)

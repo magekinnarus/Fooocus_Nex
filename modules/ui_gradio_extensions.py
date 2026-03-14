@@ -35,12 +35,23 @@ def read_asset(fn):
         return f.read()
 
 
+def get_module_assets(folder, extension):
+    full_path = os.path.join(script_path, folder.replace('/', os.sep))
+    if not os.path.exists(full_path):
+        return []
+
+    files = [f for f in os.listdir(full_path)
+             if f.endswith(extension) and not f.startswith('.')]
+    files.sort()
+    return [f'{folder}/{f}' for f in files]
+
+
 def javascript_html():
     samples_path = webpath(os.path.abspath('./sdxl_styles/samples/fooocus_v2.jpg'))
     head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
-    # Gradio 5 baseline mode: disable legacy UI augmentation scripts until
-    # each file is revalidated or rewritten against the new DOM model.
-    js_files = ['javascript/ui_utils.js', 'javascript/inpaint_mask.js', 'javascript/staging_viewer.js', 'javascript/nex_monitor.js']
+    
+    # Load all modules from javascript/modules/ in alphabetical order
+    js_files = get_module_assets('javascript/modules', '.js')
 
     for js_file in js_files:
         content = read_asset(js_file)
@@ -52,10 +63,17 @@ def javascript_html():
 
 
 def css_html():
-    content = read_asset('css/style.css')
-    if content:
-        return f'<style>{content}</style>'
-    return ""
+    # Base style
+    head = f'<style>{read_asset("css/style.css")}</style>\n'
+    
+    # Module styles
+    css_files = get_module_assets('css/modules', '.css')
+    for css_file in css_files:
+        content = read_asset(css_file)
+        if content:
+            head += f'<style>{content}</style>\n'
+            
+    return head
 
 
 def reload_javascript():

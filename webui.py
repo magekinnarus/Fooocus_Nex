@@ -554,8 +554,10 @@ def patched_create_app(*args, **kwargs):
     app = old_create_app(*args, **kwargs)
     from modules.staging_api import staging_router
     from modules.monitor_api import monitor_router
+    from modules.image_api import image_router
     app.include_router(staging_router)
     app.include_router(monitor_router)
+    app.include_router(image_router)
     return app
 
 gradio.routes.App.create_app = patched_create_app

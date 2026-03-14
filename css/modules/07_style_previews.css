@@ -1,0 +1,66 @@
+#imageARPreview {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  border: 2px solid red;
+  background: rgba(255, 0, 0, 0.3);
+  z-index: 900;
+  pointer-events: none;
+  display: none;
+}
+
+#stylePreviewOverlay {
+  opacity: 0;
+  pointer-events: none;
+  width: 128px;
+  height: 128px;
+  position: fixed;
+  top: 0px;
+  left: 0px;
+  border: solid 1px lightgrey;
+  transform: translate(-140px, 20px);
+  background-size: cover;
+  background-position: center;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+  z-index: 100;
+  transition: transform 0.1s ease, opacity 0.3s ease;
+}
+
+#stylePreviewOverlay.lower-half {
+  transform: translate(-140px, -140px);
+}
+
+/* scrollable box for style selections (Gradio 5 compatible selectors) */
+.style_selections {
+  min-height: 220px;
+}
+
+.style_selections .wrap[data-testid="checkbox-group"],
+.style_selections [data-testid="checkbox-group"] {
+  position: relative;
+  overflow: auto;
+  padding-right: 2px;
+  max-height: min(62vh, 720px);
+}
+
+.style_selections .wrap[data-testid="checkbox-group"] label,
+.style_selections [data-testid="checkbox-group"] label {
+  flex: calc(50% - 5px) !important;
+}
+
+.style_selections .wrap[data-testid="checkbox-group"] label span,
+.style_selections [data-testid="checkbox-group"] label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* styles preview tooltip */
+.preview-tooltip {
+  background-color: #fff8;
+  font-family: monospace;
+  text-align: center;
+  border-radius: 5px 5px 0px 0px;
+  display: none;
+  /* remove this to enable tooltip in preview image */
+}
