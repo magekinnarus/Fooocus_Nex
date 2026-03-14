@@ -199,6 +199,7 @@ path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/u
 path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/')
 path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/', True)
 path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/')
+path_removals = get_dir_or_set_default('path_removals', '../models/removals/')
 
 
 # Add unet path to checkpoints for base model selection

@@ -131,6 +131,11 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
                     gr.update(visible=False), \
                     gr.update(visible=True)
                 finished = True
+                
+                # Auto-populate mask if BGR was run
+                if task.state.current_tab == 'remove' and 'remove_bg' in task.state.goals and len(product) > 1:
+                    # product[0] = character, product[1] = mask
+                    task.yields.append(('bgr_mask_update', product[1]))
 
                 # delete Fooocus temp images, only keep gradio temp images
                 if args_manager.args.disable_image_log:
@@ -443,6 +448,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     uov_tab.select(lambda: 'uov', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     inpaint_tab.select(lambda: 'inpaint', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     outpaint_tab.select(lambda: 'outpaint', outputs=current_tab, queue=False, js=down_js, show_progress=False)
+    remove_tab.select(lambda: 'remove', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     ip_tab.select(lambda: 'ip', outputs=current_tab, queue=False, js=down_js, show_progress=False)
     metadata_tab.select(lambda: 'metadata', outputs=current_tab, queue=False, js=down_js, show_progress=False)
 
@@ -551,12 +557,18 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
         .then(fn=get_task, inputs=ctrls, outputs=currentTask) \
+        .then(fn=lambda t, tab, rbg, robj: (
+            t.state.goals.append('remove_bg') if tab == 'remove' and rbg else None,
+            t.state.goals.append('remove_obj') if tab == 'remove' and robj else None,
+            t
+        )[-1], inputs=[currentTask, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=currentTask) \
         .then(fn=generate_clicked, inputs=[currentTask, image_number, disable_preview],
               outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]) \
         .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),
               outputs=[generate_button, stop_button, skip_button, state_is_generating]) \
         .then(fn=update_history_link, outputs=history_link) \
         .then(fn=lambda: None, js='playNotification').then(fn=lambda: None, js='refresh_grid_delayed')
+
 
     reset_button.click(lambda: [
                                 worker.AsyncTask(args=[]),

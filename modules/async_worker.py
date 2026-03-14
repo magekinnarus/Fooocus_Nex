@@ -10,6 +10,8 @@ import backend.resources as resources
 import modules.config as config
 import modules.default_pipeline as pipeline
 import modules.flags as flags
+import modules.bgr_engine as bgr_engine
+import modules.objr_engine as objr_engine
 from modules.task_state import TaskState
 from modules.pipeline import (
     apply_overrides,
@@ -130,6 +132,43 @@ def handler(async_task: AsyncTask):
     s.width, s.height = int(dims[0]), int(dims[1])
 
     base_model_additional_loras = []
+
+    if flags.remove_bg in s.goals or flags.remove_obj in s.goals:
+        # User requested removals. Clean up diffusion models first to free ~2GB VRAM.
+        progressbar(s, 5, "Clearing VRAM for Removal Models...")
+        resources.soft_empty_cache()
+        resources.unload_all_models()
+
+        if flags.remove_bg in s.goals:
+            progressbar(s, 10, "Background Removal Starting...")
+            char_path, mask_path = bgr_engine.remove_background_from_file(
+                filepath=s.remove_base_image,
+                threshold=s.bgr_threshold,
+                jit=s.bgr_jit
+            )
+            bgr_engine.unload_model()
+            
+            # Record result
+            yield_result(s, [char_path, mask_path], 50 if flags.remove_obj in s.goals else 100, do_not_show_finished_images=True)
+            
+            # Handoff for sequential cleanup
+            if flags.remove_obj in s.goals:
+                s.remove_mask_image = mask_path
+
+        if flags.remove_obj in s.goals:
+            progressbar(s, 60 if flags.remove_bg in s.goals else 10, "Object Removal Starting...")
+            res_path = objr_engine.remove_object_from_file(
+                image_path=s.remove_base_image,
+                mask_path=s.remove_mask_image,
+                seed=s.seed,
+                mask_dilate=s.objr_mask_dilate
+            )
+            objr_engine.unload_model()
+            
+            yield_result(s, [res_path], 100, do_not_show_finished_images=True)
+
+        s.processing = False
+        return
     
     save_step1_result = None
     try:

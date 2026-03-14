@@ -49,6 +49,16 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('upscale_refinement_tile_overlap', 'upscale_refinement_tile_overlap', 128, int),
     ParamDef('upscale_refinement_denoise', 'upscale_refinement_denoise', 0.3, float),
 
+    # --- Remove (BGR/OBJR) ---
+    ParamDef('remove_base_image', 'remove_base_image', None),
+    ParamDef('remove_mask_image', 'remove_mask_image', None),
+    ParamDef('remove_bg_enabled', 'remove_bg_enabled', False, bool),
+    ParamDef('remove_obj_enabled', 'remove_obj_enabled', False, bool),
+    ParamDef('objr_mask_dilate', 'objr_mask_dilate', 0, int),
+    ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
+    ParamDef('bgr_jit', 'bgr_jit', True, bool),
+    ParamDef('objr_model', 'objr_model', 'Places_512_FullData_G.pth', str),
+
     # --- Outpaint ---
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),
     ParamDef('outpaint_input_image', 'outpaint_input_image', None),

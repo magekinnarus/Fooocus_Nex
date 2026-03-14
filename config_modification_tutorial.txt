@@ -36,6 +36,7 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "H:\\webui_forge_cu121_torch21\\webui\\models\\ControlNet"
     ],
     "path_clip_vision": "D:\\AI\\Fooocus_revision\\models\\clip_vision",
+    "path_removals": "D:\\AI\\Fooocus_Nex\\models\\removals",
     "path_wildcards": "D:\\AI\\Fooocus_Nex\\wildcards",
     "path_outputs": "D:\\AI\\Fooocus_Nex\\outputs",
     "temp_path": "C:\\Users\\ACER\\AppData\\Local\\Temp\\fooocus_Nex",

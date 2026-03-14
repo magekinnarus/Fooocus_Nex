@@ -53,7 +53,7 @@ async def upload_staging_image(
         if file is not None:
              # Handle direct file upload
             contents = await file.read()
-            img = Image.open(io.BytesIO(contents)).convert("RGB")
+            img = Image.open(io.BytesIO(contents)).convert("RGBA")
             
         elif url is not None:
              # Handle drag-and-drop URL copy
@@ -62,13 +62,13 @@ async def upload_staging_image(
                  header, encoded = url.split(",", 1)
                  import base64
                  data = base64.b64decode(encoded)
-                 img = Image.open(io.BytesIO(data)).convert("RGB")
+                 img = Image.open(io.BytesIO(data)).convert("RGBA")
              elif "/file=" in url:
                  # Handle Gradio Local URL
                  filepath = url.split("/file=", 1)[1].split("?")[0]
                  filepath = urllib.parse.unquote(filepath)
                  if os.path.exists(filepath):
-                     img = Image.open(filepath).convert("RGB")
+                     img = Image.open(filepath).convert("RGBA")
                  else:
                      raise HTTPException(status_code=400, detail="Local file not found")
              elif url.startswith("file://"):
@@ -76,7 +76,7 @@ async def upload_staging_image(
                  filepath = url.replace("file:///", "").replace("file://", "")
                  filepath = urllib.parse.unquote(filepath)
                  if os.path.exists(filepath):
-                     img = Image.open(filepath).convert("RGB")
+                     img = Image.open(filepath).convert("RGBA")
                  else:
                      raise HTTPException(status_code=400, detail="Local file not found")
              elif url.startswith("http"):
@@ -84,7 +84,7 @@ async def upload_staging_image(
                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                  with urllib.request.urlopen(req) as response:
                      data = response.read()
-                     img = Image.open(io.BytesIO(data)).convert("RGB")
+                     img = Image.open(io.BytesIO(data)).convert("RGBA")
              else:
                  raise HTTPException(status_code=400, detail="Invalid URL format")
         else:

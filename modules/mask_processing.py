@@ -79,8 +79,6 @@ def ensure_numpy(x, mode='RGB'):
         return np.array(x.convert(mode))
 
     if isinstance(x, np.ndarray):
-        if mode == 'RGB' and x.ndim == 3 and x.shape[2] == 4:
-            return x[:, :, :3]
         return x
 
     return None

@@ -4,6 +4,7 @@ from typing import List, NamedTuple
 import modules.core as core
 import modules.default_pipeline as pipeline
 import modules.flags as flags
+import modules.blending as blending
 from backend import resources
 
 class TileInfo(NamedTuple):
@@ -94,22 +95,13 @@ def split_into_tiles(image: np.ndarray, bucket_w: int, bucket_h: int, nx: int, n
             
     return tiles
 
-def generate_gaussian_weights(tile_w, tile_h):
-    def get_gaussian_1d(size):
-        center = (size - 1) / 2.0
-        sigma = size / 4.0
-        return np.exp(-((np.arange(size) - center) ** 2) / (2 * sigma ** 2))
-
-    w_x = get_gaussian_1d(tile_w)
-    w_y = get_gaussian_1d(tile_h)
-    return np.outer(w_y, w_x).astype(np.float32)
 
 def stitch_tiles(tiles: List[TileInfo], full_size: tuple, bucket_w: int, bucket_h: int) -> np.ndarray:
     H, W, C = full_size
     output = np.zeros((H, W, C), dtype=np.float32)
     weights = np.zeros((H, W), dtype=np.float32)
     
-    base_weight_map = generate_gaussian_weights(bucket_w, bucket_h)
+    base_weight_map = blending.sin_blend_2d(bucket_w, bucket_h).cpu().numpy()
     
     for t in tiles:
         x1, y1, x2, y2 = t.crop

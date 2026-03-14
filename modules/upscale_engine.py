@@ -44,10 +44,7 @@ def split_into_segments(length: int, tile_size: int, overlap: int) -> List[Segme
             
     return result
 
-def sin_blend_1d(length: int, device="cpu", dtype=torch.float32) -> torch.Tensor:
-    if length <= 0: return torch.tensor([], device=device, dtype=dtype)
-    t = torch.linspace(0, math.pi, length, device=device, dtype=dtype)
-    return 0.5 * (1.0 - torch.cos(t))
+from modules.blending import sin_blend_1d
 
 class RowBlender:
     def __init__(self, width: int, height: int, channels: int, device="cpu", dtype=torch.float32):

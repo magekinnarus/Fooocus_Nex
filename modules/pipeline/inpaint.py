@@ -10,6 +10,7 @@ import modules.core as core
 import modules.default_pipeline as pipeline
 
 import modules.flags as flags
+import modules.blending as blending
 
 
 @dataclass
@@ -286,6 +287,7 @@ class InpaintPipeline:
         fg = result.astype(np.float32)
         bg = context.original_image.astype(np.float32)
         w = context.blend_mask[:, :, None].astype(np.float32) / 255.0
+        w = blending.apply_sin2_curve(w)
         
         y = fg * w + bg * (1.0 - w)
         return y.clip(0, 255).astype(np.uint8)

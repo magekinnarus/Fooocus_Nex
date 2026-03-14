@@ -56,6 +56,7 @@ with shared.gradio_root:
     currentTask = gr.State(worker.AsyncTask(args=[]))
     inpaint_engine_state = gr.State('empty')
     outpaint_engine_state = gr.State('empty')
+    remove_mask_state = gr.State(None)
     with gr.Row():
         with gr.Column(scale=2):
             with gr.Row():
@@ -257,6 +258,26 @@ with shared.gradio_root:
                                 inpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
                                 inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 inpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
+                                
+
+
+                    with gr.Tab(label='Remove', id='remove_tab') as remove_tab:
+                        with gr.Row():
+                            with gr.Column():
+                                remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
+                                with gr.Row():
+                                    remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
+                                    remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
+                                
+                                gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
+                                        '* <b>Remove Object</b> uses MAT to clean the background defined by the mask.')
+
+                            with gr.Column():
+                                remove_mask_image = gr.Image(label='Mask / Character Result', sources='upload', type='filepath', height=500)
+                                bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
+                                bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
+                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='Expands the mask for Object Removal.')
+                                objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
 
 
 
@@ -433,6 +454,14 @@ with shared.gradio_root:
             'outpaint_step2_checkbox': outpaint_step2_checkbox,
             'outpaint_bb_image': outpaint_bb_image,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
+            'remove_base_image': remove_base_image,
+            'remove_mask_image': remove_mask_image,
+            'remove_bg_enabled': remove_bg_enabled,
+            'remove_obj_enabled': remove_obj_enabled,
+            'objr_mask_dilate': objr_mask_dilate,
+            'bgr_threshold': bgr_threshold,
+            'bgr_jit': bgr_jit,
+            'objr_model': objr_model,
         })
 
         if not args_manager.args.disable_metadata:
@@ -489,13 +518,18 @@ with shared.gradio_root:
             'metadata_json': metadata_json,
             'inpaint_context_mask_data': inpaint_context_mask_data,
             'inpaint_bb_mask_data': inpaint_bb_mask_data,
+            'inpaint_bb_mask_data': inpaint_bb_mask_data,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
             'upscale_refinement_container': upscale_refinement_container,
             'upscale_scale_info': upscale_scale_info,
             'gallery': gallery,
             'seed_random': seed_random,
             'inpaint_tab': inpaint_tab,
-            'outpaint_tab': outpaint_tab
+            'outpaint_tab': outpaint_tab,
+            'remove_tab': remove_tab,
+            'remove_bg_enabled': remove_bg_enabled,
+            'remove_obj_enabled': remove_obj_enabled,
+            'remove_mask_state': remove_mask_state
         }
 
         if not args_manager.args.disable_preset_selection:

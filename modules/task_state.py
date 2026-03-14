@@ -41,6 +41,11 @@ class TaskState:
     inpaint_additional_prompt: str = ""
     inpaint_mask_image: Optional[np.ndarray] = None
     inpaint_bb_image: Optional[np.ndarray] = None
+    remove_base_image: Optional[np.ndarray] = None
+    remove_bg_enabled: bool = False
+    remove_obj_enabled: bool = False
+    objr_mask_dilate: int = 0
+    objr_model: str = "Places_512_FullData_G.pth"
     disable_preview: bool = False
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False
@@ -77,12 +82,6 @@ class TaskState:
     save_metadata_to_images: bool = True
     metadata_scheme: Any = None # modules.flags.MetadataScheme
     cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)
-    
-    # --- Removed Feature placeholders (Tech Debt to be purged) ---
-    debugging_dino: bool = False
-    dino_erode_or_dilate: int = 0
-    debugging_enhance_masks_checkbox: bool = False
-    enhance_input_image: Optional[np.ndarray] = None
 
     # --- Runtime State ---
     yields: List[Any] = field(default_factory=list)

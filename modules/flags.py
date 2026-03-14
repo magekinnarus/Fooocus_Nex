@@ -7,6 +7,9 @@ enabled = 'Enabled'
 
 uov_list = [disabled, 'Upscale', 'Super-Upscale']
 
+remove_bg = 'remove_bg'
+remove_obj = 'remove_obj'
+
 
 CIVITAI_NO_KARRAS = ["euler", "euler_ancestral", "heun", "dpm_fast", "dpm_adaptive", "ddim", "uni_pc"]
 
