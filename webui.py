@@ -107,6 +107,24 @@ with shared.gradio_root:
                                     upscale_refinement_tile_overlap = gr.Slider(label='Refinement Tile Overlap', minimum=0, maximum=256, step=1, value=128)
                                 
                                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/390" target="_blank">\U0001F4D4 Documentation</a>')
+
+                    with gr.Tab(label='Remove', id='remove_tab') as remove_tab:
+                        with gr.Row():
+                            with gr.Column():
+                                remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
+                                with gr.Row():
+                                    remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
+                                    remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
+                                
+                                gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
+                                        '* <b>Remove Object</b> uses MAT to clean the background defined by the mask.')
+
+                            with gr.Column():
+                                remove_mask_image = gr.Image(label='Mask / Character Result', sources='upload', type='filepath', height=500)
+                                bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
+                                bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
+                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='Expands the mask for Object Removal.')
+                                objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
                         ip_types = []
@@ -260,24 +278,6 @@ with shared.gradio_root:
                                 inpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
                                 
 
-
-                    with gr.Tab(label='Remove', id='remove_tab') as remove_tab:
-                        with gr.Row():
-                            with gr.Column():
-                                remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
-                                with gr.Row():
-                                    remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
-                                    remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
-                                
-                                gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
-                                        '* <b>Remove Object</b> uses MAT to clean the background defined by the mask.')
-
-                            with gr.Column():
-                                remove_mask_image = gr.Image(label='Mask / Character Result', sources='upload', type='filepath', height=500)
-                                bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
-                                bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
-                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='Expands the mask for Object Removal.')
-                                objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
 
 
 
