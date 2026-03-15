@@ -1,4 +1,7 @@
 (() => {
+    const ACTIVE_MASK_OPACITY = '0.6';
+    const INACTIVE_MASK_OPACITY = '0.35';
+
     const MODES = {
         context: {
             rootId: 'inpaint_canvas',
@@ -35,6 +38,7 @@
         brushSize: 36,
         resizeBound: false,
         initialized: false,
+        shortcutsBound: false,
         enabledModes: {
             context: false,
             bb: false,
@@ -149,6 +153,67 @@
         state.tool = tool;
         updateToolButtons();
         setStatus(tool === 'brush' ? `${currentModeName()} brush active.` : `${currentModeName()} eraser active.`);
+    }
+
+    function isEditableTarget(target) {
+        if (!target) return false;
+        if (target.isContentEditable) return true;
+        const tagName = target.tagName ? target.tagName.toLowerCase() : '';
+        if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true;
+        return !!target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+    }
+
+    function getBrushSizeInput(mode = state.activeMode) {
+        return mode === 'outpaint_bb'
+            ? document.getElementById('outpaint-mask-size')
+            : document.getElementById('inpaint-mask-size');
+    }
+
+    function setBrushSize(nextSize, mode = state.activeMode) {
+        const input = getBrushSizeInput(mode);
+        const min = input ? (parseInt(input.min, 10) || 8) : 8;
+        const max = input ? (parseInt(input.max, 10) || 160) : 160;
+        const clamped = Math.max(min, Math.min(max, nextSize));
+        state.brushSize = clamped;
+        if (input) {
+            input.value = String(clamped);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        return clamped;
+    }
+
+    function handleMaskHotkeys(event) {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (isEditableTarget(event.target)) return;
+        if (!state.enabledModes[state.activeMode]) return;
+
+        const key = (event.key || '').toLowerCase();
+        if (!key) return;
+
+        if (key === 'b') {
+            setTool('brush');
+            event.preventDefault();
+            return;
+        }
+
+        if (key === 'e') {
+            setTool('erase');
+            event.preventDefault();
+            return;
+        }
+
+        if (key === 'c') {
+            clearMask(state.activeMode);
+            event.preventDefault();
+            return;
+        }
+
+        if (key === 'q' || key === 'w') {
+            const delta = key === 'q' ? -4 : 4;
+            const nextSize = setBrushSize(state.brushSize + delta, state.activeMode);
+            setStatus(`${currentModeName()} brush size: ${nextSize}px`);
+            event.preventDefault();
+        }
     }
 
     function setActiveMode(mode) {
@@ -317,7 +382,7 @@
             zIndex: '20',
             cursor: 'crosshair',
             touchAction: 'none',
-            opacity: '0.35',
+            opacity: INACTIVE_MASK_OPACITY,
             pointerEvents: 'none',
         });
         surface.host.appendChild(canvas);
@@ -385,7 +450,7 @@
             const active = mode === state.activeMode && state.enabledModes[mode] && surface.img && surface.img.src && surface.img.style.display !== 'none';
             surface.canvas.style.pointerEvents = active ? 'auto' : 'none';
             surface.canvas.style.cursor = active ? 'crosshair' : 'default';
-            surface.canvas.style.opacity = active ? '1' : '0.35';
+            surface.canvas.style.opacity = active ? ACTIVE_MASK_OPACITY : INACTIVE_MASK_OPACITY;
             surface.canvas.style.display = state.enabledModes[mode] ? 'block' : 'none';
         });
     }
@@ -547,6 +612,11 @@
         }
 
         updateModeButtons();
+        if (!state.shortcutsBound) {
+            document.addEventListener('keydown', handleMaskHotkeys);
+            state.shortcutsBound = true;
+        }
+
         updateToolButtons();
         
         // Mark as initialized if we found the main controls
