@@ -47,6 +47,10 @@ from modules.staging_api import staging_router
 
 title = f'Fooocus {fooocus_version.version}'
 
+def make_nex_image_slot(slot_id, bridge_id, label, extra_attrs=''):
+    attrs = f' {extra_attrs}' if extra_attrs else ''
+    return f'<nex-image-slot id="{slot_id}" data-bridge-id="{bridge_id}" data-label="{label}"{attrs}></nex-image-slot>'
+
 if isinstance(args_manager.args.preset, str):
     title += ' ' + args_manager.args.preset
 
@@ -95,7 +99,10 @@ with shared.gradio_root:
                     with gr.Tab(label='Upscale/Superupscale', id='uov_tab') as uov_tab:
                         with gr.Row():
                             with gr.Column():
-                                uov_input_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False)
+                                gr.HTML(make_nex_image_slot('uov_input_slot', 'uov_input_image_bridge', 'Image', 'data-upload-mode="api" data-path-field-id="uov_input_image_path" data-workspace-field-id="uov_input_workspace_id"'))
+                                uov_input_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, elem_id='uov_input_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                uov_input_image_path = gr.Textbox(value='', visible=True, elem_id='uov_input_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                uov_input_workspace_id = gr.Textbox(value='', visible=True, elem_id='uov_input_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                             with gr.Column():
                                 uov_method = gr.Radio(label='Method:', choices=['Upscale', 'Super-Upscale'], value='Upscale')
                                 upscale_model = gr.Dropdown(label='Upscale Model', choices=['None'], value='None')
@@ -111,7 +118,10 @@ with shared.gradio_root:
                     with gr.Tab(label='Remove', id='remove_tab') as remove_tab:
                         with gr.Row():
                             with gr.Column():
-                                remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
+                                gr.HTML(make_nex_image_slot('remove_base_image_slot', 'remove_base_image_bridge', 'Base Image', 'data-upload-mode="api" data-path-field-id="remove_base_image_path" data-workspace-field-id="remove_base_workspace_id"'))
+                                remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False, elem_id='remove_base_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                remove_base_image_path = gr.Textbox(value='', visible=True, elem_id='remove_base_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                remove_base_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_base_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 with gr.Row():
                                     remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
                                     remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
@@ -120,13 +130,15 @@ with shared.gradio_root:
                                         '* <b>Remove Object</b> uses MAT to clean the background defined by the mask.')
 
                             with gr.Column():
-                                remove_mask_image = gr.Image(label='Mask / Character Result', sources='upload', type='filepath', height=500)
+                                gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask'))
+                                remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
                                 bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
                                 bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
                                 objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='Expands the mask for Object Removal.')
                                 objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
+                        cn_image_paths = []
                         ip_types = []
                         ip_stops = []
                         ip_weights = []
@@ -135,8 +147,12 @@ with shared.gradio_root:
 
                         def create_ip_slot(image_count):
                             with gr.Column():
-                                ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count])
+                                gr.HTML(make_nex_image_slot(f'ip_image_slot_{image_count}', f'ip_image_bridge_{image_count}', f'Image {image_count}', f'data-upload-mode="api" data-path-field-id="cn_{image_count - 1}_image_path" data-workspace-field-id="cn_{image_count - 1}_workspace_id"'))
+                                ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count], elem_id=f'ip_image_bridge_{image_count}', elem_classes=['nex-image-slot-bridge'])
+                                cn_image_path = gr.Textbox(value=modules.config.default_ip_images[image_count], visible=True, elem_id=f'cn_{image_count - 1}_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                cn_workspace_id = gr.Textbox(value='', visible=True, elem_id=f'cn_{image_count - 1}_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 ip_images.append(ip_image)
+                                cn_image_paths.append(cn_image_path)
                                 ip_ctrls.append(ip_image)
                                 with gr.Column(visible=True) as ad_col:
                                     with gr.Row():
@@ -179,10 +195,15 @@ with shared.gradio_root:
                     with gr.Tab(label='Outpaint', id='outpaint_tab') as outpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                outpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False)
+                                gr.HTML(make_nex_image_slot('outpaint_input_slot', 'outpaint_input_image_bridge', 'Base Image', 'data-upload-mode="api" data-path-field-id="outpaint_input_image_path" data-workspace-field-id="outpaint_input_workspace_id"'))
+                                outpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False, elem_id='outpaint_input_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                outpaint_input_image_path = gr.Textbox(value='', visible=True, elem_id='outpaint_input_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                outpaint_input_workspace_id = gr.Textbox(value='', visible=True, elem_id='outpaint_input_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=['Left'], label='Outpaint Direction')
                                 with gr.Column(elem_classes=["step2-toolbox"]):
-                                    outpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    outpaint_prepare_button = gr.Button(value='Prepare Outpaint', variant='primary', elem_id='outpaint_prepare_button')
+                                    outpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, visible=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    outpaint_prepare_notice = gr.Markdown(value='')
                                     gr.HTML('<p class="step2-desc">Using base image, BB image, and BB mask to expand the image.</p>')
 
                                 outpaint_panel_result = outpaint_panel.build_outpaint_tab()
@@ -193,7 +214,9 @@ with shared.gradio_root:
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
                             with gr.Column(visible=True) as outpaint_mask_generation_col:
-                                outpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='outpaint_bb_canvas')
+                                gr.HTML(make_nex_image_slot('outpaint_bb_canvas', 'outpaint_bb_image_bridge', 'BB Image', 'data-upload-mode="api" data-path-field-id="outpaint_bb_image_path" data-workspace-field-id="outpaint_bb_workspace_id" data-tool-group="outpaint"'))
+                                outpaint_bb_image_path = gr.Textbox(value='', visible=True, elem_id='outpaint_bb_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                outpaint_bb_workspace_id = gr.Textbox(value='', visible=True, elem_id='outpaint_bb_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 gr.HTML("""
 <div id="outpaint-mask-tools" class="mask-workflow-toolbar" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
@@ -202,12 +225,6 @@ with shared.gradio_root:
       <button type="button" class="mask-tool-btn" id="outpaint-mask-mode-bb" title="Enable BB Mask">BB Mask</button>
       <button type="button" class="mask-tool-btn active" id="outpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
-    <div style="width:1px; height:22px; background:rgba(128,128,128,0.3); margin:0 4px;"></div>
-    <div style="display:flex; gap:8px;">
-      <button type="button" class="mask-tool-btn" id="outpaint-mask-brush">Brush</button>
-      <button type="button" class="mask-tool-btn" id="outpaint-mask-erase">Erase</button>
-    </div>
-    <button type="button" class="mask-tool-btn" id="outpaint-mask-clear" style="margin-left:auto; opacity:0.8;">Clear All</button>
   </div>
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
     <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
@@ -219,13 +236,18 @@ with shared.gradio_root:
 </div>
 """)
                                 outpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="outpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
-                                outpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='outpaint_mask_canvas')
+                                gr.HTML(make_nex_image_slot('outpaint_mask_canvas', 'outpaint_mask_image_bridge', 'BB Mask', 'data-upload-mode="api" data-path-field-id="outpaint_mask_image_path" data-workspace-field-id="outpaint_mask_workspace_id"'))
+                                outpaint_mask_image_path = gr.Textbox(value='', visible=True, elem_id='outpaint_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                outpaint_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='outpaint_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 outpaint_mask_expansion_button = gr.Button(value='Expand Mask (32 pixels)', visible=False)
 
                     with gr.Tab(label='Inpaint', id='inpaint_tab') as inpaint_tab:
                         with gr.Row():
                             with gr.Column():
-                                inpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, elem_id='inpaint_canvas', show_label=False)
+                                gr.HTML(make_nex_image_slot('inpaint_canvas', 'inpaint_input_image_bridge', 'Base Image', 'data-upload-mode="api" data-path-field-id="inpaint_input_image_path" data-workspace-field-id="inpaint_input_workspace_id" data-tool-group="inpaint-base"'))
+                                inpaint_input_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, elem_id='inpaint_input_image_bridge', show_label=False, elem_classes=['nex-image-slot-bridge'])
+                                inpaint_input_image_path = gr.Textbox(value='', visible=True, elem_id='inpaint_input_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                inpaint_input_workspace_id = gr.Textbox(value='', visible=True, elem_id='inpaint_input_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 inpaint_context_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_context_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
                                 gr.HTML("""
 <div id="inpaint-mask-tools" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
@@ -236,12 +258,6 @@ with shared.gradio_root:
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
       <button type="button" class="mask-tool-btn active" id="inpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
-    <div style="width:1px; height:22px; background:rgba(128,128,128,0.3); margin:0 4px;"></div>
-    <div style="display:flex; gap:8px;">
-      <button type="button" class="mask-tool-btn" id="inpaint-mask-brush">Brush</button>
-      <button type="button" class="mask-tool-btn" id="inpaint-mask-erase">Erase</button>
-    </div>
-    <button type="button" class="mask-tool-btn" id="inpaint-mask-clear" style="margin-left:auto; opacity:0.8;">Clear All</button>
   </div>
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
     <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
@@ -259,8 +275,8 @@ with shared.gradio_root:
                                                                      components=[inpaint_additional_prompt],
                                                                      visible=True)
                                 with gr.Column(elem_classes=["step2-toolbox"]):
-                                    inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
-                                    gr.HTML('<p class="step2-desc">Using base image, context mask, BB image, and BB mask to modify the image.</p>')
+                                    inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, visible=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    gr.HTML('<p class="step2-desc step2-desc--inpaint"><span class="step2-desc__title">Prepare Inpaint</span><span class="step2-desc__body">By adding or drawing masks to fill the Inpaint input images and press Generate to complete the process.</span></p>')
 
                                 inpaint_panel_result = inpaint_panel.build_inpaint_tab()
                                 debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
@@ -269,13 +285,22 @@ with shared.gradio_root:
                                 inpaint_strength = inpaint_panel_result['inpaint_strength']
                                 inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
 
-                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
+                                gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">Documentation</a>')
 
                             with gr.Column(visible=True) as inpaint_mask_generation_col:
-                                inpaint_context_mask_image = gr.Image(label='Context Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_canvas')
-                                inpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_canvas')
+                                gr.HTML(make_nex_image_slot('inpaint_context_mask_canvas', 'inpaint_context_mask_image_bridge', 'Context Mask', 'data-upload-mode="api" data-path-field-id="inpaint_context_mask_image_path" data-workspace-field-id="inpaint_context_mask_workspace_id"'))
+                                inpaint_context_mask_image = gr.Image(label='Context Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_context_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                inpaint_context_mask_image_path = gr.Textbox(value='', visible=True, elem_id='inpaint_context_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                inpaint_context_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='inpaint_context_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                gr.HTML(make_nex_image_slot('inpaint_bb_canvas', 'inpaint_bb_image_bridge', 'BB Image', 'data-upload-mode="api" data-path-field-id="inpaint_bb_image_path" data-workspace-field-id="inpaint_bb_workspace_id" data-tool-group="inpaint-bb"'))
+                                inpaint_bb_image = gr.Image(label='BB Image', sources='upload', type='filepath', height=500, elem_id='inpaint_bb_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                inpaint_bb_image_path = gr.Textbox(value='', visible=True, elem_id='inpaint_bb_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                inpaint_bb_workspace_id = gr.Textbox(value='', visible=True, elem_id='inpaint_bb_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 inpaint_bb_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_bb_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
-                                inpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_canvas')
+                                gr.HTML(make_nex_image_slot('inpaint_mask_canvas', 'inpaint_mask_image_bridge', 'BB Mask', 'data-upload-mode="api" data-path-field-id="inpaint_mask_image_path" data-workspace-field-id="inpaint_mask_workspace_id"'))
+                                inpaint_mask_image = gr.Image(label='BB Mask', sources='upload', type='filepath', height=500, elem_id='inpaint_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                inpaint_mask_image_path = gr.Textbox(value='', visible=True, elem_id='inpaint_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                inpaint_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='inpaint_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 
 
 
@@ -295,11 +320,10 @@ with shared.gradio_root:
 
 
 
-
         with gr.Column(scale=1, visible=True) as advanced_column:
             with gr.Row():
-                gr.HTML('<button id="staging-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">🗂️ Open Staging Palette</button>')
-                gr.HTML('<button id="monitor-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">📊 Monitor Dashboard</button>')
+                gr.HTML('<button id="staging-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">\U0001F5C2\uFE0F Open Staging Palette</button>')
+                gr.HTML('<button id="monitor-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">\U0001F4CA Monitor Dashboard</button>')
             
             with gr.Tab(label='Settings'):
                 settings_panel_result = settings_panel.build_settings_tab()
@@ -405,19 +429,19 @@ with shared.gradio_root:
             'input_image_checkbox': input_image_checkbox,
             'current_tab': current_tab,
             'uov_method': uov_method,
-            'uov_input_image': uov_input_image,
+            'uov_input_image': uov_input_image_path,
             'upscale_model': upscale_model,
             'upscale_scale_override': upscale_scale_override,
             'upscale_refinement_denoise': upscale_refinement_denoise,
             'upscale_refinement_tile_overlap': upscale_refinement_tile_overlap,
             'outpaint_selections': outpaint_selections,
-            'outpaint_input_image': outpaint_input_image,
-            'outpaint_mask_image': outpaint_mask_image,
-            'inpaint_input_image': inpaint_input_image,
-            'inpaint_context_mask_image': inpaint_context_mask_image,
+            'outpaint_input_image': outpaint_input_image_path,
+            'outpaint_mask_image': outpaint_mask_image_path,
+            'inpaint_input_image': inpaint_input_image_path,
+            'inpaint_context_mask_image': inpaint_context_mask_image_path,
             'inpaint_additional_prompt': inpaint_additional_prompt,
-            'inpaint_mask_image': inpaint_mask_image,
-            'inpaint_bb_image': inpaint_bb_image,
+            'inpaint_mask_image': inpaint_mask_image_path,
+            'inpaint_bb_image': inpaint_bb_image_path,
             'disable_preview': disable_preview,
             'disable_intermediate_results': disable_intermediate_results,
             'disable_seed_increment': disable_seed_increment,
@@ -452,9 +476,9 @@ with shared.gradio_root:
             'outpaint_strength': outpaint_strength,
             'inpaint_outpaint_expansion_size': inpaint_outpaint_expansion_size,
             'outpaint_step2_checkbox': outpaint_step2_checkbox,
-            'outpaint_bb_image': outpaint_bb_image,
+            'outpaint_bb_image': outpaint_bb_image_path,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
-            'remove_base_image': remove_base_image,
+            'remove_base_image': remove_base_image_path,
             'remove_mask_image': remove_mask_image,
             'remove_bg_enabled': remove_bg_enabled,
             'remove_obj_enabled': remove_obj_enabled,
@@ -469,7 +493,7 @@ with shared.gradio_root:
             ctrls_dict['metadata_scheme'] = metadata_scheme
 
         for i in range(modules.config.default_controlnet_image_count):
-            ctrls_dict[f'cn_{i}_image'] = ip_ctrls[i * 4]
+            ctrls_dict[f'cn_{i}_image'] = cn_image_paths[i]
             ctrls_dict[f'cn_{i}_stop'] = ip_ctrls[i * 4 + 1]
             ctrls_dict[f'cn_{i}_weight'] = ip_ctrls[i * 4 + 2]
             ctrls_dict[f'cn_{i}_type'] = ip_ctrls[i * 4 + 3]
@@ -518,8 +542,22 @@ with shared.gradio_root:
             'metadata_json': metadata_json,
             'inpaint_context_mask_data': inpaint_context_mask_data,
             'inpaint_bb_mask_data': inpaint_bb_mask_data,
-            'inpaint_bb_mask_data': inpaint_bb_mask_data,
+            'inpaint_input_image_path': inpaint_input_image_path,
+            'inpaint_input_workspace_id': inpaint_input_workspace_id,
+            'inpaint_context_mask_image_path': inpaint_context_mask_image_path,
+            'inpaint_context_mask_workspace_id': inpaint_context_mask_workspace_id,
+            'inpaint_bb_image_path': inpaint_bb_image_path,
+            'inpaint_bb_workspace_id': inpaint_bb_workspace_id,
+            'inpaint_mask_image_path': inpaint_mask_image_path,
+            'inpaint_mask_workspace_id': inpaint_mask_workspace_id,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
+            'outpaint_input_workspace_id': outpaint_input_workspace_id,
+            'outpaint_mask_image_path': outpaint_mask_image_path,
+            'outpaint_mask_workspace_id': outpaint_mask_workspace_id,
+            'outpaint_bb_image_path': outpaint_bb_image_path,
+            'outpaint_bb_workspace_id': outpaint_bb_workspace_id,
+            'outpaint_prepare_button': outpaint_prepare_button,
+            'outpaint_prepare_notice': outpaint_prepare_notice,
             'upscale_refinement_container': upscale_refinement_container,
             'upscale_scale_info': upscale_scale_info,
             'gallery': gallery,

@@ -160,7 +160,6 @@ class InpaintPipeline:
         bb_calculation_mask = mask
         if context_mask is not None:
             bb_calculation_mask = np.maximum(mask, context_mask)
-        print(f"[Debug] inpaint.prepare() source image size: {image.shape[1]}x{image.shape[0]}")
             
         mask_indices = np.where(bb_calculation_mask > 127)
         if len(mask_indices[0]) == 0:
@@ -169,11 +168,9 @@ class InpaintPipeline:
             side = min(H, W)
             y1, y2 = (H - side) // 2, (H + side) // 2
             x1, x2 = (W - side) // 2, (W + side) // 2
-            print("[Debug] inpaint.prepare() no Step 1 mask found; using center-square fallback bbox.")
         else:
             y1, y2 = np.min(mask_indices[0]), np.max(mask_indices[0])
             x1, x2 = np.min(mask_indices[1]), np.max(mask_indices[1])
-            print(f"[Debug] inpaint.prepare() tight bbox from mask: x=({x1}, {x2}) y=({y1}, {y2}) size={x2 - x1 + 1}x{y2 - y1 + 1}")
         
         # 2. Choose a native SDXL aspect ratio first, then grow the source-space
         # crop to that exact aspect so the cropped BB and the upscaled BB align 1:1.
@@ -186,7 +183,6 @@ class InpaintPipeline:
         desired_w = max(1, int(bb_w * extend_factor))
 
         target_w, target_h, crop_w, crop_h = self.fit_box_to_native_sdxl_crop(desired_w, desired_h, W, H)
-        print(f"[Debug] inpaint.prepare() native target selected: {target_w}x{target_h}; source crop size={crop_w}x{crop_h} center=({center_x}, {center_y})")
 
         y1, y2 = center_y - crop_h // 2, center_y + (crop_h + 1) // 2
         x1, x2 = center_x - crop_w // 2, center_x + (crop_w + 1) // 2
@@ -209,14 +205,12 @@ class InpaintPipeline:
         x1 = max(0, x1)
         y2 = min(H, y2)
         x2 = min(W, x2)
-        print(f"[Debug] inpaint.prepare() clamped native crop bbox: x=({x1}, {x2}) y=({y1}, {y2}) size={x2 - x1}x{y2 - y1}")
 
         # 4. Crop the real source-image BB using the selected native aspect ratio.
         bb_image = image[y1:y2, x1:x2]
         bb_mask = mask[y1:y2, x1:x2]
 
         actual_h, actual_w = bb_image.shape[:2]
-        print(f"[Debug] inpaint.prepare() crop before resize: {actual_w}x{actual_h}; native output: {target_w}x{target_h}")
 
         # 5. Upscale the native-AR crop to the selected SDXL resolution.
         bb_image = resample_image(bb_image, target_w, target_h)

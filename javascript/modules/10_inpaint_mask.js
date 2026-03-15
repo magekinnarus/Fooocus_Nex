@@ -127,13 +127,14 @@
         if (inpaintDisableBtn) inpaintDisableBtn.classList.toggle('active', !state.enabledModes.context && !state.enabledModes.bb);
         if (outpaintDisableBtn) outpaintDisableBtn.classList.toggle('active', !state.enabledModes.outpaint_bb);
     }
-
     function updateToolButtons() {
-        ['inpaint', 'outpaint'].forEach(prefix => {
-            const brushBtn = document.getElementById(`${prefix}-mask-brush`);
-            const eraseBtn = document.getElementById(`${prefix}-mask-erase`);
-            if (brushBtn) brushBtn.classList.toggle('active', state.tool === 'brush');
-            if (eraseBtn) eraseBtn.classList.toggle('active', state.tool === 'erase');
+        ['inpaint-mask-brush', 'inpaint-context-brush', 'inpaint-bb-brush', 'outpaint-mask-brush'].forEach((id) => {
+            const button = document.getElementById(id);
+            if (button) button.classList.toggle('active', state.tool === 'brush');
+        });
+        ['inpaint-mask-erase', 'inpaint-context-erase', 'inpaint-bb-erase', 'outpaint-mask-erase'].forEach((id) => {
+            const button = document.getElementById(id);
+            if (button) button.classList.toggle('active', state.tool === 'erase');
         });
     }
 
@@ -415,6 +416,12 @@
         const brushBtn = document.getElementById('inpaint-mask-brush');
         const eraseBtn = document.getElementById('inpaint-mask-erase');
         const clearBtn = document.getElementById('inpaint-mask-clear');
+        const contextBrushBtn = document.getElementById('inpaint-context-brush');
+        const contextEraseBtn = document.getElementById('inpaint-context-erase');
+        const contextClearBtn = document.getElementById('inpaint-context-clear');
+        const bbBrushBtn = document.getElementById('inpaint-bb-brush');
+        const bbEraseBtn = document.getElementById('inpaint-bb-erase');
+        const bbClearBtn = document.getElementById('inpaint-bb-clear');
         const sizeInput = document.getElementById('inpaint-mask-size');
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
@@ -431,6 +438,48 @@
         if (clearBtn && !clearBtn.dataset.bound) {
             clearBtn.dataset.bound = '1';
             clearBtn.addEventListener('click', () => clearMask());
+        }
+        if (contextBrushBtn && !contextBrushBtn.dataset.bound) {
+            contextBrushBtn.dataset.bound = '1';
+            contextBrushBtn.addEventListener('click', () => {
+                setActiveMode('context');
+                setTool('brush');
+            });
+        }
+        if (contextEraseBtn && !contextEraseBtn.dataset.bound) {
+            contextEraseBtn.dataset.bound = '1';
+            contextEraseBtn.addEventListener('click', () => {
+                setActiveMode('context');
+                setTool('erase');
+            });
+        }
+        if (contextClearBtn && !contextClearBtn.dataset.bound) {
+            contextClearBtn.dataset.bound = '1';
+            contextClearBtn.addEventListener('click', () => {
+                setActiveMode('context');
+                clearMask('context');
+            });
+        }
+        if (bbBrushBtn && !bbBrushBtn.dataset.bound) {
+            bbBrushBtn.dataset.bound = '1';
+            bbBrushBtn.addEventListener('click', () => {
+                setActiveMode('bb');
+                setTool('brush');
+            });
+        }
+        if (bbEraseBtn && !bbEraseBtn.dataset.bound) {
+            bbEraseBtn.dataset.bound = '1';
+            bbEraseBtn.addEventListener('click', () => {
+                setActiveMode('bb');
+                setTool('erase');
+            });
+        }
+        if (bbClearBtn && !bbClearBtn.dataset.bound) {
+            bbClearBtn.dataset.bound = '1';
+            bbClearBtn.addEventListener('click', () => {
+                setActiveMode('bb');
+                clearMask('bb');
+            });
         }
         if (sizeInput && !sizeInput.dataset.bound) {
             sizeInput.dataset.bound = '1';
@@ -452,6 +501,7 @@
             inpaintDisableBtn.addEventListener('click', () => disableMasking('inpaint'));
         }
 
+        // --- Outpaint Tab Controls ---
         // --- Outpaint Tab Controls ---
         const outpaintBrushBtn = document.getElementById('outpaint-mask-brush');
         const outpaintEraseBtn = document.getElementById('outpaint-mask-erase');

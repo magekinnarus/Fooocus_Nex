@@ -11,6 +11,8 @@ from PIL import Image
 import os
 import io
 import base64
+import uuid
+import modules.config
 
 
 def rgba_to_black_bg_rgb(x):
@@ -417,6 +419,116 @@ def save_to_temp_png(numpy_img):
     return save_to_png(numpy_img, temp_path)
 
 
+
+def ensure_workspace_dir(workspace_id=None, prefix='mask_slot'):
+    if workspace_id and all(c.isalnum() or c == '_' for c in workspace_id):
+        resolved_workspace_id = workspace_id
+    else:
+        resolved_workspace_id = f"{prefix}_{uuid.uuid4().hex}"
+
+    root = os.path.abspath(os.path.join(modules.config.path_outputs, "workspaces"))
+    os.makedirs(root, exist_ok=True)
+    workspace_dir = os.path.join(root, resolved_workspace_id)
+    os.makedirs(workspace_dir, exist_ok=True)
+    return resolved_workspace_id, workspace_dir
+
+
+def save_to_workspace_png(numpy_img, workspace_id=None, filename='base.png', prefix='mask_slot'):
+    if numpy_img is None:
+        return None, workspace_id
+
+    resolved_workspace_id, workspace_dir = ensure_workspace_dir(workspace_id, prefix=prefix)
+    filepath = os.path.join(workspace_dir, filename)
+    save_to_png(numpy_img, filepath)
+    return filepath, resolved_workspace_id
+
+def resolve_workspace_image_path(candidate_path, workspace_id, preferred_name='base.png'):
+    if candidate_path and os.path.exists(candidate_path):
+        return candidate_path
+
+    if not workspace_id:
+        return ''
+
+    _, workspace_dir = ensure_workspace_dir(workspace_id, prefix='mask_slot')
+    preferred_path = os.path.join(workspace_dir, preferred_name)
+    if os.path.exists(preferred_path):
+        return preferred_path
+
+    png_candidates = [
+        os.path.join(workspace_dir, item)
+        for item in os.listdir(workspace_dir)
+        if item.lower().endswith('.png')
+    ]
+    if not png_candidates:
+        return ''
+
+    png_candidates.sort(key=os.path.getmtime, reverse=True)
+    return png_candidates[0]
+
+
+
+def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspace_id, outpaint_selections, expansion_size):
+    directions = outpaint_selections if isinstance(outpaint_selections, list) else []
+    resolved_base_path = resolve_workspace_image_path(base_image_path, base_workspace_id, preferred_name='base.png')
+    if not resolved_base_path:
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Upload a Base Image first, then wait a moment for it to finish saving.")
+    if len(directions) == 0:
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Choose at least one Outpaint direction before preparing.")
+
+    original_image = unpack_gradio_data(resolved_base_path)
+    if original_image is None:
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Unable to read the current Base Image.")
+
+    direction = directions[0].lower()
+    try:
+        expansion_size = int(expansion_size)
+    except (TypeError, ValueError):
+        expansion_size = 384
+    from modules.pipeline.outpaint import OutpaintPipeline
+    outpaint = OutpaintPipeline()
+    expanded_image, generated_mask = outpaint.prepare_outpaint_canvas_only(
+        original_image,
+        direction,
+        expansion_size=expansion_size,
+        pixelate=False
+    )
+    ctx = outpaint.prepare(
+        image=expanded_image,
+        mask=generated_mask,
+        outpaint_direction=direction,
+        extend_factor=1.2
+    )
+
+    expanded_filename = f"expanded_canvas_{uuid.uuid4().hex}.png"
+    bb_filename = f"bb_image_{uuid.uuid4().hex}.png"
+    prepared_base_path, resolved_base_workspace_id = save_to_workspace_png(
+        expanded_image,
+        workspace_id=base_workspace_id,
+        filename=expanded_filename,
+        prefix='outpaint_base'
+    )
+    prepared_bb_path, resolved_bb_workspace_id = save_to_workspace_png(
+        ctx.bb_image,
+        workspace_id=bb_workspace_id,
+        filename=bb_filename,
+        prefix='outpaint_bb'
+    )
+
+    notice = "Expanded canvas loaded into Base Image. BB Image ready for review."
+    return (
+        gr.update(value=prepared_base_path),
+        gr.update(value=resolved_base_workspace_id),
+        gr.update(value=prepared_bb_path),
+        gr.update(value=resolved_bb_workspace_id),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=True),
+        gr.update(value=notice),
+        gr.update(value=prepared_base_path),
+        gr.update(value=resolved_base_workspace_id)
+    )
+
 def core_compute_inpaint_step1_context(original_image, context_mask):
     """
     Core logic for inpaint step 1 context computation.
@@ -433,42 +545,108 @@ def core_compute_inpaint_step1_context(original_image, context_mask):
     return ctx
 
 
-def compute_inpaint_step1_context(img_data, mask_b64):
-    import gradio as gr
-    if not img_data or not mask_b64:
-        return gr.update(), gr.update(), gr.update()
-        
-    original_image = unpack_gradio_data(img_data)
+def reset_inpaint_prepared_assets():
+    return (
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(value=False)
+    )
+
+
+def compute_inpaint_step1_context(base_image_path, base_workspace_id, context_workspace_id, bb_workspace_id, mask_workspace_id, mask_b64):
+    resolved_base_path = resolve_workspace_image_path(base_image_path, base_workspace_id, preferred_name='base.png')
+    if not resolved_base_path or not mask_b64:
+        return reset_inpaint_prepared_assets()
+
+    original_image = unpack_gradio_data(resolved_base_path)
     if original_image is None:
-        return gr.update(), gr.update(), gr.update()
-        
+        return reset_inpaint_prepared_assets()
+
     context_mask = ensure_numpy(mask_b64, mode='L')
     if context_mask is None:
-        return gr.update(), gr.update(), gr.update()
-        
+        return reset_inpaint_prepared_assets()
+
     ctx = core_compute_inpaint_step1_context(original_image, context_mask)
-    
-    # Save to disk to satisfy gr.Image(type='filepath') RAM invariant
-    context_path = save_to_temp_png(context_mask)
-    bb_path = save_to_temp_png(ctx.bb_image)
-    
-    return gr.update(value=context_path), gr.update(value=bb_path), gr.update(value="")
+    context_path, resolved_context_workspace_id = save_to_workspace_png(
+        context_mask,
+        workspace_id=context_workspace_id,
+        filename=f'context_mask_{uuid.uuid4().hex}.png',
+        prefix='inpaint_context'
+    )
+    bb_path, resolved_bb_workspace_id = save_to_workspace_png(
+        ctx.bb_image,
+        workspace_id=bb_workspace_id,
+        filename=f'bb_image_{uuid.uuid4().hex}.png',
+        prefix='inpaint_bb'
+    )
+
+    return (
+        gr.update(value=context_path),
+        gr.update(value=resolved_context_workspace_id),
+        gr.update(value=bb_path),
+        gr.update(value=resolved_bb_workspace_id),
+        gr.update(value=""),
+        gr.update(value=mask_workspace_id or ""),
+        gr.update(),
+        gr.update(value=""),
+        gr.update(value=True)
+    )
 
 
-def compute_inpaint_step2_mask(mask_b64):
-    import gradio as gr
+def compute_inpaint_step2_mask(workspace_id, mask_b64):
     if not mask_b64:
-        return gr.update(), gr.update()
-        
+        return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update()
+
     bb_mask = ensure_numpy(mask_b64, mode='L')
     if bb_mask is None:
-        return gr.update(), gr.update()
-        
-    bb_mask_path = save_to_temp_png(bb_mask)
-    return gr.update(value=bb_mask_path), gr.update(value="")
+        return gr.update(), gr.update(value=workspace_id or ""), gr.update()
+
+    bb_mask_path, resolved_workspace_id = save_to_workspace_png(
+        bb_mask,
+        workspace_id=workspace_id,
+        filename=f'bb_mask_{uuid.uuid4().hex}.png',
+        prefix='inpaint_mask'
+    )
+    return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
 
 
-def compute_outpaint_step2_mask(mask_b64):
-    """Mirror of inpaint step 2 mask computation for outpaint BB."""
-    return compute_inpaint_step2_mask(mask_b64)
+def compute_inpaint_step2_mask(workspace_id, mask_b64):
+    if not mask_b64:
+        return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
+
+    bb_mask = ensure_numpy(mask_b64, mode='L')
+    if bb_mask is None:
+        return gr.update(), gr.update(value=workspace_id or ""), gr.update()
+
+    bb_mask_path, resolved_workspace_id = save_to_workspace_png(
+        bb_mask,
+        workspace_id=workspace_id,
+        filename=f'bb_mask_{uuid.uuid4().hex}.png',
+        prefix='inpaint_mask'
+    )
+    return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
+
+
+def compute_outpaint_step2_mask(workspace_id, mask_b64):
+    if not mask_b64:
+        return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
+
+    bb_mask = ensure_numpy(mask_b64, mode='L')
+    if bb_mask is None:
+        return gr.update(), gr.update(value=workspace_id or ""), gr.update()
+
+    filename = f"bb_mask_{uuid.uuid4().hex}.png"
+    bb_mask_path, resolved_workspace_id = save_to_workspace_png(
+        bb_mask,
+        workspace_id=workspace_id,
+        filename=filename,
+        prefix='outpaint_mask'
+    )
+    return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
 

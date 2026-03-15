@@ -75,19 +75,26 @@
   box-shadow: 0 0 4px #888 !important;
 }
 
-#inpaint-mask-brush.active::before {
+#inpaint-mask-brush.active::before,
+#inpaint-context-brush.active::before,
+#inpaint-bb-brush.active::before {
   background: #00ffc3 !important;
   box-shadow: 0 0 8px #00ffc3 !important;
 }
 
-#inpaint-mask-erase.active::before {
+#inpaint-mask-erase.active::before,
+#inpaint-context-erase.active::before,
+#inpaint-bb-erase.active::before {
   background: #ff4d4d !important;
   box-shadow: 0 0 8px #ff4d4d !important;
 }
 
 #inpaint-mask-clear::before,
+#inpaint-context-clear::before,
+#inpaint-bb-clear::before,
 #outpaint-mask-clear::before {
   display: none !important;
+}
 }
 
 #outpaint-mask-mode-bb.active::before {

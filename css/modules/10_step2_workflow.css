@@ -94,3 +94,20 @@
   text-align: center;
   padding: 2px 0;
 }
+
+.step2-desc--inpaint {
+  font-style: normal;
+}
+
+.step2-desc__title {
+  display: block;
+  font-size: 1rem;
+  font-weight: 700;
+  font-style: normal;
+  margin-bottom: 4px;
+}
+
+.step2-desc__body {
+  display: block;
+  font-style: normal;
+}

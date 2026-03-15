@@ -41,9 +41,7 @@ def apply_outpaint_expansion(task_state, inpaint_image, inpaint_mask):
         outpaint = OutpaintPipeline()
         
         # 1. Expand canvas
-        expanded_image, generated_mask = outpaint.prepare_outpaint_canvas_only(
-            inpaint_image, direction, expansion_size=task_state.inpaint_outpaint_expansion_size, pixelate=False
-        )
+        expanded_image, generated_mask = outpaint.prepare_outpaint_canvas_only(inpaint_image, direction, expansion_size=task_state.inpaint_outpaint_expansion_size, pixelate=False)
         
         # 2. Combine with existing mask
         expanded_mask = np.maximum(
@@ -80,10 +78,6 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
 
     from modules.pipeline.outpaint import OutpaintPipeline
     outpaint = OutpaintPipeline()
-
-    # Apply Pixelation Primer if requested (Critical for Step 2 color guidance)
-    if getattr(task_state, 'inpaint_pixelate_primer', False):
-        inpaint_image = outpaint.pixelate_mask_area(inpaint_image, inpaint_mask)
     
     # Use UI outpaint_strength (default 1.0, user usually lowers it for sketching)
     denoising_strength = getattr(task_state, 'outpaint_strength', 1.0)
@@ -112,20 +106,31 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
     if bb_img_data is not None:
         ctx.bb_image = bb_img_data
         ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
-        print(f"[Debug] Outpaint Step 2: Using explicit BB image from slot: {ctx.target_w}x{ctx.target_h}")
         
     # Combine uploaded mask with brush-drawn mask
     manual_mask = mask_proc.unpack_gradio_data(raw_bb_mask)
     brush_mask = mask_proc.unpack_gradio_data(brush_mask_data)
-    
     combined_bb_mask = mask_proc.combine_masks(manual_mask, brush_mask)
     if combined_bb_mask is not None:
         # Ensure mask matches BB image resolution
         combined_bb_mask = resample_image(combined_bb_mask, width=ctx.target_w, height=ctx.target_h)
         ctx.bb_mask = combined_bb_mask
-        print(f"[Debug] Outpaint Step 2: Using explicit BB mask (manual or brush).")
+        ctx.bb_image = outpaint.pixelate_mask_area(ctx.bb_image, combined_bb_mask)
+    # Rebuild the full-image blend mask from the final BB mask so stitch-back
+    # follows the user-edited Outpaint mask instead of the earlier auto mask.
+    y1, y2, x1, x2 = ctx.bb
+    full_mask = np.zeros_like(ctx.original_image[:, :, 0])
+    H, W = full_mask.shape
+    patch_mask_resized = resample_image(ctx.bb_mask, width=x2-x1, height=y2-y1)
 
-    print(f"[Debug] outpaint.prepare() final BB size: {ctx.bb_image.shape}")
+    iy1, iy2 = max(0, y1), min(H, y2)
+    ix1, ix2 = max(0, x1), min(W, x2)
+    cy1, cy2 = iy1 - y1, iy2 - y1
+    cx1, cx2 = ix1 - x1, ix2 - x1
+
+    full_mask[iy1:iy2, ix1:ix2] = patch_mask_resized[cy1:cy2, cx1:cx2]
+    ctx.blend_mask = outpaint._morphological_open(full_mask)
+
     
     candidate_vae, _ = pipeline.get_candidate_vae(
         steps=task_state.steps,
@@ -407,10 +412,11 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         if len(task_state.outpaint_selections) > 0:
             task_state.outpaint_direction = task_state.outpaint_selections[0].lower()
 
-        task_state.inpaint_pixelate_primer = getattr(task_state, 'outpaint_step2_checkbox', False)
-        
+        outpaint_prepared = getattr(task_state, 'outpaint_step2_checkbox', False)
+        task_state.inpaint_pixelate_primer = False
+
         # Step 1 Outpaint expansion
-        if not task_state.inpaint_pixelate_primer:
+        if not outpaint_prepared:
             outpaint_image, outpaint_mask = apply_outpaint_expansion(task_state, outpaint_image, outpaint_mask)
             skip_prompt_processing = True
 

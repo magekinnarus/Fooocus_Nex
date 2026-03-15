@@ -1,0 +1,123 @@
+﻿nex-image-slot {
+  display: block;
+  width: 100%;
+}
+
+nex-image-slot .nex-slot {
+  width: 100%;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(128, 128, 128, 0.04);
+}
+
+nex-image-slot .nex-slot__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+nex-image-slot .nex-slot__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--body-text-color);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+nex-image-slot .nex-slot__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+nex-image-slot .nex-slot__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+nex-image-slot .nex-slot__tool,
+nex-image-slot .nex-slot__clear {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--body-text-color);
+  font-size: 0.8rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+nex-image-slot .nex-slot__tool:hover,
+nex-image-slot .nex-slot__clear:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+nex-image-slot .nex-slot__tool--subtle {
+  opacity: 0.85;
+}
+
+nex-image-slot .nex-slot__drop {
+  position: relative;
+  width: 100%;
+  min-height: 220px;
+  border: 1px dashed rgba(128, 128, 128, 0.35);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+nex-image-slot .nex-slot__drop.has-image {
+  min-height: 0;
+}
+
+nex-image-slot .nex-slot__placeholder {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--body-text-color);
+  opacity: 0.7;
+}
+
+nex-image-slot .nex-slot__drop.has-image .nex-slot__placeholder {
+  display: none;
+}
+
+nex-image-slot .nex-slot__img {
+  display: none;
+  width: 100%;
+  height: auto;
+  vertical-align: top;
+}
+
+nex-image-slot .nex-slot__drop.has-image .nex-slot__img {
+  display: block;
+}
+
+nex-image-slot .nex-slot.is-dragover .nex-slot__drop {
+  border-color: var(--button-primary-border-color, rgba(59, 130, 246, 0.7));
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.nex-image-slot-bridge {
+  position: absolute !important;
+  left: -10000px !important;
+  top: auto !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

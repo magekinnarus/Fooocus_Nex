@@ -35,11 +35,36 @@ from modules.ui_gradio_extensions import javascript_html, css_html
 from modules.auth import auth_enabled, check_auth
 from modules.util import is_json
 
+def validate_outpaint_generate_request(named_args):
+    if named_args.get('current_tab') != 'outpaint':
+        return ''
+
+    if not named_args.get('outpaint_step2_checkbox', False):
+        return 'Prepare Outpaint first to load the expanded canvas and BB image.'
+
+    missing = []
+    if not named_args.get('outpaint_input_image'):
+        missing.append('Base Image')
+    if not named_args.get('outpaint_bb_image'):
+        missing.append('BB Image')
+    if not named_args.get('outpaint_mask_image'):
+        missing.append('BB Mask')
+
+    if missing:
+        return f"Outpaint is missing: {', '.join(missing)}."
+
+    return ''
+
 def get_task(*args):
     global ctrls_keys
     named_args = dict(zip(ctrls_keys, args))
     named_args.pop('_currentTask', None)
-    return worker.AsyncTask(args=named_args)
+    task = worker.AsyncTask(args=named_args)
+    validation_message = validate_outpaint_generate_request(named_args)
+    if validation_message:
+        task.is_valid = False
+        task.validation_message = validation_message
+    return task
 
 def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
     import backend.resources as resources
@@ -49,8 +74,13 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
     # outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]
 
     if not task.is_valid:
+        message = getattr(task, 'validation_message', 'The current request is not ready yet.')
+        yield gr.update(visible=True, value=modules.html.make_progress_html(0, message)), \
+            gr.update(), \
+            gr.update(), \
+            gr.update(), \
+            gr.update()
         return
-
     try:
         batch_size = int(image_number)
     except Exception:
@@ -454,8 +484,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     uov_method.change(uov_method_change, inputs=uov_method, outputs=[upscale_refinement_container, upscale_model, upscale_scale_override], queue=False, show_progress=False)
     
-    uov_input_image.upload(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
-    uov_input_image.clear(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
+    uov_input_image.change(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
     upscale_model.change(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
     upscale_scale_override.change(update_upscale_scale_info, inputs=[uov_input_image, upscale_model, upscale_scale_override], outputs=upscale_scale_info, queue=False, show_progress=False)
 
@@ -518,26 +547,42 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
 
     import modules.mask_processing as mask_proc
+    inpaint_input_image_path.change(
+        mask_proc.reset_inpaint_prepared_assets,
+        inputs=[],
+        outputs=[inpaint_context_mask_image_path, inpaint_context_mask_workspace_id, inpaint_bb_image_path, inpaint_bb_workspace_id, inpaint_mask_image_path, inpaint_mask_workspace_id, inpaint_context_mask_data, inpaint_bb_mask_data, inpaint_step2_checkbox],
+        queue=False,
+        show_progress=False
+    )
+
     inpaint_context_mask_data.change(
         mask_proc.compute_inpaint_step1_context,
-        inputs=[inpaint_input_image, inpaint_context_mask_data],
-        outputs=[inpaint_context_mask_image, inpaint_bb_image, inpaint_context_mask_data],
+        inputs=[inpaint_input_image_path, inpaint_input_workspace_id, inpaint_context_mask_workspace_id, inpaint_bb_workspace_id, inpaint_mask_workspace_id, inpaint_context_mask_data],
+        outputs=[inpaint_context_mask_image_path, inpaint_context_mask_workspace_id, inpaint_bb_image_path, inpaint_bb_workspace_id, inpaint_mask_image_path, inpaint_mask_workspace_id, inpaint_context_mask_data, inpaint_bb_mask_data, inpaint_step2_checkbox],
         queue=False,
         show_progress=False
     )
 
     inpaint_bb_mask_data.change(
         mask_proc.compute_inpaint_step2_mask,
-        inputs=[inpaint_bb_mask_data],
-        outputs=[inpaint_mask_image, inpaint_bb_mask_data],
+        inputs=[inpaint_mask_workspace_id, inpaint_bb_mask_data],
+        outputs=[inpaint_mask_image_path, inpaint_mask_workspace_id, inpaint_bb_mask_data],
         queue=False,
         show_progress=False
     )
 
+    outpaint_prepare_button.click(
+        mask_proc.prepare_outpaint_step1_assets,
+        inputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_workspace_id, outpaint_selections, inpaint_outpaint_expansion_size],
+        outputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_image, outpaint_bb_workspace_id, outpaint_mask_image, outpaint_mask_workspace_id, outpaint_bb_mask_data, outpaint_step2_checkbox, outpaint_prepare_notice],
+        queue=False,
+        show_progress=True
+    )
+
     outpaint_bb_mask_data.change(
         mask_proc.compute_outpaint_step2_mask,
-        inputs=[outpaint_bb_mask_data],
-        outputs=[outpaint_mask_image, outpaint_bb_mask_data],
+        inputs=[outpaint_mask_workspace_id, outpaint_bb_mask_data],
+        outputs=[outpaint_mask_image, outpaint_mask_workspace_id, outpaint_bb_mask_data],
         queue=False,
         show_progress=False
     )

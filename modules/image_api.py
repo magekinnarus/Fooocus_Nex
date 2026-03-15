@@ -46,7 +46,9 @@ async def upload_image(
         
         return JSONResponse(content={
             "status": "success", 
+            "workspace_id": workspace_id,
             "filename": "base.png",
+            "path": filepath,
             "url": f"/image_api/image/{workspace_id}/base.png"
         })
     except Exception as e:
