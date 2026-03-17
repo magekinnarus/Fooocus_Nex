@@ -249,6 +249,7 @@ with shared.gradio_root:
                                 inpaint_input_image_path = gr.Textbox(value='', visible=True, elem_id='inpaint_input_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 inpaint_input_workspace_id = gr.Textbox(value='', visible=True, elem_id='inpaint_input_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 inpaint_context_mask_data = gr.Textbox(value="", visible=True, elem_id="inpaint_context_mask_data", elem_classes=["inpaint-hidden-mask-field"], show_label=False, container=False)
+                                inpaint_replace_bb_nonce = gr.Textbox(value='', visible=True, elem_id='inpaint_replace_bb_nonce', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 gr.HTML("""
 <div id="inpaint-mask-tools" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
@@ -264,6 +265,7 @@ with shared.gradio_root:
       <span style="white-space:nowrap; opacity:0.8;">Brush Size</span>
       <input id="inpaint-mask-size" type="range" min="8" max="160" step="1" value="36" style="flex-grow:1; accent-color:var(--button-primary-background-fill);">
     </label>
+    <button type="button" class="mask-tool-btn" id="inpaint-mask-refresh-bb" title="Rebuild BB Image from the current Base Image and Context Mask">Replace BB Image</button>
     <span id="inpaint-mask-status" style="font-size:0.85rem; opacity:0.6; font-style:italic; min-width:120px; text-align:right;">Ready</span>
   </div>
 </div>
@@ -541,6 +543,7 @@ with shared.gradio_root:
             'metadata_input_image': metadata_input_image,
             'metadata_json': metadata_json,
             'inpaint_context_mask_data': inpaint_context_mask_data,
+            'inpaint_replace_bb_nonce': inpaint_replace_bb_nonce,
             'inpaint_bb_mask_data': inpaint_bb_mask_data,
             'inpaint_input_image_path': inpaint_input_image_path,
             'inpaint_input_workspace_id': inpaint_input_workspace_id,

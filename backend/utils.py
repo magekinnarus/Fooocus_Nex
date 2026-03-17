@@ -192,3 +192,41 @@ def get_attr(obj, attr: str):
     for name in attrs:
         obj = getattr(obj, name)
     return obj
+
+def calculate_parameters(sd, prefix=""):
+    params = 0
+    for key in sd.keys():
+        if key.startswith(prefix):
+            params += sd[key].nelement()
+    return params
+
+
+def state_dict_prefix_replace(state_dict, replace_prefix, filter_keys=False):
+    out = {} if filter_keys else state_dict
+    for old_prefix in replace_prefix:
+        replace = [
+            (key, f"{replace_prefix[old_prefix]}{key[len(old_prefix):]}")
+            for key in state_dict.keys()
+            if key.startswith(old_prefix)
+        ]
+        for old_key, new_key in replace:
+            weight = state_dict.pop(old_key)
+            out[new_key] = weight
+    return out
+
+
+def common_upscale(samples, width, height, upscale_method, crop):
+    if crop == "center":
+        old_width = samples.shape[3]
+        old_height = samples.shape[2]
+        old_aspect = old_width / old_height
+        new_aspect = width / height
+        x = 0
+        y = 0
+        if old_aspect > new_aspect:
+            x = round((old_width - old_width * (new_aspect / old_aspect)) / 2)
+        elif old_aspect < new_aspect:
+            y = round((old_height - old_height * (old_aspect / new_aspect)) / 2)
+        samples = samples[:, :, y:old_height-y, x:old_width-x]
+
+    return torch.nn.functional.interpolate(samples, size=(height, width), mode=upscale_method)

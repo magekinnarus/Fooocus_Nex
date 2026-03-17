@@ -86,13 +86,28 @@ class AsyncTask:
             s.save_metadata_to_images = False
             s.metadata_scheme = MetadataScheme.FOOOCUS
 
+        def has_controlnet_input(value):
+            if value is None:
+                return False
+            if isinstance(value, str):
+                return value.strip() != ''
+            if isinstance(value, dict):
+                for key in ['image', 'mask', 'background']:
+                    item = value.get(key)
+                    if isinstance(item, str) and item.strip() != '':
+                        return True
+                    if item is not None and not isinstance(item, str):
+                        return True
+                return False
+            return True
+
         from modules.config import default_controlnet_image_count
         for i in range(default_controlnet_image_count):
             cn_img = args.get(f'cn_{i}_image')
             cn_stop = args.get(f'cn_{i}_stop', 1.0)
             cn_weight = args.get(f'cn_{i}_weight', 1.0)
             cn_type = args.get(f'cn_{i}_type')
-            if cn_img is not None and cn_type:
+            if has_controlnet_input(cn_img) and cn_type in s.cn_tasks:
                 s.cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
 
     @property

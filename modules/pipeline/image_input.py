@@ -172,6 +172,15 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
     # 2. Extract usable arrays
     input_image = mask_proc.unpack_gradio_data(raw_input_image) if raw_input_image is not None else inpaint_image
     context_mask = mask_proc.unpack_gradio_data(raw_context_mask) if raw_context_mask is not None else inpaint_mask
+    bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
+    bb_mask_2d = mask_proc.combine_masks(
+        mask_proc.unpack_gradio_data(raw_bb_mask),
+        mask_proc.extract_mask_from_layers(raw_bb_image) if isinstance(raw_bb_image, dict) else None
+    )
+
+    explicit_step2_assets = bb_img_data is not None or bb_mask_2d is not None
+    requested_step2 = getattr(task_state, 'inpaint_step2_checkbox', False)
+    use_step2_slots = requested_step2 or explicit_step2_assets
     
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
@@ -194,8 +203,8 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         )
         print(f"[Debug] Context derived from standard inpaint inputs.")
 
-    is_step1_inpaint = task_state.current_tab == 'inpaint' and not getattr(task_state, 'inpaint_step2_checkbox', False)
-    is_step2_inpaint = task_state.current_tab == 'inpaint' and getattr(task_state, 'inpaint_step2_checkbox', False)
+    is_step1_inpaint = task_state.current_tab == 'inpaint' and not use_step2_slots
+    is_step2_inpaint = task_state.current_tab == 'inpaint' and use_step2_slots
 
     if is_step1_inpaint:
         LAST_INPAINT_STEP1_CONTEXT = copy.deepcopy(ctx)
@@ -207,13 +216,6 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         # We use the coordinates (y1, y2, x1, x2) from the Full Context (ctx.bb)
         # to ensure stitching is perfectly aligned.
         
-        bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
-        # Handle mask from both the explicit slot and potential drawing on the BB image
-        bb_mask_2d = mask_proc.combine_masks(
-            mask_proc.unpack_gradio_data(raw_bb_mask),
-            mask_proc.extract_mask_from_layers(raw_bb_image) if isinstance(raw_bb_image, dict) else None
-        )
-
         if bb_img_data is not None:
             ctx.bb_image = bb_img_data
             ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
@@ -518,47 +520,79 @@ def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_
     Applies ControlNet preprocessors and patches the UNet for IP-Adapters.
     """
     width, height = task_state.width, task_state.height
-    
+
+    def unpack_cn_image(raw_img, label):
+        cn_img = mask_proc.unpack_gradio_data(raw_img)
+        if cn_img is None:
+            print(f'[ControlNet] Skipping {label} task with empty or invalid image input.')
+            return None
+        return HWC3(cn_img)
+
+    valid_canny_tasks = []
     for task in task_state.cn_tasks[flags.cn_canny]:
-        cn_img, cn_stop, cn_weight = task
-        cn_img = resize_image(HWC3(mask_proc.ensure_numpy(cn_img)), width=width, height=height)
+        raw_img, cn_stop, cn_weight = task
+        cn_img = unpack_cn_image(raw_img, flags.cn_canny)
+        if cn_img is None:
+            continue
+        cn_img = resize_image(cn_img, width=width, height=height)
         if not task_state.skipping_cn_preprocessor:
             cn_img = preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
         cn_img = HWC3(cn_img)
         task[0] = core.numpy_to_pytorch(cn_img)
+        valid_canny_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-            
+    task_state.cn_tasks[flags.cn_canny] = valid_canny_tasks
+
+    valid_cpds_tasks = []
     for task in task_state.cn_tasks[flags.cn_cpds]:
-        cn_img, cn_stop, cn_weight = task
-        cn_img = resize_image(HWC3(mask_proc.ensure_numpy(cn_img)), width=width, height=height)
+        raw_img, cn_stop, cn_weight = task
+        cn_img = unpack_cn_image(raw_img, flags.cn_cpds)
+        if cn_img is None:
+            continue
+        cn_img = resize_image(cn_img, width=width, height=height)
         if not task_state.skipping_cn_preprocessor:
             cn_img = preprocessors.cpds(cn_img)
         cn_img = HWC3(cn_img)
         task[0] = core.numpy_to_pytorch(cn_img)
+        valid_cpds_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-            
+    task_state.cn_tasks[flags.cn_cpds] = valid_cpds_tasks
+
+    valid_ip_tasks = []
     for task in task_state.cn_tasks[flags.cn_ip]:
-        cn_img, cn_stop, cn_weight = task
-        cn_img = HWC3(mask_proc.ensure_numpy(cn_img))
+        raw_img, cn_stop, cn_weight = task
+        cn_img = unpack_cn_image(raw_img, flags.cn_ip)
+        if cn_img is None:
+            continue
         cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
         task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
+        valid_ip_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-            
+    task_state.cn_tasks[flags.cn_ip] = valid_ip_tasks
+
+    valid_ip_face_tasks = []
     for task in task_state.cn_tasks[flags.cn_ip_face]:
-        cn_img, cn_stop, cn_weight = task
-        cn_img = HWC3(mask_proc.ensure_numpy(cn_img))
+        raw_img, cn_stop, cn_weight = task
+        cn_img = unpack_cn_image(raw_img, flags.cn_ip_face)
+        if cn_img is None:
+            continue
         if not task_state.skipping_cn_preprocessor:
             cn_img = face_crop.crop_image(cn_img)
         cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
         task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_face_path)
+        valid_ip_face_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-            
+    task_state.cn_tasks[flags.cn_ip_face] = valid_ip_face_tasks
+
     all_ip_tasks = task_state.cn_tasks[flags.cn_ip] + task_state.cn_tasks[flags.cn_ip_face]
     if len(all_ip_tasks) > 0:
         pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
+
+
+
 
 

@@ -599,6 +599,72 @@ def compute_inpaint_step1_context(base_image_path, base_workspace_id, context_wo
     )
 
 
+def refresh_inpaint_bb_image(base_image_path, base_workspace_id, context_image_path, context_workspace_id, bb_workspace_id, mask_workspace_id, mask_b64):
+    resolved_base_path = resolve_workspace_image_path(base_image_path, base_workspace_id, preferred_name='base.png')
+    if not resolved_base_path:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(value=""),
+            gr.update(value=mask_workspace_id or ""),
+            gr.update(value=""),
+            gr.update()
+        )
+
+    original_image = unpack_gradio_data(resolved_base_path)
+    if original_image is None:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(value=""),
+            gr.update(value=mask_workspace_id or ""),
+            gr.update(value=""),
+            gr.update()
+        )
+
+    context_mask = None
+    resolved_context_path = resolve_workspace_image_path(
+        context_image_path,
+        context_workspace_id,
+        preferred_name='context_mask.png'
+    )
+    if resolved_context_path:
+        context_mask = unpack_gradio_data(resolved_context_path)
+        context_mask = ensure_numpy(context_mask, mode='L') if context_mask is not None else None
+
+    if context_mask is None and mask_b64:
+        context_mask = ensure_numpy(mask_b64, mode='L')
+
+    if context_mask is None:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(value=""),
+            gr.update(value=mask_workspace_id or ""),
+            gr.update(value=""),
+            gr.update()
+        )
+
+    ctx = core_compute_inpaint_step1_context(original_image, context_mask)
+    bb_path, resolved_bb_workspace_id = save_to_workspace_png(
+        ctx.bb_image,
+        workspace_id=bb_workspace_id,
+        filename=f'bb_image_{uuid.uuid4().hex}.png',
+        prefix='inpaint_bb'
+    )
+
+    print('[Debug] Refreshed BB image from current Base Image and Context Mask.')
+
+    return (
+        gr.update(value=bb_path),
+        gr.update(value=resolved_bb_workspace_id),
+        gr.update(value=""),
+        gr.update(value=mask_workspace_id or ""),
+        gr.update(value=""),
+        gr.update(value=True)
+    )
+
+
 def compute_inpaint_step2_mask(workspace_id, mask_b64):
     if not mask_b64:
         return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update()

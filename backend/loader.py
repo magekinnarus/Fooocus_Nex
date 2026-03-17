@@ -205,33 +205,36 @@ def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
 def patch_controlnet_for_quality(controlnet: Any, quality: Dict[str, Any]):
     """
     Monkey-patches ControlNet's forward pass to support Timed ADM and Softness.
+    Accepts either a raw ControlNet module or a backend wrapper object.
     """
     if not quality:
         return
-        
-    if hasattr(controlnet, "_nex_quality_patched"):
+
+    target = getattr(controlnet, "control_model", controlnet)
+    if target is None or not hasattr(target, "forward"):
+        setattr(controlnet, "_nex_pending_quality", dict(quality))
         return
-    controlnet._nex_quality_patched = True
+
+    if hasattr(target, "_nex_quality_patched"):
+        return
+    target._nex_quality_patched = True
 
     controlnet_softness = quality.get("controlnet_softness", 0.0)
-    
-    original_forward = controlnet.forward
-    
+    original_forward = target.forward
+
     def nex_patched_forward(x, hint, timesteps, context, y=None, **kwargs):
-        # Timed ADM
         if y is not None:
-             y = conditioning.timed_adm(y, timesteps, controlnet, adm_scaler_end=quality.get("adm_scaler_end", 0.3))
-             
+            y = conditioning.timed_adm(y, timesteps, target, adm_scaler_end=quality.get("adm_scaler_end", 0.3))
+
         outs = original_forward(x, hint, timesteps, context, y=y, **kwargs)
-        
-        # Softness
+
         if controlnet_softness > 0 and isinstance(outs, list):
             for i in range(len(outs)):
                 k = 1.0 - float(i) / (len(outs) - 1) if len(outs) > 1 else 1.0
                 outs[i] = outs[i] * (1.0 - controlnet_softness * k)
         return outs
-        
-    controlnet.forward = nex_patched_forward
+
+    target.forward = nex_patched_forward
     logging.info(f"[Nex] Quality: ControlNet patched (softness={controlnet_softness})")
 
 def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):

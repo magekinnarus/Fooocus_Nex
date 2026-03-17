@@ -3,9 +3,8 @@ import einops
 import torch
 import numpy as np
 import ldm_patched.modules.model_detection
-from backend import loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
+from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
 import ldm_patched.modules.model_patcher
-import ldm_patched.modules.controlnet
 import ldm_patched.modules.latent_formats
 
 from ldm_patched.modules.sd import load_checkpoint_guess_config
@@ -252,7 +251,7 @@ class StableDiffusionModel:
 @torch.no_grad()
 @torch.inference_mode()
 def load_controlnet(ckpt_filename):
-    return ldm_patched.modules.controlnet.load_controlnet(ckpt_filename)
+    return backend_controlnet.load_controlnet(ckpt_filename)
 
 
 @torch.no_grad()
@@ -277,7 +276,7 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
     vae = None
 
     if basename.endswith('.gguf'):
-        # GGUF UNet-only file — load via backend GGUF path
+        # GGUF UNet-only file -- load via backend GGUF path
         # CLIP and VAE must be provided separately via UI dropdowns
         print(f'[Nex] Loading GGUF UNet: {basename}')
         try:
@@ -473,7 +472,7 @@ def ksampler(model, positive, negative, latent, seed=None, steps=30, cfg=7.0, sa
             callback_function(step, x0, x, total_steps, preview_image)
 
     # Route through backend sampling
-    # NOTE: autocast is already applied inside KSampler.sample() — no need to wrap here.
+    # NOTE: autocast is already applied inside KSampler.sample() -- no need to wrap here.
     samples = sampling.sample_sdxl(
         model,
         noise,
@@ -510,3 +509,5 @@ def numpy_to_pytorch(x):
     y = np.ascontiguousarray(y.copy())
     y = torch.from_numpy(y).float()
     return y
+
+

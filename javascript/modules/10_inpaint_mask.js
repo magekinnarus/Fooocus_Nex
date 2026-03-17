@@ -491,6 +491,8 @@
         const contextBtn = document.getElementById('inpaint-mask-mode-context');
         const bbBtn = document.getElementById('inpaint-mask-mode-bb');
         const inpaintDisableBtn = document.getElementById('inpaint-mask-mode-disable');
+        const replaceBbBtn = document.getElementById('inpaint-mask-refresh-bb');
+        const replaceBbNonceField = document.querySelector('#inpaint_replace_bb_nonce textarea, #inpaint_replace_bb_nonce input');
 
         if (brushBtn && !brushBtn.dataset.bound) {
             brushBtn.dataset.bound = '1';
@@ -560,6 +562,20 @@
         if (bbBtn && !bbBtn.dataset.bound) {
             bbBtn.dataset.bound = '1';
             bbBtn.addEventListener('click', () => setActiveMode('bb'));
+        }
+        if (replaceBbBtn && !replaceBbBtn.dataset.bound) {
+            replaceBbBtn.dataset.bound = '1';
+            replaceBbBtn.addEventListener('click', () => {
+                const nonceField = document.querySelector('#inpaint_replace_bb_nonce textarea, #inpaint_replace_bb_nonce input');
+                if (!nonceField) {
+                    setStatus('Refresh bridge unavailable.');
+                    return;
+                }
+                setStatus('Refreshing BB image...');
+                nonceField.value = String(Date.now());
+                nonceField.dispatchEvent(new Event('input', { bubbles: true }));
+                nonceField.dispatchEvent(new Event('change', { bubbles: true }));
+            });
         }
         if (inpaintDisableBtn && !inpaintDisableBtn.dataset.bound) {
             inpaintDisableBtn.dataset.bound = '1';
