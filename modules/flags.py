@@ -59,17 +59,63 @@ default_vae = 'Default (model)'
 default_input_image_tab = 'uov_tab'
 input_image_tab_ids = ['uov_tab', 'ip_tab', 'inpaint_tab', 'metadata_tab']
 
-cn_ip = "ImagePrompt"
-cn_ip_face = "FaceSwap"
-cn_canny = "PyraCanny"
-cn_cpds = "CPDS"
+cn_structural = 'Structural'
+cn_contextual = 'Contextual'
+cn_channels = [cn_structural, cn_contextual]
 
-ip_list = [cn_ip, cn_canny, cn_cpds, cn_ip_face]
+cn_ip = 'ImagePrompt'
+cn_faceid = 'FaceID V2'
+cn_pulid = 'PuLID'
+cn_ip_face = 'FaceSwap'
+cn_canny = 'PyraCanny'
+cn_mistoline = 'MistoLine'
+cn_depth = 'Depth'
+cn_cpds = 'CPDS'
+cn_mlsd = 'MLSD'
+
+cn_structural_types = [cn_canny, cn_mistoline, cn_depth, cn_cpds, cn_mlsd]
+cn_contextual_types = [cn_ip, cn_faceid, cn_pulid]
+cn_type_aliases = {
+    cn_ip_face: cn_faceid,
+}
+cn_all_types = cn_structural_types + cn_contextual_types
+cn_type_to_channel = {guidance_type: cn_structural for guidance_type in cn_structural_types}
+cn_type_to_channel.update({guidance_type: cn_contextual for guidance_type in cn_contextual_types})
+cn_type_to_channel.update({legacy_type: cn_contextual for legacy_type in cn_type_aliases})
+
+# Legacy compatibility list. New UI surfaces the explicit channel lists above.
+ip_list = cn_all_types + list(cn_type_aliases.keys())
 default_ip = cn_ip
 
 default_parameters = {
-    cn_ip: (0.5, 0.6), cn_ip_face: (0.9, 0.75), cn_canny: (0.5, 1.0), cn_cpds: (0.5, 1.0)
+    cn_ip: (0.5, 0.6),
+    cn_faceid: (0.9, 0.75),
+    cn_pulid: (0.9, 1.0),
+    cn_ip_face: (0.9, 0.75),
+    cn_canny: (0.5, 1.0),
+    cn_mistoline: (0.5, 1.0),
+    cn_depth: (0.5, 1.0),
+    cn_cpds: (0.5, 1.0),
+    cn_mlsd: (0.5, 1.0),
 }  # stop, weight
+
+
+def normalize_cn_type(value):
+    if value is None:
+        return None
+    return cn_type_aliases.get(value, value)
+
+
+def resolve_cn_type(value, default=default_ip):
+    normalized = normalize_cn_type(value)
+    if normalized in cn_all_types:
+        return normalized
+    return default
+
+
+def get_cn_channel(value):
+    return cn_type_to_channel.get(normalize_cn_type(value))
+
 
 output_formats = ['png', 'jpeg', 'webp']
 

@@ -142,53 +142,135 @@ with shared.gradio_root:
                         ip_types = []
                         ip_stops = []
                         ip_weights = []
-                        ip_ctrls = []
                         ip_ad_cols = []
 
+                        guidance_choices_by_channel = {
+                            flags.cn_structural: flags.cn_structural_types,
+                            flags.cn_contextual: flags.cn_contextual_types,
+                        }
+
+                        def resolve_channel_default(image_count):
+                            default_type = flags.resolve_cn_type(modules.config.default_ip_types[image_count])
+                            default_channel = flags.get_cn_channel(default_type)
+                            if default_channel in guidance_choices_by_channel:
+                                return default_channel
+                            return flags.cn_contextual
+
+                        def resolve_type_default(image_count, channel):
+                            choices = guidance_choices_by_channel.get(channel, flags.cn_contextual_types)
+                            default_type = flags.resolve_cn_type(modules.config.default_ip_types[image_count])
+                            if default_type in choices:
+                                return default_type
+                            return choices[0]
+
+                        def update_guidance_type_choices(channel):
+                            choices = guidance_choices_by_channel.get(channel, flags.cn_contextual_types)
+                            return gr.update(choices=choices, value=choices[0])
+
                         def create_ip_slot(image_count):
+                            default_channel = resolve_channel_default(image_count)
+                            default_type = resolve_type_default(image_count, default_channel)
                             with gr.Column():
-                                gr.HTML(make_nex_image_slot(f'ip_image_slot_{image_count}', f'ip_image_bridge_{image_count}', f'Image {image_count}', f'data-upload-mode="api" data-path-field-id="cn_{image_count - 1}_image_path" data-workspace-field-id="cn_{image_count - 1}_workspace_id"'))
-                                ip_image = gr.Image(label='Image', sources='upload', type='filepath', show_label=False, height=300, value=modules.config.default_ip_images[image_count], elem_id=f'ip_image_bridge_{image_count}', elem_classes=['nex-image-slot-bridge'])
-                                cn_image_path = gr.Textbox(value=modules.config.default_ip_images[image_count], visible=True, elem_id=f'cn_{image_count - 1}_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
-                                cn_workspace_id = gr.Textbox(value='', visible=True, elem_id=f'cn_{image_count - 1}_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                gr.HTML(make_nex_image_slot(
+                                    f'ip_image_slot_{image_count}',
+                                    f'ip_image_bridge_{image_count}',
+                                    f'Guidance Image {image_count}',
+                                    f'data-upload-mode="api" data-path-field-id="cn_{image_count - 1}_image_path" data-workspace-field-id="cn_{image_count - 1}_workspace_id"'
+                                ))
+                                ip_image = gr.Image(
+                                    label='Image',
+                                    sources='upload',
+                                    type='filepath',
+                                    show_label=False,
+                                    height=300,
+                                    value=modules.config.default_ip_images[image_count],
+                                    elem_id=f'ip_image_bridge_{image_count}',
+                                    elem_classes=['nex-image-slot-bridge']
+                                )
+                                cn_image_path = gr.Textbox(
+                                    value=modules.config.default_ip_images[image_count],
+                                    visible=True,
+                                    elem_id=f'cn_{image_count - 1}_image_path',
+                                    elem_classes=['inpaint-hidden-mask-field'],
+                                    show_label=False,
+                                    container=False
+                                )
+                                cn_workspace_id = gr.Textbox(
+                                    value='',
+                                    visible=True,
+                                    elem_id=f'cn_{image_count - 1}_workspace_id',
+                                    elem_classes=['inpaint-hidden-mask-field'],
+                                    show_label=False,
+                                    container=False
+                                )
                                 ip_images.append(ip_image)
                                 cn_image_paths.append(cn_image_path)
-                                ip_ctrls.append(ip_image)
                                 with gr.Column(visible=True) as ad_col:
                                     with gr.Row():
-                                        ip_stop = gr.Slider(label='Stop At', minimum=0.0, maximum=1.0, step=0.001, value=modules.config.default_ip_stop_ats[image_count])
+                                        ip_channel = gr.Radio(
+                                            label='Guidance Channel',
+                                            choices=[flags.cn_structural, flags.cn_contextual],
+                                            value=default_channel,
+                                            container=False,
+                                            scale=1
+                                        )
+                                        ip_type = gr.Dropdown(
+                                            label='Method',
+                                            choices=guidance_choices_by_channel[default_channel],
+                                            value=default_type,
+                                            container=False,
+                                            scale=1
+                                        )
+                                        ip_channel.change(
+                                            fn=update_guidance_type_choices,
+                                            inputs=ip_channel,
+                                            outputs=ip_type,
+                                            queue=False,
+                                            show_progress=False
+                                        )
+                                        ip_types.append(ip_type)
+
+                                    with gr.Row():
+                                        ip_stop = gr.Slider(
+                                            label='Stop At',
+                                            minimum=0.0,
+                                            maximum=1.0,
+                                            step=0.001,
+                                            value=modules.config.default_ip_stop_ats[image_count]
+                                        )
                                         ip_stops.append(ip_stop)
-                                        ip_ctrls.append(ip_stop)
 
-                                        ip_weight = gr.Slider(label='Weight', minimum=0.0, maximum=2.0, step=0.001, value=modules.config.default_ip_weights[image_count])
+                                        ip_weight = gr.Slider(
+                                            label='Weight',
+                                            minimum=0.0,
+                                            maximum=2.0,
+                                            step=0.001,
+                                            value=modules.config.default_ip_weights[image_count]
+                                        )
                                         ip_weights.append(ip_weight)
-                                        ip_ctrls.append(ip_weight)
-
-                                    ip_type = gr.Radio(label='Type', choices=flags.ip_list, value=modules.config.default_ip_types[image_count], container=False)
-                                    ip_types.append(ip_type)
-                                    ip_ctrls.append(ip_type)
 
                                 ip_ad_cols.append(ad_col)
 
                         with gr.Row():
                             with gr.Column(scale=1):
-                                create_ip_slot(1)
-                                
-                                with gr.Group():
-                                    gr.HTML('<div style="margin-top:20px; border-top:1px solid rgba(128,128,128,0.2); padding-top:15px; font-weight:bold;">Advanced Control</div>')
-                                    control_panel_result = control_panel.build_control_tab()
-                                    debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
-                                    skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
-                                    mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
-                                    controlnet_softness = control_panel_result['controlnet_softness']
-                                    canny_low_threshold = control_panel_result['canny_low_threshold']
-                                    canny_high_threshold = control_panel_result['canny_high_threshold']
-
-                            with gr.Column(scale=1):
-                                for image_count in range(2, modules.config.default_controlnet_image_count + 1):
+                                for image_count in range(1, modules.config.default_controlnet_image_count + 1, 2):
                                     create_ip_slot(image_count)
 
-                        gr.HTML('* \"Controlnet\" is powered by Fooocus Image Mixture Engine (v1.0.1). <a href="https://github.com/lllyasviel/Fooocus/discussions/557" target="_blank">\U0001F4D4 Documentation</a>')
+                            with gr.Column(scale=1):
+                                for image_count in range(2, modules.config.default_controlnet_image_count + 1, 2):
+                                    create_ip_slot(image_count)
+
+                        with gr.Group():
+                            gr.HTML('<div style="margin-top:20px; border-top:1px solid rgba(128,128,128,0.2); padding-top:15px; font-weight:bold;">Advanced Control</div>')
+                            control_panel_result = control_panel.build_control_tab()
+                            debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
+                            skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
+                            mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
+                            controlnet_softness = control_panel_result['controlnet_softness']
+                            canny_low_threshold = control_panel_result['canny_low_threshold']
+                            canny_high_threshold = control_panel_result['canny_high_threshold']
+
+                        gr.HTML('* "Controlnet" is powered by Fooocus Image Mixture Engine (v1.0.1). <a href="https://github.com/lllyasviel/Fooocus/discussions/557" target="_blank">Documentation</a>')
 
 
 
@@ -496,9 +578,9 @@ with shared.gradio_root:
 
         for i in range(modules.config.default_controlnet_image_count):
             ctrls_dict[f'cn_{i}_image'] = cn_image_paths[i]
-            ctrls_dict[f'cn_{i}_stop'] = ip_ctrls[i * 4 + 1]
-            ctrls_dict[f'cn_{i}_weight'] = ip_ctrls[i * 4 + 2]
-            ctrls_dict[f'cn_{i}_type'] = ip_ctrls[i * 4 + 3]
+            ctrls_dict[f'cn_{i}_stop'] = ip_stops[i]
+            ctrls_dict[f'cn_{i}_weight'] = ip_weights[i]
+            ctrls_dict[f'cn_{i}_type'] = ip_types[i]
 
         import modules.parameter_registry as parameter_registry
         parameter_registry.validate_ctrls(ctrls_dict)
@@ -617,5 +699,6 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
+
 
 

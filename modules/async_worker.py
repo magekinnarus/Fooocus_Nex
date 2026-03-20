@@ -106,9 +106,13 @@ class AsyncTask:
             cn_img = args.get(f'cn_{i}_image')
             cn_stop = args.get(f'cn_{i}_stop', 1.0)
             cn_weight = args.get(f'cn_{i}_weight', 1.0)
-            cn_type = args.get(f'cn_{i}_type')
-            if has_controlnet_input(cn_img) and cn_type in s.cn_tasks:
-                s.cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
+            raw_cn_type = args.get(f'cn_{i}_type')
+            if not has_controlnet_input(cn_img):
+                continue
+
+            cn_type = flags.resolve_cn_type(raw_cn_type, default=None)
+            if cn_type is None or not s.add_cn_task(cn_type, [cn_img, cn_stop, cn_weight]):
+                print(f'[ControlNet] Skipping unsupported guidance type: {raw_cn_type!r}')
 
     @property
     def generate_image_grid(self): return self.state.generate_image_grid
@@ -123,6 +127,29 @@ class AsyncTask:
 
 
 async_tasks = []
+_active_task = None
+_active_task_mutex = threading.RLock()
+
+
+def set_active_task(task):
+    global _active_task
+    with _active_task_mutex:
+        _active_task = task
+
+
+def get_active_task():
+    with _active_task_mutex:
+        return _active_task
+
+
+def request_interrupt(action, task=None):
+    target = get_active_task()
+    if target is None:
+        target = task
+    if target is not None:
+        target.last_stop = action
+    resources.interrupt_current_processing()
+    return target if target is not None else task
 
 
 def progressbar(task_state, number, text):
@@ -134,6 +161,7 @@ def progressbar(task_state, number, text):
 @torch.no_grad()
 @torch.inference_mode()
 def handler(async_task: AsyncTask):
+    async_task.last_stop = False
     s = async_task.state
     preparation_start_time = time.perf_counter()
     s.processing = True
@@ -194,11 +222,11 @@ def handler(async_task: AsyncTask):
             
         s.current_progress = 1
         progressbar(s, s.current_progress, 'Loading ControlNets ...')
-        pipeline.refresh_controlnets([res.get('controlnet_canny_path'), res.get('controlnet_cpds_path')] if s.input_image_checkbox else [])
+        pipeline.refresh_controlnets(list(res.get('controlnet_paths', {}).values()) if s.input_image_checkbox else [])
         
         import extras.ip_adapter as ip_adapter
-        ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
-        ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_face_path'))
+        if res.get('ip_adapter_path') is not None:
+            ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
 
         if s.input_image_checkbox:
             if 'outpaint' in s.goals:
@@ -258,7 +286,7 @@ def handler(async_task: AsyncTask):
         tasks = process_prompt(s, base_model_additional_loras, progressbar)
         
         # Phase Boundary: Encoding -> Diffusion
-        print('[Nex-Memory] Phase: Encoding → Diffusion')
+        print('[Nex-Memory] Phase: Encoding -> Diffusion')
         gc.collect()
         resources.soft_empty_cache()
 
@@ -285,7 +313,7 @@ def handler(async_task: AsyncTask):
 
 
     if 'cn' in s.goals:
-        apply_control_nets(s, res['ip_adapter_face_path'], res['ip_adapter_path'], yield_result)
+        apply_control_nets(s, res.get('ip_adapter_path'), yield_result)
         if s.debugging_cn_preprocessor:
             s.yields.append(['finish', s.results])
             s.processing = False
@@ -309,7 +337,7 @@ def handler(async_task: AsyncTask):
             process_task(
                 s, t, i, s.image_number, all_steps, preparation_steps, 
                 s.denoising_strength, final_scheduler_name, s.loras,
-                res.get('controlnet_canny_path'), res.get('controlnet_cpds_path'),
+                res.get('controlnet_paths', {}),
                 progressbar, yield_result
             )
         except resources.InterruptProcessingException:
@@ -354,6 +382,7 @@ def worker():
         time.sleep(0.01)
         if len(async_tasks) > 0:
             task = async_tasks.pop(0)
+            set_active_task(task)
             try:
                 handler(task)
                 if task.state.generate_image_grid:
@@ -364,9 +393,11 @@ def worker():
                 traceback.print_exc()
                 task.yields.append(['finish', task.results])
             finally:
+                set_active_task(None)
                 gc.collect()
                 resources.soft_empty_cache()
 
 
 threading.Thread(target=worker, daemon=True).start()
+
 

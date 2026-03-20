@@ -284,15 +284,11 @@ def refresh_upscale_models():
     return gr.update(choices=['None'] + models, value=default_model)
     
 def stop_clicked(currentTask):
-    import backend.resources as resources
-    currentTask.last_stop = 'stop'
-    resources.interrupt_current_processing()
+    worker.request_interrupt('stop', currentTask)
     return currentTask
 
 def skip_clicked(currentTask):
-    import backend.resources as resources
-    currentTask.last_stop = 'skip'
-    resources.interrupt_current_processing()
+    worker.request_interrupt('skip', currentTask)
     return currentTask
 
 def outpaint_selection_change(choices):
@@ -641,7 +637,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
                                 progress_html, progress_window, gallery, preview_column, gallery_column],
                        queue=False)
 
-    stop_button.click(stop_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False, js='cancelGenerateForever')
+    stop_button.click(stop_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False, js='(x)=>{cancelGenerateForever(); return x;}')
     skip_button.click(skip_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False)
 
     example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)

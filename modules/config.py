@@ -540,12 +540,13 @@ for image_count in range(default_controlnet_image_count):
     if default_ip_images[image_count] == 'None':
         default_ip_images[image_count] = None
 
-    default_ip_types[image_count] = get_config_item_or_set_default(
+    default_ip_type = get_config_item_or_set_default(
         key=f'default_ip_type_{image_count}',
         default_value=modules.flags.default_ip,
-        validator=lambda x: x in modules.flags.ip_list,
+        validator=lambda x: modules.flags.normalize_cn_type(x) in modules.flags.cn_all_types,
         expected_type=str
     )
+    default_ip_types[image_count] = modules.flags.resolve_cn_type(default_ip_type)
 
     default_end, default_weight = modules.flags.default_parameters[default_ip_types[image_count]]
 
@@ -862,6 +863,7 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
+
 
 
 

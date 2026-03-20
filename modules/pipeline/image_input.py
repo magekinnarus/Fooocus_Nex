@@ -6,7 +6,6 @@ import modules.default_pipeline as pipeline
 import modules.flags as flags
 import extras.preprocessors as preprocessors
 import extras.ip_adapter as ip_adapter
-import extras.face_crop as face_crop
 from modules.util import (HWC3, resize_image, get_image_shape_ceil, set_image_shape_ceil, 
                           get_shape_ceil, resample_image, erode_or_dilate)
 from modules.upscaler import perform_upscale
@@ -373,12 +372,10 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
     outpaint_image = None
     outpaint_mask = None
     inpaint_patch_model_path = None
-    controlnet_canny_path = None
-    controlnet_cpds_path = None
+    controlnet_paths = {}
     clip_vision_path = None
     ip_negative_path = None
     ip_adapter_path = None
-    ip_adapter_face_path = None
     skip_prompt_processing = False
 
     # UoV handling
@@ -400,10 +397,10 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             # Direct path or numpy
             outpaint_image = HWC3(mask_proc.ensure_numpy(task_state.outpaint_input_image))
             outpaint_mask = None
-            
+
         if outpaint_mask is None:
             outpaint_mask = np.zeros(outpaint_image.shape[:2], dtype=np.uint8)
-        
+
         merged_upload = mask_proc.combine_image_and_mask(task_state.outpaint_mask_image)
         if merged_upload is not None:
             H, W, C = outpaint_image.shape
@@ -455,20 +452,20 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 
         inpaint_image = HWC3(inpaint_image)
         task_state.goals.append('inpaint')
-        
+
     if ('inpaint' in task_state.goals or 'outpaint' in task_state.goals) and not skip_prompt_processing:
         # Determine which image/mask pair to use for model downloading logic
         working_image = outpaint_image if 'outpaint' in task_state.goals else inpaint_image
         working_mask = outpaint_mask if 'outpaint' in task_state.goals else inpaint_mask
-        
+
         if isinstance(working_image, np.ndarray) and isinstance(working_mask, np.ndarray):
             if progressbar_callback:
                 progressbar_callback(task_state, 1, 'Initializing inpainter ...')
-            
+
             engine = getattr(task_state, 'inpaint_engine', 'None')
             if task_state.current_tab == 'outpaint':
                 engine = getattr(task_state, 'outpaint_engine', 'None')
-                
+
             if engine != 'None':
                 if progressbar_callback:
                     progressbar_callback(task_state, 1, 'Downloading inpainter ...')
@@ -483,15 +480,28 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         task_state.goals.append('cn')
         if progressbar_callback:
             progressbar_callback(task_state, 1, 'Downloading control models ...')
-        
-        if len(task_state.cn_tasks[flags.cn_canny]) > 0:
-            controlnet_canny_path = config.downloading_controlnet_canny()
-        if len(task_state.cn_tasks[flags.cn_cpds]) > 0:
-            controlnet_cpds_path = config.downloading_controlnet_cpds()
-        if len(task_state.cn_tasks[flags.cn_ip]) > 0:
+
+        structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
+        contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
+
+        controlnet_downloaders = {
+            flags.cn_canny: config.downloading_controlnet_canny,
+            flags.cn_cpds: config.downloading_controlnet_cpds,
+        }
+        for cn_type, downloader in controlnet_downloaders.items():
+            if len(structural_tasks.get(cn_type, [])) > 0:
+                controlnet_paths[cn_type] = downloader()
+
+        for cn_type in [flags.cn_mistoline, flags.cn_depth, flags.cn_mlsd]:
+            if len(structural_tasks.get(cn_type, [])) > 0:
+                print(f'[ControlNet] {cn_type} is not implemented yet. Skipping these tasks for now.')
+
+        if len(contextual_tasks.get(flags.cn_ip, [])) > 0:
             clip_vision_path, ip_negative_path, ip_adapter_path = config.downloading_ip_adapters('ip')
-        if len(task_state.cn_tasks[flags.cn_ip_face]) > 0:
-            clip_vision_path, ip_negative_path, ip_adapter_face_path = config.downloading_ip_adapters('face')
+
+        for cn_type in [flags.cn_faceid, flags.cn_pulid]:
+            if len(contextual_tasks.get(cn_type, [])) > 0:
+                print(f'[ControlNet] {cn_type} is not implemented yet. Skipping these tasks for now.')
 
     # Enhance handling
     if task_state.current_tab == 'enhance' and task_state.enhance_input_image is not None:
@@ -502,24 +512,26 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
     return {
         'base_model_additional_loras': base_model_additional_loras,
         'clip_vision_path': clip_vision_path,
-        'controlnet_canny_path': controlnet_canny_path,
-        'controlnet_cpds_path': controlnet_cpds_path,
+        'controlnet_paths': controlnet_paths,
+        'controlnet_canny_path': controlnet_paths.get(flags.cn_canny),
+        'controlnet_cpds_path': controlnet_paths.get(flags.cn_cpds),
         'inpaint_image': inpaint_image,
         'inpaint_mask': inpaint_mask,
         'outpaint_image': outpaint_image,
         'outpaint_mask': outpaint_mask,
-        'ip_adapter_face_path': ip_adapter_face_path,
         'ip_adapter_path': ip_adapter_path,
         'ip_negative_path': ip_negative_path,
         'skip_prompt_processing': skip_prompt_processing
     }
 
 
-def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_result_callback=None):
+def apply_control_nets(task_state, ip_adapter_path, yield_result_callback=None):
     """
-    Applies ControlNet preprocessors and patches the UNet for IP-Adapters.
+    Applies ControlNet preprocessors and patches the UNet for ImagePrompt IP-Adapter guidance.
     """
     width, height = task_state.width, task_state.height
+    structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
+    contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
 
     def unpack_cn_image(raw_img, label):
         cn_img = mask_proc.unpack_gradio_data(raw_img)
@@ -528,8 +540,11 @@ def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_
             return None
         return HWC3(cn_img)
 
+    def warn_unimplemented(cn_type):
+        print(f'[ControlNet] {cn_type} is not implemented yet. Skipping these tasks for now.')
+
     valid_canny_tasks = []
-    for task in task_state.cn_tasks[flags.cn_canny]:
+    for task in structural_tasks.get(flags.cn_canny, []):
         raw_img, cn_stop, cn_weight = task
         cn_img = unpack_cn_image(raw_img, flags.cn_canny)
         if cn_img is None:
@@ -542,10 +557,10 @@ def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_
         valid_canny_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.cn_tasks[flags.cn_canny] = valid_canny_tasks
+    task_state.set_cn_tasks(flags.cn_canny, valid_canny_tasks)
 
     valid_cpds_tasks = []
-    for task in task_state.cn_tasks[flags.cn_cpds]:
+    for task in structural_tasks.get(flags.cn_cpds, []):
         raw_img, cn_stop, cn_weight = task
         cn_img = unpack_cn_image(raw_img, flags.cn_cpds)
         if cn_img is None:
@@ -558,41 +573,35 @@ def apply_control_nets(task_state, ip_adapter_face_path, ip_adapter_path, yield_
         valid_cpds_tasks.append(task)
         if task_state.debugging_cn_preprocessor and yield_result_callback:
             yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.cn_tasks[flags.cn_cpds] = valid_cpds_tasks
+    task_state.set_cn_tasks(flags.cn_cpds, valid_cpds_tasks)
+
+    for cn_type in [flags.cn_mistoline, flags.cn_depth, flags.cn_mlsd]:
+        if len(structural_tasks.get(cn_type, [])) > 0:
+            warn_unimplemented(cn_type)
+        task_state.set_cn_tasks(cn_type, [])
 
     valid_ip_tasks = []
-    for task in task_state.cn_tasks[flags.cn_ip]:
-        raw_img, cn_stop, cn_weight = task
-        cn_img = unpack_cn_image(raw_img, flags.cn_ip)
-        if cn_img is None:
-            continue
-        cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
-        task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
-        valid_ip_tasks.append(task)
-        if task_state.debugging_cn_preprocessor and yield_result_callback:
-            yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.cn_tasks[flags.cn_ip] = valid_ip_tasks
+    image_prompt_tasks = contextual_tasks.get(flags.cn_ip, [])
+    if len(image_prompt_tasks) > 0 and ip_adapter_path is None:
+        print('[ControlNet] ImagePrompt is missing its IP-Adapter path. Skipping these tasks for now.')
+    else:
+        for task in image_prompt_tasks:
+            raw_img, cn_stop, cn_weight = task
+            cn_img = unpack_cn_image(raw_img, flags.cn_ip)
+            if cn_img is None:
+                continue
+            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
+            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
+            valid_ip_tasks.append(task)
+            if task_state.debugging_cn_preprocessor and yield_result_callback:
+                yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
+    task_state.set_cn_tasks(flags.cn_ip, valid_ip_tasks)
 
-    valid_ip_face_tasks = []
-    for task in task_state.cn_tasks[flags.cn_ip_face]:
-        raw_img, cn_stop, cn_weight = task
-        cn_img = unpack_cn_image(raw_img, flags.cn_ip_face)
-        if cn_img is None:
-            continue
-        if not task_state.skipping_cn_preprocessor:
-            cn_img = face_crop.crop_image(cn_img)
-        cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
-        task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_face_path)
-        valid_ip_face_tasks.append(task)
-        if task_state.debugging_cn_preprocessor and yield_result_callback:
-            yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.cn_tasks[flags.cn_ip_face] = valid_ip_face_tasks
+    for cn_type in [flags.cn_faceid, flags.cn_pulid]:
+        if len(contextual_tasks.get(cn_type, [])) > 0:
+            warn_unimplemented(cn_type)
+        task_state.set_cn_tasks(cn_type, [])
 
-    all_ip_tasks = task_state.cn_tasks[flags.cn_ip] + task_state.cn_tasks[flags.cn_ip_face]
+    all_ip_tasks = list(task_state.cn_tasks[flags.cn_ip])
     if len(all_ip_tasks) > 0:
         pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
-
-
-
-
-

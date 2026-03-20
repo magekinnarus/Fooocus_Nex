@@ -80,8 +80,9 @@ class TaskState:
     context_mask: Optional[np.ndarray] = None
     outpaint_direction: Optional[str] = None
     save_metadata_to_images: bool = True
-    metadata_scheme: Any = None # modules.flags.MetadataScheme
+    metadata_scheme: Any = None  # modules.flags.MetadataScheme
     cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)
+    cn_tasks_by_channel: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
 
     # --- Runtime State ---
     yields: List[Any] = field(default_factory=list)
@@ -101,6 +102,53 @@ class TaskState:
     use_style: bool = True
 
     def __post_init__(self):
-        if not self.cn_tasks:
-            from modules.flags import ip_list
-            self.cn_tasks = {x: [] for x in ip_list}
+        self.ensure_cn_task_maps()
+
+    def ensure_cn_task_maps(self):
+        from modules import flags
+
+        normalized_tasks = {cn_type: [] for cn_type in flags.cn_all_types}
+        for cn_type, tasks in self.cn_tasks.items():
+            normalized_type = flags.resolve_cn_type(cn_type, default=None)
+            if normalized_type is None:
+                continue
+            normalized_tasks[normalized_type].extend(tasks)
+
+        self.cn_tasks = normalized_tasks
+        self.cn_tasks_by_channel = {
+            flags.cn_structural: {cn_type: list(self.cn_tasks[cn_type]) for cn_type in flags.cn_structural_types},
+            flags.cn_contextual: {cn_type: list(self.cn_tasks[cn_type]) for cn_type in flags.cn_contextual_types},
+        }
+
+    def add_cn_task(self, cn_type, task):
+        from modules import flags
+
+        normalized_type = flags.resolve_cn_type(cn_type, default=None)
+        if normalized_type is None:
+            return False
+
+        channel = flags.get_cn_channel(normalized_type)
+        if channel is None:
+            return False
+
+        self.cn_tasks[normalized_type].append(task)
+        self.cn_tasks_by_channel[channel][normalized_type].append(task)
+        return True
+
+    def set_cn_tasks(self, cn_type, tasks):
+        from modules import flags
+
+        normalized_type = flags.resolve_cn_type(cn_type, default=None)
+        if normalized_type is None:
+            return False
+
+        channel = flags.get_cn_channel(normalized_type)
+        if channel is None:
+            return False
+
+        self.cn_tasks[normalized_type] = tasks
+        self.cn_tasks_by_channel[channel][normalized_type] = list(tasks)
+        return True
+
+    def get_cn_tasks_for_channel(self, channel):
+        return self.cn_tasks_by_channel.get(channel, {})
