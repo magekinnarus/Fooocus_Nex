@@ -1,5 +1,5 @@
 """
-Parameter Registry — Single source of truth for UI↔Backend parameter contract.
+Parameter Registry - Single source of truth for UI-to-backend parameter contract.
 
 Each parameter is registered by name with its target TaskState field.
 The webui.py ctrls_dict and AsyncTask init both use this registry,
@@ -18,7 +18,7 @@ class ParamDef:
     transform: Optional[Callable] = None  # Optional transform (e.g., int, float)
 
 
-# Ordered list — order is for documentation, not for correctness.
+# Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
 # and are NOT listed as static ParamDefs here.
 PARAM_REGISTRY: List[ParamDef] = [
@@ -31,7 +31,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('image_number', 'image_number', 1, int),
     ParamDef('output_format', 'output_format', 'png', str),
     ParamDef('image_seed', 'seed', -1, int),
-    ParamDef('read_wildcards_in_order', None, False), # Removed, mapped to None
     ParamDef('sharpness', 'sharpness', 2.0, float),
     ParamDef('guidance_scale', 'cfg_scale', 7.0, float),
     ParamDef('base_model', 'base_model_name', 'None', str),
@@ -105,7 +104,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     
     # --- Control / Image Prompts ---
     ParamDef('mixing_image_prompt_and_inpaint', 'mixing_image_prompt_and_inpaint', False, bool),
-    ParamDef('debugging_cn_preprocessor', 'debugging_cn_preprocessor', False, bool),
+    ParamDef('mixing_image_prompt_and_outpaint', 'mixing_image_prompt_and_outpaint', False, bool),
     ParamDef('skipping_cn_preprocessor', 'skipping_cn_preprocessor', False, bool),
     ParamDef('canny_low_threshold', 'canny_low_threshold', 64, int),
     ParamDef('canny_high_threshold', 'canny_high_threshold', 128, int),
@@ -149,4 +148,3 @@ def validate_ctrls(ctrls_dict: dict):
         
     if extra:
         print(f"[Parameter Registry] Warning: Unrecognized extra parameters in ctrls_dict: {extra}")
-

@@ -18,22 +18,36 @@ def get_config_path(key, default_value):
     if env is not None and isinstance(env, str):
         print(f"Environment: {key} = {env}")
         return env
-    else:
-        return os.path.abspath(default_value)
 
-wildcards_max_bfs_depth = 64
+    candidate = default_value
+    if getattr(args_manager.args, 'colab', False):
+        if key == 'config_path' and default_value == "./config.txt":
+            candidate = "./config_colab.txt"
+        elif key == 'config_example_path' and default_value == "config_modification_tutorial.txt":
+            candidate = "config_colab_modification_tutorial.txt"
+
+    return os.path.abspath(candidate)
+
 config_path = get_config_path('config_path', "./config.txt")
 config_example_path = get_config_path('config_example_path', "config_modification_tutorial.txt")
 config_dict = {}
 always_save_keys = []
 visited_keys = []
 
-try:
-    with open(os.path.abspath(f'./presets/default.json'), "r", encoding="utf-8") as json_file:
-        config_dict.update(json.load(json_file))
-except Exception as e:
-    print(f'Load default preset failed.')
-    print(e)
+
+def try_load_json_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as json_file:
+            return json.load(json_file)
+    except Exception as e:
+        print(f'Load json file failed: {path}')
+        print(e)
+    return {}
+
+runtime_defaults = try_load_json_file(os.path.abspath('./configs/defaults/runtime_default.json'))
+resolution_set_sdxl = try_load_json_file(os.path.abspath('./configs/resolution_sets/sdxl.json'))
+
+config_dict.update(runtime_defaults)
 
 try:
     if os.path.exists(config_path):
@@ -105,7 +119,13 @@ def get_presets():
         print('No presets found.')
         return presets
 
-    return presets + [f[:f.index(".json")] for f in os.listdir(preset_folder) if f.endswith('.json')]
+    visible_presets = []
+    for filename in os.listdir(preset_folder):
+        if not filename.endswith('.json'):
+            continue
+        preset_name = filename[:filename.index('.json')]
+        visible_presets.append(preset_name)
+    return presets + visible_presets
 
 def update_presets():
     global available_presets
@@ -188,18 +208,20 @@ def get_dir_or_set_default(key, default_value, as_array=False, make_directory=Fa
     return dp
 
 
-paths_checkpoints = get_dir_or_set_default('path_checkpoints', ['../models/checkpoints/'], True)
-paths_loras = get_dir_or_set_default('path_loras', ['../models/loras/'], True)
-path_embeddings = get_dir_or_set_default('path_embeddings', '../models/embeddings/')
-path_vae_approx = get_dir_or_set_default('path_vae_approx', '../models/vae_approx/')
-path_vae = get_dir_or_set_default('path_vae', '../models/vae/')
-path_unet = get_dir_or_set_default('path_unet', '../models/unet/', True)
-path_clip = get_dir_or_set_default('path_clip', '../models/clip/', True)
-path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/', True)
-path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/')
-path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/', True)
-path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/')
-path_removals = get_dir_or_set_default('path_removals', '../models/removals/')
+paths_checkpoints = get_dir_or_set_default('path_checkpoints', ['../models/checkpoints/'], True, True)
+paths_loras = get_dir_or_set_default('path_loras', ['../models/loras/'], True, True)
+path_embeddings = get_dir_or_set_default('path_embeddings', '../models/embeddings/', make_directory=True)
+path_vae_approx = get_dir_or_set_default('path_vae_approx', '../models/vae_approx/', make_directory=True)
+path_vae = get_dir_or_set_default('path_vae', '../models/vae/', make_directory=True)
+path_unet = get_dir_or_set_default('path_unet', '../models/unet/', True, True)
+path_clip = get_dir_or_set_default('path_clip', '../models/clip/', True, True)
+path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/', True, True)
+path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/', make_directory=True)
+path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/', True, True)
+path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/', make_directory=True)
+path_preprocessors = get_dir_or_set_default('path_preprocessors', '../models/preprocessors/', make_directory=True)
+path_insightface = get_dir_or_set_default('path_insightface', '../models/insightface/', make_directory=True)
+path_removals = get_dir_or_set_default('path_removals', '../models/removals/', make_directory=True)
 
 
 # Add unet path to checkpoints for base model selection
@@ -221,10 +243,42 @@ else:
     paths_clips.append(path_clip)
 
 
-path_wildcards = get_dir_or_set_default('path_wildcards', '../wildcards/')
 path_outputs = get_path_output()
 path_temp_outputs = os.path.join(path_outputs, 'temp')
 os.makedirs(path_temp_outputs, exist_ok=True)
+path_download_manifests = get_dir_or_set_default('path_download_manifests', '../configs/download_manifests/')
+
+asset_root_paths = {
+    'checkpoints': paths_checkpoints[0],
+    'loras': paths_loras[0],
+    'embeddings': path_embeddings,
+    'vae_approx': path_vae_approx,
+    'vae': path_vae,
+    'unet': path_unet[0] if isinstance(path_unet, list) else path_unet,
+    'clip': paths_clips[0],
+    'upscale_models': path_upscale_models[0] if isinstance(path_upscale_models, list) else path_upscale_models,
+    'inpaint': path_inpaint,
+    'controlnet_models': path_controlnet[0],
+    'clip_vision': path_clip_vision,
+    'preprocessors': path_preprocessors,
+    'insightface': path_insightface,
+    'removals': path_removals,
+    'outputs': path_outputs,
+}
+
+
+def get_asset_root_path(key):
+    if key not in asset_root_paths:
+        raise KeyError(f'Unknown asset root path key: {key}')
+    return asset_root_paths[key]
+
+
+def get_download_manifest_root():
+    return path_download_manifests
+
+
+def get_download_manifest_asset_dir():
+    return os.path.join(path_download_manifests, 'assets')
 
 
 def get_config_item_or_set_default(key, default_value, validator, disable_empty_as_none=False, expected_type=None):
@@ -300,13 +354,13 @@ if getattr(args_manager.args, 'skip_model_load', False):
     default_base_model_name = default_model = 'None'
 default_loras_min_weight = get_config_item_or_set_default(
     key='default_loras_min_weight',
-    default_value=-2,
+    default_value=runtime_defaults.get('default_loras_min_weight', -2),
     validator=lambda x: isinstance(x, numbers.Number) and -10 <= x <= 10,
     expected_type=numbers.Number
 )
 default_loras_max_weight = get_config_item_or_set_default(
     key='default_loras_max_weight',
-    default_value=2,
+    default_value=runtime_defaults.get('default_loras_max_weight', 2),
     validator=lambda x: isinstance(x, numbers.Number) and -10 <= x <= 10,
     expected_type=numbers.Number
 )
@@ -352,7 +406,10 @@ if getattr(args_manager.args, 'skip_model_load', False):
 default_loras = [(y[0], y[1], y[2]) if len(y) == 3 else (True, y[0], y[1]) for y in default_loras]
 default_max_lora_number = get_config_item_or_set_default(
     key='default_max_lora_number',
-    default_value=len(default_loras) if isinstance(default_loras, list) and len(default_loras) > 0 else 5,
+    default_value=runtime_defaults.get(
+        'default_max_lora_number',
+        len(default_loras) if isinstance(default_loras, list) and len(default_loras) > 0 else 5
+    ),
     validator=lambda x: isinstance(x, int) and x >= 1,
     expected_type=int
 )
@@ -477,7 +534,7 @@ vae_downloads = get_config_item_or_set_default(
 )
 available_aspect_ratios = get_config_item_or_set_default(
     key='available_aspect_ratios',
-    default_value=modules.flags.sdxl_aspect_ratios,
+    default_value=resolution_set_sdxl.get('available_aspect_ratios', modules.flags.sdxl_aspect_ratios),
     validator=lambda x: isinstance(x, list) and all('*' in v for v in x) and len(x) > 1,
     expected_type=list
 )
@@ -489,13 +546,13 @@ default_aspect_ratio = get_config_item_or_set_default(
 )
 default_inpaint_engine_version = get_config_item_or_set_default(
     key='default_inpaint_engine_version',
-    default_value='None',
+    default_value=runtime_defaults.get('default_inpaint_engine_version', 'None'),
     validator=lambda x: x in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
 default_outpaint_engine_version = get_config_item_or_set_default(
     key='default_outpaint_engine_version',
-    default_value='v2.6',
+    default_value=runtime_defaults.get('default_outpaint_engine_version', 'v2.6'),
     validator=lambda x: x in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
@@ -583,7 +640,7 @@ default_cfg_tsnr = get_config_item_or_set_default(
 )
 default_clip_skip = get_config_item_or_set_default(
     key='default_clip_skip',
-    default_value=2,
+    default_value=runtime_defaults.get('default_clip_skip', 2),
     validator=lambda x: isinstance(x, int) and 1 <= x <= modules.flags.clip_skip_max,
     expected_type=int
 )
@@ -606,9 +663,10 @@ default_overwrite_upscale = get_config_item_or_set_default(
 )
 example_inpaint_prompts = get_config_item_or_set_default(
     key='example_inpaint_prompts',
-    default_value=[
-        'highly detailed face', 'detailed girl face', 'detailed man face', 'detailed hand', 'beautiful eyes'
-    ],
+    default_value=runtime_defaults.get(
+        'example_inpaint_prompts',
+        ['highly detailed face', 'detailed girl face', 'detailed man face', 'detailed hand', 'beautiful eyes']
+    ),
     validator=lambda x: isinstance(x, list) and all(isinstance(v, str) for v in x),
     expected_type=list
 )
@@ -723,7 +781,6 @@ model_filenames = []
 clip_filenames = []
 lora_filenames = []
 vae_filenames = []
-wildcard_filenames = []
 
 
 def get_model_filenames(folder_paths, extensions=None, name_filter=None):
@@ -740,12 +797,11 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
 
 
 def update_files():
-    global model_filenames, clip_filenames, lora_filenames, vae_filenames, wildcard_filenames, available_presets
+    global model_filenames, clip_filenames, lora_filenames, vae_filenames, available_presets
     model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
     clip_filenames = sorted(list(set(get_model_filenames(paths_clips))))
     lora_filenames = sorted(list(set(get_model_filenames(paths_loras))))
     vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
-    wildcard_filenames = sorted(list(set(get_files_from_folder(path_wildcards, ['.txt']))))
     available_presets = get_presets()
     return
 
@@ -810,21 +866,15 @@ def downloading_sdxl_hyper_sd_lora():
 
 
 def downloading_controlnet_canny():
-    load_file_from_url(
-        url='https://huggingface.co/lllyasviel/misc/resolve/main/control-lora-canny-rank128.safetensors',
-        model_dir=path_controlnet[0],
-        file_name='control-lora-canny-rank128.safetensors'
-    )
-    return os.path.join(path_controlnet[0], 'control-lora-canny-rank128.safetensors')
+    from modules import model_registry
+
+    return model_registry.ensure_asset('structural.canny.controlnet')
 
 
 def downloading_controlnet_cpds():
-    load_file_from_url(
-        url='https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_xl_cpds_128.safetensors',
-        model_dir=path_controlnet[0],
-        file_name='fooocus_xl_cpds_128.safetensors'
-    )
-    return os.path.join(path_controlnet[0], 'fooocus_xl_cpds_128.safetensors')
+    from modules import model_registry
+
+    return model_registry.ensure_asset('structural.cpds.controlnet')
 
 
 def downloading_ip_adapters(v):
@@ -863,9 +913,3 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
-
-
-
-
-
-

@@ -8,18 +8,18 @@ def build_control_tab():
         dict: Gradio components mapping name to instance.
     """
     results = {}
-
-    results['debugging_cn_preprocessor'] = gr.Checkbox(
-        label='Debug Preprocessors', value=False,
-        info='See the results from preprocessors.'
-    )
     results['skipping_cn_preprocessor'] = gr.Checkbox(
         label='Skip Preprocessors', value=False,
         info='Do not preprocess images. (Inputs are already canny/depth/cropped-face/etc.)'
     )
 
     results['mixing_image_prompt_and_inpaint'] = gr.Checkbox(
-        label='Add Controlnet to Inpainting/outpainting',
+        label='Add ControlNet to Inpaint',
+        value=False
+    )
+
+    results['mixing_image_prompt_and_outpaint'] = gr.Checkbox(
+        label='Add ControlNet to Outpaint',
         value=False
     )
 

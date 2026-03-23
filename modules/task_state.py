@@ -60,7 +60,7 @@ class TaskState:
     overwrite_height: int = -1
     overwrite_upscale_strength: float = -1.0
     mixing_image_prompt_and_inpaint: bool = False
-    debugging_cn_preprocessor: bool = False
+    mixing_image_prompt_and_outpaint: bool = False
     skipping_cn_preprocessor: bool = False
     canny_low_threshold: int = 64
     canny_high_threshold: int = 128

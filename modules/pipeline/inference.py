@@ -57,7 +57,7 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
 
     if 'cn' in task_state.goals:
         structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
-        for cn_flag in [flags.cn_canny, flags.cn_cpds]:
+        for cn_flag in [flags.cn_canny, flags.cn_cpds, flags.cn_depth, flags.cn_mistoline, flags.cn_mlsd]:
             cn_path = controlnet_paths.get(cn_flag)
             if cn_path is None:
                 continue

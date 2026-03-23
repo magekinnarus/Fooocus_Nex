@@ -148,7 +148,6 @@ with shared.gradio_root:
                             flags.cn_structural: flags.cn_structural_types,
                             flags.cn_contextual: flags.cn_contextual_types,
                         }
-
                         def resolve_channel_default(image_count):
                             default_type = flags.resolve_cn_type(modules.config.default_ip_types[image_count])
                             default_channel = flags.get_cn_channel(default_type)
@@ -216,8 +215,9 @@ with shared.gradio_root:
                                         )
                                         ip_type = gr.Dropdown(
                                             label='Method',
-                                            choices=guidance_choices_by_channel[default_channel],
+                                            choices=guidance_choices_by_channel.get(default_channel, flags.cn_contextual_types),
                                             value=default_type,
+                                            allow_custom_value=True,
                                             container=False,
                                             scale=1
                                         )
@@ -263,9 +263,9 @@ with shared.gradio_root:
                         with gr.Group():
                             gr.HTML('<div style="margin-top:20px; border-top:1px solid rgba(128,128,128,0.2); padding-top:15px; font-weight:bold;">Advanced Control</div>')
                             control_panel_result = control_panel.build_control_tab()
-                            debugging_cn_preprocessor = control_panel_result['debugging_cn_preprocessor']
                             skipping_cn_preprocessor = control_panel_result['skipping_cn_preprocessor']
                             mixing_image_prompt_and_inpaint = control_panel_result['mixing_image_prompt_and_inpaint']
+                            mixing_image_prompt_and_outpaint = control_panel_result['mixing_image_prompt_and_outpaint']
                             controlnet_softness = control_panel_result['controlnet_softness']
                             canny_low_threshold = control_panel_result['canny_low_threshold']
                             canny_high_threshold = control_panel_result['canny_high_threshold']
@@ -284,9 +284,9 @@ with shared.gradio_root:
                                 outpaint_selections = gr.CheckboxGroup(choices=['Left', 'Right', 'Top', 'Bottom'], value=['Left'], label='Outpaint Direction')
                                 with gr.Column(elem_classes=["step2-toolbox"]):
                                     outpaint_prepare_button = gr.Button(value='Prepare Outpaint', variant='primary', elem_id='outpaint_prepare_button')
-                                    outpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, visible=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    outpaint_step2_checkbox = gr.Checkbox(label='Prepared Outpaint Assets', value=False, visible=False, elem_id='outpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
                                     outpaint_prepare_notice = gr.Markdown(value='')
-                                    gr.HTML('<p class="step2-desc">Using base image, BB image, and BB mask to expand the image.</p>')
+                                    gr.HTML('<p class="step2-desc">Prepare the expanded canvas and BB assets first, then Generate runs inference with those resolved slots.</p>')
 
                                 outpaint_panel_result = outpaint_panel.build_outpaint_tab()
                                 outpaint_engine = outpaint_panel_result['outpaint_engine']
@@ -337,8 +337,8 @@ with shared.gradio_root:
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
     <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">Inpaint Mask</span>
     <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
-      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-context" title="Step 1: Paint Context">Context Mask</button>
-      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Step 2: Paint BB Patch">BB Mask</button>
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-context" title="Paint Context Mask">Context Mask</button>
+      <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Paint BB Mask">BB Mask</button>
       <button type="button" class="mask-tool-btn active" id="inpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
   </div>
@@ -359,8 +359,8 @@ with shared.gradio_root:
                                                                      components=[inpaint_additional_prompt],
                                                                      visible=True)
                                 with gr.Column(elem_classes=["step2-toolbox"]):
-                                    inpaint_step2_checkbox = gr.Checkbox(label='2nd Step generation', value=False, visible=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
-                                    gr.HTML('<p class="step2-desc step2-desc--inpaint"><span class="step2-desc__title">Prepare Inpaint</span><span class="step2-desc__body">By adding or drawing masks to fill the Inpaint input images and press Generate to complete the process.</span></p>')
+                                    inpaint_step2_checkbox = gr.Checkbox(label='Prepared Inpaint Assets', value=False, visible=False, elem_id='inpaint_step2_checkbox', elem_classes=['step2-status-btn'], container=False)
+                                    gr.HTML('<p class="step2-desc step2-desc--inpaint"><span class="step2-desc__title">Prepare Inpaint Assets</span><span class="step2-desc__body">Context Mask, BB Image, and BB Mask are prepared before inference. Generate then runs from the resolved inpaint slots.</span></p>')
 
                                 inpaint_panel_result = inpaint_panel.build_inpaint_tab()
                                 debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
@@ -458,7 +458,6 @@ with shared.gradio_root:
                 disable_preview = debug_panel_result['disable_preview']
                 disable_intermediate_results = debug_panel_result['disable_intermediate_results']
                 disable_seed_increment = debug_panel_result['disable_seed_increment']
-                read_wildcards_in_order = debug_panel_result['read_wildcards_in_order']
                 if not args_manager.args.disable_metadata:
                     save_metadata_to_images = debug_panel_result['save_metadata_to_images']
                     metadata_scheme = debug_panel_result['metadata_scheme']
@@ -496,7 +495,6 @@ with shared.gradio_root:
             'image_number': image_number,
             'output_format': output_format,
             'image_seed': image_seed,
-            'read_wildcards_in_order': read_wildcards_in_order,
             'sharpness': sharpness,
             'guidance_scale': guidance_scale,
             'base_model': base_model,
@@ -540,7 +538,7 @@ with shared.gradio_root:
             'overwrite_height': overwrite_height,
             'overwrite_upscale_strength': overwrite_upscale_strength,
             'mixing_image_prompt_and_inpaint': mixing_image_prompt_and_inpaint,
-            'debugging_cn_preprocessor': debugging_cn_preprocessor,
+            'mixing_image_prompt_and_outpaint': mixing_image_prompt_and_outpaint,
             'skipping_cn_preprocessor': skipping_cn_preprocessor,
             'canny_low_threshold': canny_low_threshold,
             'canny_high_threshold': canny_high_threshold,
@@ -699,6 +697,3 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
-
-
-

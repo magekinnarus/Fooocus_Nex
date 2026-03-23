@@ -419,6 +419,28 @@ def save_to_temp_png(numpy_img):
     return save_to_png(numpy_img, temp_path)
 
 
+def save_to_staging_png(numpy_img, prefix='staged'):
+    """
+    Saves a numpy array to the persistent staging folder so users can reuse
+    intermediate artifacts from the UI.
+    """
+    if numpy_img is None:
+        return None
+
+    import datetime
+
+    staging_dir = os.path.join(modules.config.path_outputs, "staging")
+    os.makedirs(staging_dir, exist_ok=True)
+
+    safe_prefix = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in str(prefix)).strip('_')
+    if safe_prefix == '':
+        safe_prefix = 'staged'
+
+    time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S_%f")
+    filename = f"{safe_prefix}_{time_str}.png"
+    filepath = os.path.join(staging_dir, filename)
+    return save_to_png(numpy_img, filepath)
+
 
 def ensure_workspace_dir(workspace_id=None, prefix='mask_slot'):
     if workspace_id and all(c.isalnum() or c == '_' for c in workspace_id):
@@ -715,4 +737,3 @@ def compute_outpaint_step2_mask(workspace_id, mask_b64):
         prefix='outpaint_mask'
     )
     return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
-

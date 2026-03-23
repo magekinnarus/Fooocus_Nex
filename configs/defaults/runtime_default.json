@@ -1,0 +1,16 @@
+{
+  "default_loras_min_weight": -5,
+  "default_loras_max_weight": 5,
+  "default_max_lora_number": 14,
+  "default_inpaint_engine_version": "None",
+  "default_outpaint_engine_version": "v2.6",
+  "default_clip_skip": 2,
+  "example_inpaint_prompts": [
+    "highly detailed face",
+    "detailed girl face",
+    "detailed man face",
+    "detailed hand",
+    "beautiful eyes"
+  ],
+  "default_overwrite_step": 20
+}

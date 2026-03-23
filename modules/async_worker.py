@@ -19,7 +19,6 @@ from modules.pipeline import (
     process_prompt,
     apply_image_input,
     apply_control_nets,
-    apply_outpaint_expansion,
     apply_outpaint_inference_setup,
     apply_upscale,
     apply_inpaint,
@@ -231,12 +230,12 @@ def handler(async_task: AsyncTask):
         if s.input_image_checkbox:
             if 'outpaint' in s.goals:
                 # Phase 2: Inference setup on the expanded canvas
-                # Note: res['outpaint_image/mask'] contains the result of Step 1 if it finished, 
-                # or the original inputs if Step 2 was already selected.
+                # res['outpaint_image/mask'] contains the prepared outpaint canvas/mask when available, 
+                # or the current resolved inputs if assets were already prepared.
                 apply_outpaint_inference_setup(s, res['outpaint_image'], res['outpaint_mask'], progressbar, yield_result)
 
             if 'inpaint' in s.goals:
-                # Phase 1/2 Inpaint: Manual dual-masking and inference setup
+                # Inpaint: resolve prepared assets and set up inference
                 apply_inpaint(s, res['inpaint_image'], res['inpaint_mask'], progressbar, yield_result)
     except EarlyReturnException as e:
         save_step1_result = e.payload
@@ -310,14 +309,8 @@ def handler(async_task: AsyncTask):
         s.yields.append(['finish', s.results])
         s.processing = False
         return
-
-
     if 'cn' in s.goals:
-        apply_control_nets(s, res.get('ip_adapter_path'), yield_result)
-        if s.debugging_cn_preprocessor:
-            s.yields.append(['finish', s.results])
-            s.processing = False
-            return
+        apply_control_nets(s, res.get('ip_adapter_path'), res.get('structural_preprocessor_paths'))
 
     steps, _, _ = apply_overrides(s)
     all_steps = max(steps * s.image_number, 1)
@@ -399,5 +392,3 @@ def worker():
 
 
 threading.Thread(target=worker, daemon=True).start()
-
-

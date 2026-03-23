@@ -93,10 +93,6 @@ def build_debug_tab():
         value=False
     )
     
-    results['read_wildcards_in_order'] = gr.Checkbox(
-        label="Read wildcards in order", value=False
-    )
-
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(
             label='Save Metadata to Images', 

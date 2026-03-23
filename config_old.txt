@@ -1,42 +1,39 @@
-You can modify your "D:\\AI\\Fooocus_Nex\\config.txt" using the below keys, formats, and examples.
-Do not modify this file. Modifications in this file will not take effect.
-This file is a tutorial and example. Please edit "D:\\AI\\Fooocus_Nex\\config.txt" to really change any settings.
-Remember to split the paths with "\\" rather than "\", and there is no "," before the last "}". 
-
-
 {
     "path_checkpoints": [
         "D:\\AI\\Imagine\\models\\checkpoints",
-        "D:\\AI\\Imagine\\models\\unet"
+        "H:\\webui_forge_cu121_torch21\\webui\\models\\Stable-diffusion\\SDXL_Type"
     ],
     "path_loras": [
-        "D:\\AI\\Imagine\\models\\loras"
+        "D:\\AI\\Imagine\\models\\loras",
+        "H:\\webui_forge_cu121_torch21\\webui\\models\\Lora\\SDXL_Type"
     ],
-    "path_embeddings": "D:\\AI\\Fooocus_Nex\\models\\embeddings",
+    "path_embeddings": "D:\\AI\\Imagine\\models\\embeddings",
     "path_vae_approx": "D:\\AI\\Imagine\\models\\vae_approx",
     "path_vae": "D:\\AI\\Imagine\\models\\vae",
     "path_unet": [
-        "D:\\AI\\Imagine\\models\\unet"
+        "D:\\AI\\Imagine\\models\\unet",
+        "H:\\webui_forge_cu121_torch21\\webui\\models\\Stable-diffusion\\unet"
     ],
     "path_clip": [
-        "D:\\AI\\Imagine\\models\\clip"
+        "D:\\AI\\Imagine\\models\\clip",
+        "H:\\webui_forge_cu121_torch21\\webui\\models\\text_encoder\\bundled_clips"
     ],
     "path_upscale_models": [
-        "D:\\AI\\Imagine\\models\\upscale_models"
+        "D:\\AI\\Imagine\\models\\upscale_models",
+        "D:\\BackupF\\Downloads\\Pth_Folder"
     ],
     "path_inpaint": "D:\\AI\\Imagine\\models\\inpaint",
     "path_controlnet": [
-        "D:\\AI\\Imagine\\models\\controlnet"
+        "D:\\AI\\Imagine\\models\\controlnet",
+        "H:\\webui_forge_cu121_torch21\\webui\\models\\ControlNet"
     ],
     "path_clip_vision": "D:\\AI\\Imagine\\models\\clip_vision",
-    "path_preprocessors": "D:\\AI\\Fooocus_Nex\\models\\preprocessors",
-    "path_insightface": "D:\\AI\\Fooocus_Nex\\models\\insightface",
-    "path_removals": "D:\\AI\\Fooocus_Nex\\models\\removals",
+    "path_wildcards": "D:\\AI\\Fooocus_Nex\\wildcards",
+    "path_sam": "D:\\AI\\Imagine\\models\\sam",
     "path_outputs": "D:\\AI\\Fooocus_Nex\\outputs",
-    "path_download_manifests": "D:\\AI\\Fooocus_Nex\\configs\\download_manifests",
-    "temp_path": "C:\\Users\\ACER\\AppData\\Local\\Temp\\fooocus",
+    "temp_path": "C:\\Users\\ACER\\AppData\\Local\\Temp\\fooocus_Nex",
     "temp_path_cleanup_on_launch": true,
-    "Selected_model": "IL_beretMixReal_v100_Q5_K_M.gguf",
+    "Selected_model": "IL_beretMixReal_v100_Q4_K_M.gguf",
     "default_loras_min_weight": -5,
     "default_loras_max_weight": 5,
     "default_loras": [
@@ -114,9 +111,10 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_max_lora_number": 14,
     "default_cfg_scale": 7.0,
     "default_sample_sharpness": 2.0,
-    "default_sampler": "euler_ancestral",
+    "default_sampler": "euler_ancestral_cfg_pp",
     "default_scheduler": "beta",
     "default_vae": "sdxl_vae.safetensors",
+    "default_clip": "IL_beretMixReal_v100_clips.safetensors",
     "default_styles": [
         "Dj Illustrious",
         "Dj Hyperrealism"
@@ -124,6 +122,7 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_prompt_negative": "ugly, duplicate, mutilated, out of frame, hand, feet, fingers, mutation, deformed, blurry, out of focus, cropped",
     "default_prompt": "masterpiece, best quality, amazing quality, very aesthetic, promotional art, newest, dynamic angle, dramatic light, intricate details, cinematic, detailed background",
     "default_image_prompt_checkbox": false,
+    "default_enhance_checkbox": false,
     "default_advanced_checkbox": false,
     "default_developer_debug_mode_checkbox": false,
     "default_image_prompt_advanced_checkbox": false,
@@ -163,10 +162,9 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "1664*576",
         "1728*576"
     ],
-    "default_aspect_ratio": "832*1216",
+    "default_aspect_ratio": "1024*1024",
     "default_inpaint_engine_version": "None",
     "default_outpaint_engine_version": "v2.6",
-    "default_outpaint_expansion_size": 384,
     "default_selected_image_input_tab_id": "uov_tab",
     "default_uov_method": "Disabled",
     "default_controlnet_image_count": 4,
@@ -190,8 +188,8 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_inpaint_method": "Outpaint (2-Step)",
     "default_cfg_tsnr": 7.0,
     "default_clip_skip": 2,
-    "default_clip": "IL_beretMixReal_v100_clips.safetensors",
     "default_overwrite_step": 10,
+    "default_overwrite_switch": -1,
     "default_overwrite_upscale": -1,
     "example_inpaint_prompts": [
         "highly detailed face",
@@ -200,9 +198,30 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "detailed hand",
         "beautiful eyes"
     ],
-    "default_save_metadata_to_images": false,
+    "example_enhance_detection_prompts": [
+        "face",
+        "eye",
+        "mouth",
+        "hair",
+        "hand",
+        "body"
+    ],
+    "default_enhance_tabs": 3,
+    "default_enhance_uov_method": "Disabled",
+    "default_enhance_uov_processing_order": "Before First Enhancement",
+    "default_enhance_uov_prompt_type": "Original Prompts",
+    "default_sam_max_detections": 0,
+    "default_save_only_final_enhanced_image": false,
+    "default_save_metadata_to_images": true,
     "default_metadata_scheme": "fooocus",
     "metadata_created_by": "",
+    "default_invert_mask_checkbox": false,
     "default_inpaint_mask_model": "isnet-general-use",
-    "default_inpaint_mask_cloth_category": "full"
+    "default_enhance_inpaint_mask_model": "sam",
+    "default_inpaint_mask_cloth_category": "full",
+    "default_inpaint_mask_sam_model": "vit_b",
+    "default_describe_apply_prompts_checkbox": true,
+    "default_describe_content_type": [
+        "Photograph"
+    ]
 }

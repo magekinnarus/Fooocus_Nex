@@ -1,0 +1,1 @@
+from .ted import TED

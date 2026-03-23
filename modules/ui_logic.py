@@ -36,7 +36,17 @@ from modules.auth import auth_enabled, check_auth
 from modules.util import is_json
 
 def validate_outpaint_generate_request(named_args):
-    if named_args.get('current_tab') != 'outpaint':
+    mixed_outpaint = (
+        named_args.get('current_tab') == 'ip'
+        and named_args.get('mixing_image_prompt_and_outpaint', False)
+        and named_args.get('outpaint_input_image') is not None
+        and (
+            named_args.get('outpaint_step2_checkbox', False)
+            or bool(named_args.get('outpaint_selections', []))
+            or named_args.get('outpaint_mask_image') is not None
+        )
+    )
+    if named_args.get('current_tab') != 'outpaint' and not mixed_outpaint:
         return ''
 
     if not named_args.get('outpaint_step2_checkbox', False):

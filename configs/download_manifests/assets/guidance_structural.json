@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "structural.canny.controlnet",
+      "kind": "controlnet",
+      "channel": "Structural",
+      "method": "PyraCanny",
+      "loader_type": "controlnet",
+      "artifact_type": "file",
+      "destination": "controlnet_models",
+      "relative_path": "control-lora-canny-rank128.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/misc/resolve/main/control-lora-canny-rank128.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "structural.cpds.controlnet",
+      "kind": "controlnet",
+      "channel": "Structural",
+      "method": "CPDS",
+      "loader_type": "controlnet",
+      "artifact_type": "file",
+      "destination": "controlnet_models",
+      "relative_path": "fooocus_xl_cpds_128.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/misc/resolve/main/fooocus_xl_cpds_128.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "structural.depth.preprocessor",
+      "kind": "preprocessor",
+      "channel": "Structural",
+      "method": "Depth",
+      "loader_type": "depth_anything_v2",
+      "artifact_type": "file",
+      "destination": "preprocessors",
+      "relative_path": "depth_anything_v2_vitl.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/MackinationsAi/Depth-Anything-V2_Safetensors/resolve/main/depth_anything_v2_vitl.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "structural.depth.controlnet",
+      "kind": "controlnet",
+      "channel": "Structural",
+      "method": "Depth",
+      "loader_type": "controllllite",
+      "artifact_type": "file",
+      "destination": "controlnet_models",
+      "relative_path": "bdsqlsz_controlllite_xl_depth.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/bdsqlsz/qinglong_controlnet-lllite/resolve/main/bdsqlsz_controlllite_xl_depth.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "structural.mistoline.preprocessor",
+      "kind": "preprocessor",
+      "channel": "Structural",
+      "method": "MistoLine",
+      "loader_type": "teed",
+      "artifact_type": "file",
+      "destination": "preprocessors",
+      "relative_path": "MTEED.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/TheMistoAI/MistoLine/resolve/main/Anyline/MTEED.pth"
+        }
+      ]
+    },
+    {
+      "id": "structural.mistoline.controlnet",
+      "kind": "controlnet",
+      "channel": "Structural",
+      "method": "MistoLine",
+      "loader_type": "controlnet",
+      "artifact_type": "file",
+      "destination": "controlnet_models",
+      "relative_path": "mistoLine_fp16.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/TheMistoAI/MistoLine/resolve/main/mistoLine_fp16.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "structural.mlsd.preprocessor",
+      "kind": "preprocessor",
+      "channel": "Structural",
+      "method": "MLSD",
+      "loader_type": "mlsd",
+      "artifact_type": "file",
+      "destination": "preprocessors",
+      "relative_path": "mlsd_large_512_fp32.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/Annotators/resolve/main/mlsd_large_512_fp32.pth"
+        }
+      ]
+    },
+    {
+      "id": "structural.mlsd.controlnet",
+      "kind": "controlnet",
+      "channel": "Structural",
+      "method": "MLSD",
+      "loader_type": "controllllite",
+      "artifact_type": "file",
+      "destination": "controlnet_models",
+      "relative_path": "bdsqlsz_controlllite_xl_mlsd_V2.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/bdsqlsz/qinglong_controlnet-lllite/resolve/main/bdsqlsz_controlllite_xl_mlsd_V2.safetensors"
+        }
+      ]
+    }
+  ]
+}

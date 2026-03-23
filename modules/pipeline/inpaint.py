@@ -244,7 +244,12 @@ class InpaintPipeline:
         resources.soft_empty_cache()
         
         # 3. Create denoise_mask in latent space
-        mask = torch.from_numpy(context.bb_mask).float() / 255.0
+        mask_np = np.asarray(context.bb_mask)
+        if mask_np.ndim == 3:
+            mask_np = mask_np[:, :, 0]
+        if mask_np.ndim != 2 or mask_np.size == 0:
+            raise ValueError(f"Invalid inpaint BB mask shape: {mask_np.shape}")
+        mask = torch.from_numpy(mask_np).float() / 255.0
         mask = mask[None, None, :, :] # (1, 1, H, W)
         
         # Max pool to 1/8 resolution

@@ -75,7 +75,7 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     negative_prompt = negative_prompts[0]
     
     # Inpaint Additional Prompt handling
-    if task_state.current_tab == 'inpaint' and task_state.inpaint_additional_prompt != '':
+    if 'inpaint' in task_state.goals and task_state.inpaint_additional_prompt != '':
         if prompt == '':
             prompt = task_state.inpaint_additional_prompt
         else:

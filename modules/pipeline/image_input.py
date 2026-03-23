@@ -1,4 +1,3 @@
-import copy
 import numpy as np
 import modules.config as config
 import modules.core as core
@@ -6,6 +5,7 @@ import modules.default_pipeline as pipeline
 import modules.flags as flags
 import extras.preprocessors as preprocessors
 import extras.ip_adapter as ip_adapter
+import backend.preprocessors as structural_preprocessors
 from modules.util import (HWC3, resize_image, get_image_shape_ceil, set_image_shape_ceil, 
                           get_shape_ceil, resample_image, erode_or_dilate)
 from modules.upscaler import perform_upscale
@@ -18,53 +18,6 @@ class EarlyReturnException(BaseException):
         self.payload = payload
 
 
-LAST_INPAINT_STEP1_CONTEXT = None
-
-
-
-
-def apply_outpaint_expansion(task_state, inpaint_image, inpaint_mask):
-    """
-    Phase 1 Outpaint: Pads the image and returns BOTH the expanded canvas and 
-    the auto-calculated BB image for Step 2 external editing.
-    """
-    if task_state.current_tab == 'outpaint' and task_state.outpaint_direction is not None:
-        direction = task_state.outpaint_direction
-        if isinstance(direction, list) and len(direction) > 0:
-            direction = direction[0].lower()
-        
-        if getattr(task_state, 'inpaint_pixelate_primer', False):
-            return inpaint_image, inpaint_mask
-            
-        from modules.pipeline.outpaint import OutpaintPipeline
-        outpaint = OutpaintPipeline()
-        
-        # 1. Expand canvas
-        expanded_image, generated_mask = outpaint.prepare_outpaint_canvas_only(inpaint_image, direction, expansion_size=task_state.inpaint_outpaint_expansion_size, pixelate=False)
-        
-        # 2. Combine with existing mask
-        expanded_mask = np.maximum(
-            resample_image(inpaint_mask, width=expanded_image.shape[1], height=expanded_image.shape[0]), 
-            generated_mask
-        )
-
-        # 3. Pre-calculate the BB image that Step 2 inference will use
-        ctx = outpaint.prepare(
-            image=expanded_image,
-            mask=expanded_mask,
-            outpaint_direction=direction,
-            extend_factor=1.2
-        )
-
-        # 4. Save to temp PNGs for Filepath Invariant
-        from modules.mask_processing import save_to_temp_png
-        canvas_path = save_to_temp_png(expanded_image)
-        bb_path = save_to_temp_png(ctx.bb_image)
-        
-        # Payload is a list of [Canvas, BB] for the Gradio Gallery
-        raise EarlyReturnException(payload=[canvas_path, bb_path])
-        
-    return inpaint_image, inpaint_mask
 
 
 def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask, 
@@ -92,7 +45,7 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
         extend_factor=1.2
     )
     
-    # --- Step 2 Refactor: Explicit BB and BB Mask Support ---
+    # --- Resolved BB Image and BB Mask Support ---
     # If the user has provided an edited BB image or a manual BB mask, override the context.
     import modules.mask_processing as mask_proc
     
@@ -154,38 +107,39 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
 def apply_inpaint(task_state, inpaint_image, inpaint_mask, 
                   progressbar_callback=None, yield_result_callback=None):
     """
-    Sets up the inpainting worker, patches the UNet, and encodes the initial latent.
-    Exclusively using InpaintPipeline.
+    Resolves the required inpaint assets, patches the UNet, and encodes the initial latent.
+    Inference always runs from the resolved Full Image, Context Mask, BB Image, and BB Mask set.
     """
-    global LAST_INPAINT_STEP1_CONTEXT
-
     denoising_strength = getattr(task_state, 'inpaint_strength', 1.0)
     inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
 
-    # 1. Identify explicit 4-slot inputs
     raw_input_image = getattr(task_state, 'inpaint_input_image', None)
     raw_context_mask = getattr(task_state, 'inpaint_context_mask_image', None)
     raw_bb_image = getattr(task_state, 'inpaint_bb_image', None)
     raw_bb_mask = getattr(task_state, 'inpaint_mask_image', None)
-    
-    # 2. Extract usable arrays
+
     input_image = mask_proc.unpack_gradio_data(raw_input_image) if raw_input_image is not None else inpaint_image
-    context_mask = mask_proc.unpack_gradio_data(raw_context_mask) if raw_context_mask is not None else inpaint_mask
+    prepared_context_mask = getattr(task_state, 'context_mask', None)
+    if raw_context_mask is not None:
+        context_mask = mask_proc.unpack_gradio_data(raw_context_mask)
+    elif prepared_context_mask is not None:
+        context_mask = prepared_context_mask
+    else:
+        context_mask = inpaint_mask
+    if context_mask is not None:
+        context_mask = mask_proc.to_binary_mask(mask_proc.ensure_numpy(context_mask))
+
     bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
+    if bb_img_data is not None:
+        bb_img_data = HWC3(bb_img_data)
     bb_mask_2d = mask_proc.combine_masks(
         mask_proc.unpack_gradio_data(raw_bb_mask),
         mask_proc.extract_mask_from_layers(raw_bb_image) if isinstance(raw_bb_image, dict) else None
     )
 
-    explicit_step2_assets = bb_img_data is not None or bb_mask_2d is not None
-    requested_step2 = getattr(task_state, 'inpaint_step2_checkbox', False)
-    use_step2_slots = requested_step2 or explicit_step2_assets
-    
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
-    
-    # 3. Always derive coordinate system from Full Image + Context Mask if possible
-    # This prevents "BB Inception" (cropping within a crop).
+
     if input_image is not None and context_mask is not None:
         ctx = inpaint.prepare(
             image=input_image,
@@ -194,7 +148,6 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         )
         print(f"[Debug] Context derived from {input_image.shape[1]}x{input_image.shape[0]} image via context mask.")
     else:
-        # Fallback to standard preparation if explicit slots are missing
         ctx = inpaint.prepare(
             image=inpaint_image,
             mask=inpaint_mask,
@@ -202,46 +155,40 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         )
         print(f"[Debug] Context derived from standard inpaint inputs.")
 
-    is_step1_inpaint = task_state.current_tab == 'inpaint' and not use_step2_slots
-    is_step2_inpaint = task_state.current_tab == 'inpaint' and use_step2_slots
+    if bb_img_data is not None:
+        ctx.bb_image = bb_img_data
+        ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
+        print(f"[Debug] Using resolved BB image: {ctx.target_w}x{ctx.target_h}")
 
-    if is_step1_inpaint:
-        LAST_INPAINT_STEP1_CONTEXT = copy.deepcopy(ctx)
-        # Use a list to ensure Gradio Gallery receives a proper list of images
-        raise EarlyReturnException(payload=[ctx.bb_image])
+    if bb_mask_2d is not None:
+        ctx.bb_mask = bb_mask_2d
+        print(f"[Debug] Using resolved BB mask.")
 
-    if is_step2_inpaint:
-        # 4. Integrate explicit Step 2 slots (BB image and BB mask)
-        # We use the coordinates (y1, y2, x1, x2) from the Full Context (ctx.bb)
-        # to ensure stitching is perfectly aligned.
-        
-        if bb_img_data is not None:
-            ctx.bb_image = bb_img_data
-            ctx.target_h, ctx.target_w = bb_img_data.shape[:2]
-            print(f"[Debug] Using explicit BB image from slot: {ctx.target_w}x{ctx.target_h}")
-        
-        if bb_mask_2d is not None:
-            # Ensure mask matches BB image resolution
-            bb_mask_2d = resample_image(bb_mask_2d, width=ctx.target_w, height=ctx.target_h)
-            ctx.bb_mask = bb_mask_2d
-            print(f"[Debug] Using explicit BB mask.")
-            
-        # 5. Re-run morphological blend calculation for stitching
-        y1, y2, x1, x2 = ctx.bb
-        full_mask = np.zeros_like(ctx.original_image[:, :, 0])
-        H, W = full_mask.shape
-        patch_mask_resized = resample_image(ctx.bb_mask, width=x2-x1, height=y2-y1)
-        
-        iy1, iy2 = max(0, y1), min(H, y2)
-        ix1, ix2 = max(0, x1), min(W, x2)
-        cy1, cy2 = iy1 - y1, iy2 - y1
-        cx1, cx2 = ix1 - x1, ix2 - x1
-        
-        full_mask[iy1:iy2, ix1:ix2] = patch_mask_resized[cy1:cy2, cx1:cx2]
-        ctx.blend_mask = inpaint._morphological_open(full_mask)
-        
-        task_state.width = ctx.target_w
-        task_state.height = ctx.target_h
+    if ctx.bb_image is None:
+        raise ValueError('Inpaint BB image is required before inference')
+    if ctx.bb_mask is None:
+        raise ValueError('Inpaint BB mask is required before inference')
+
+    ctx.bb_image = HWC3(mask_proc.ensure_numpy(ctx.bb_image))
+    ctx.bb_mask = mask_proc.to_binary_mask(mask_proc.ensure_numpy(ctx.bb_mask))
+    ctx.bb_image = resample_image(ctx.bb_image, width=ctx.target_w, height=ctx.target_h)
+    ctx.bb_mask = resample_image(ctx.bb_mask, width=ctx.target_w, height=ctx.target_h)
+
+    y1, y2, x1, x2 = ctx.bb
+    full_mask = np.zeros_like(ctx.original_image[:, :, 0])
+    H, W = full_mask.shape
+    patch_mask_resized = resample_image(ctx.bb_mask, width=x2-x1, height=y2-y1)
+
+    iy1, iy2 = max(0, y1), min(H, y2)
+    ix1, ix2 = max(0, x1), min(W, x2)
+    cy1, cy2 = iy1 - y1, iy2 - y1
+    cx1, cx2 = ix1 - x1, ix2 - x1
+
+    full_mask[iy1:iy2, ix1:ix2] = patch_mask_resized[cy1:cy2, cx1:cx2]
+    ctx.blend_mask = inpaint._morphological_open(full_mask)
+
+    task_state.width = ctx.target_w
+    task_state.height = ctx.target_h
 
     if getattr(task_state, 'debugging_inpaint_preprocessor', False):
         if yield_result_callback:
@@ -252,17 +199,17 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         steps=task_state.steps,
         denoise=denoising_strength
     )
-    
+
     latent_dict = inpaint.encode(ctx, candidate_vae)
     task_state.inpaint_context = ctx
     task_state.width = ctx.target_w
     task_state.height = ctx.target_h
-    
+
     if not inpaint_disable_initial_latent:
         task_state.initial_latent = latent_dict
-        
+
     task_state.denoising_strength = denoising_strength
-    
+
     final_height, final_width = ctx.original_image.shape[:2]
     print(f'Inpaint setup: BB resolution {ctx.target_w}x{ctx.target_h}, Original resolution {final_width}x{final_height}.')
 
@@ -373,6 +320,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
     outpaint_mask = None
     inpaint_patch_model_path = None
     controlnet_paths = {}
+    structural_preprocessor_paths = {}
     clip_vision_path = None
     ip_negative_path = None
     ip_adapter_path = None
@@ -383,8 +331,17 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             and task_state.uov_method != flags.disabled.casefold() and task_state.uov_input_image is not None:
         skip_prompt_processing = prepare_upscale(task_state, progressbar_callback)
 
+    mixed_cn_inpaint_workflow = task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint
+    mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
+    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (
+        getattr(task_state, 'outpaint_step2_checkbox', False)
+        or bool(getattr(task_state, 'outpaint_selections', []))
+        or getattr(task_state, 'outpaint_mask_image', None) is not None
+    )
+    has_mixed_inpaint_request = mixed_cn_inpaint_workflow and task_state.inpaint_input_image is not None
+
     # Outpaint UI Parsing & setup
-    if task_state.current_tab == 'outpaint' and task_state.outpaint_input_image is not None:
+    if (task_state.current_tab == 'outpaint' or has_mixed_outpaint_request) and task_state.outpaint_input_image is not None:
         if isinstance(task_state.outpaint_input_image, dict):
             if 'background' in task_state.outpaint_input_image:
                 outpaint_image = HWC3(mask_proc.ensure_numpy(task_state.outpaint_input_image['background']))
@@ -407,23 +364,15 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             upload_mask = mask_proc.to_binary_mask(resample_image(merged_upload, width=W, height=H))
             outpaint_mask = mask_proc.combine_masks(outpaint_mask, upload_mask)
 
-        # Parse direction even for Step 2
+        # Parse direction for prepared outpaint assets
         if len(task_state.outpaint_selections) > 0:
             task_state.outpaint_direction = task_state.outpaint_selections[0].lower()
 
-        outpaint_prepared = getattr(task_state, 'outpaint_step2_checkbox', False)
         task_state.inpaint_pixelate_primer = False
-
-        # Step 1 Outpaint expansion
-        if not outpaint_prepared:
-            outpaint_image, outpaint_mask = apply_outpaint_expansion(task_state, outpaint_image, outpaint_mask)
-            skip_prompt_processing = True
-
         task_state.goals.append('outpaint')
 
     # Inpaint UI Parsing & setup
-    elif (task_state.current_tab == 'inpaint' or (
-            task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint)) \
+    elif (task_state.current_tab == 'inpaint' or (has_mixed_inpaint_request and not has_mixed_outpaint_request)) \
             and task_state.inpaint_input_image is not None:
         if isinstance(task_state.inpaint_input_image, dict):
             if 'background' in task_state.inpaint_input_image:
@@ -462,9 +411,8 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
             if progressbar_callback:
                 progressbar_callback(task_state, 1, 'Initializing inpainter ...')
 
-            engine = getattr(task_state, 'inpaint_engine', 'None')
-            if task_state.current_tab == 'outpaint':
-                engine = getattr(task_state, 'outpaint_engine', 'None')
+            engine = getattr(task_state, 'outpaint_engine', 'None') if 'outpaint' in task_state.goals \
+                else getattr(task_state, 'inpaint_engine', 'None')
 
             if engine != 'None':
                 if progressbar_callback:
@@ -476,7 +424,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
                 inpaint_patch_model_path = None
 
     # ControlNet (IP-Adapter) handling
-    if task_state.current_tab == 'ip' or task_state.mixing_image_prompt_and_inpaint:
+    if task_state.current_tab == 'ip' or task_state.mixing_image_prompt_and_inpaint or getattr(task_state, 'mixing_image_prompt_and_outpaint', False):
         task_state.goals.append('cn')
         if progressbar_callback:
             progressbar_callback(task_state, 1, 'Downloading control models ...')
@@ -484,17 +432,20 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
         contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
 
-        controlnet_downloaders = {
-            flags.cn_canny: config.downloading_controlnet_canny,
-            flags.cn_cpds: config.downloading_controlnet_cpds,
-        }
-        for cn_type, downloader in controlnet_downloaders.items():
-            if len(structural_tasks.get(cn_type, [])) > 0:
-                controlnet_paths[cn_type] = downloader()
+        from modules import model_registry
 
-        for cn_type in [flags.cn_mistoline, flags.cn_depth, flags.cn_mlsd]:
-            if len(structural_tasks.get(cn_type, [])) > 0:
-                print(f'[ControlNet] {cn_type} is not implemented yet. Skipping these tasks for now.')
+        for cn_type in flags.cn_structural_types:
+            if len(structural_tasks.get(cn_type, [])) == 0:
+                continue
+
+            controlnet_asset_id = structural_preprocessors.STRUCTURAL_CONTROLNET_ASSETS.get(cn_type)
+            if controlnet_asset_id is not None:
+                controlnet_paths[cn_type] = model_registry.ensure_asset(controlnet_asset_id)
+
+            if not task_state.skipping_cn_preprocessor:
+                preprocessor_asset_id = structural_preprocessors.STRUCTURAL_PREPROCESSOR_ASSETS.get(cn_type)
+                if preprocessor_asset_id is not None:
+                    structural_preprocessor_paths[cn_type] = model_registry.ensure_asset(preprocessor_asset_id)
 
         if len(contextual_tasks.get(flags.cn_ip, [])) > 0:
             clip_vision_path, ip_negative_path, ip_adapter_path = config.downloading_ip_adapters('ip')
@@ -521,17 +472,19 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         'outpaint_mask': outpaint_mask,
         'ip_adapter_path': ip_adapter_path,
         'ip_negative_path': ip_negative_path,
-        'skip_prompt_processing': skip_prompt_processing
+        'skip_prompt_processing': skip_prompt_processing,
+        'structural_preprocessor_paths': structural_preprocessor_paths
     }
 
 
-def apply_control_nets(task_state, ip_adapter_path, yield_result_callback=None):
+def apply_control_nets(task_state, ip_adapter_path, structural_preprocessor_paths=None):
     """
     Applies ControlNet preprocessors and patches the UNet for ImagePrompt IP-Adapter guidance.
     """
     width, height = task_state.width, task_state.height
     structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
     contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
+    structural_preprocessor_paths = structural_preprocessor_paths or {}
 
     def unpack_cn_image(raw_img, label):
         cn_img = mask_proc.unpack_gradio_data(raw_img)
@@ -543,42 +496,59 @@ def apply_control_nets(task_state, ip_adapter_path, yield_result_callback=None):
     def warn_unimplemented(cn_type):
         print(f'[ControlNet] {cn_type} is not implemented yet. Skipping these tasks for now.')
 
-    valid_canny_tasks = []
-    for task in structural_tasks.get(flags.cn_canny, []):
-        raw_img, cn_stop, cn_weight = task
-        cn_img = unpack_cn_image(raw_img, flags.cn_canny)
-        if cn_img is None:
-            continue
-        cn_img = resize_image(cn_img, width=width, height=height)
-        if not task_state.skipping_cn_preprocessor:
-            cn_img = preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
-        cn_img = HWC3(cn_img)
-        task[0] = core.numpy_to_pytorch(cn_img)
-        valid_canny_tasks.append(task)
-        if task_state.debugging_cn_preprocessor and yield_result_callback:
-            yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.set_cn_tasks(flags.cn_canny, valid_canny_tasks)
+    def save_structural_preprocessor_output(cn_img, cn_type, slot_index):
+        prefix = f"{cn_type.lower().replace(' ', '_')}_slot{slot_index}"
+        saved_path = mask_proc.save_to_staging_png(cn_img, prefix=prefix)
+        if saved_path is not None:
+            print(f'[ControlNet] Saved {cn_type} preprocessor output to staging: {saved_path}')
 
-    valid_cpds_tasks = []
-    for task in structural_tasks.get(flags.cn_cpds, []):
-        raw_img, cn_stop, cn_weight = task
-        cn_img = unpack_cn_image(raw_img, flags.cn_cpds)
-        if cn_img is None:
-            continue
-        cn_img = resize_image(cn_img, width=width, height=height)
-        if not task_state.skipping_cn_preprocessor:
-            cn_img = preprocessors.cpds(cn_img)
-        cn_img = HWC3(cn_img)
-        task[0] = core.numpy_to_pytorch(cn_img)
-        valid_cpds_tasks.append(task)
-        if task_state.debugging_cn_preprocessor and yield_result_callback:
-            yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
-    task_state.set_cn_tasks(flags.cn_cpds, valid_cpds_tasks)
+    def preprocess_structural_tasks(cn_type, tasks, processor=None):
+        valid_tasks = []
+        for slot_index, task in enumerate(tasks, start=1):
+            raw_img, cn_stop, cn_weight = task
+            cn_img = unpack_cn_image(raw_img, cn_type)
+            if cn_img is None:
+                continue
+            cn_img = resize_image(cn_img, width=width, height=height)
+            if not task_state.skipping_cn_preprocessor and processor is not None:
+                model_path = structural_preprocessor_paths.get(cn_type)
+                try:
+                    cn_img = processor(cn_type, cn_img, model_path)
+                except Exception as exc:
+                    print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
+                    continue
+                save_structural_preprocessor_output(cn_img, cn_type, slot_index)
+            cn_img = HWC3(cn_img)
+            task[0] = core.numpy_to_pytorch(cn_img)
+            valid_tasks.append(task)
+        task_state.set_cn_tasks(cn_type, valid_tasks)
 
-    for cn_type in [flags.cn_mistoline, flags.cn_depth, flags.cn_mlsd]:
-        if len(structural_tasks.get(cn_type, [])) > 0:
-            warn_unimplemented(cn_type)
-        task_state.set_cn_tasks(cn_type, [])
+    preprocess_structural_tasks(
+        flags.cn_canny,
+        structural_tasks.get(flags.cn_canny, []),
+        lambda _cn_type, cn_img, _model_path: preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
+    )
+    preprocess_structural_tasks(
+        flags.cn_cpds,
+        structural_tasks.get(flags.cn_cpds, []),
+        lambda _cn_type, cn_img, _model_path: preprocessors.cpds(cn_img)
+    )
+    preprocess_structural_tasks(
+        flags.cn_depth,
+        structural_tasks.get(flags.cn_depth, []),
+        structural_preprocessors.run_structural_preprocessor
+    )
+    preprocess_structural_tasks(
+        flags.cn_mistoline,
+        structural_tasks.get(flags.cn_mistoline, []),
+        structural_preprocessors.run_structural_preprocessor
+    )
+    preprocess_structural_tasks(
+        flags.cn_mlsd,
+        structural_tasks.get(flags.cn_mlsd, []),
+        structural_preprocessors.run_structural_preprocessor
+    )
+    structural_preprocessors.offload_cached_preprocessors()
 
     valid_ip_tasks = []
     image_prompt_tasks = contextual_tasks.get(flags.cn_ip, [])
@@ -593,8 +563,6 @@ def apply_control_nets(task_state, ip_adapter_path, yield_result_callback=None):
             cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
             task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
             valid_ip_tasks.append(task)
-            if task_state.debugging_cn_preprocessor and yield_result_callback:
-                yield_result_callback(task_state, cn_img, task_state.current_progress, do_not_show_finished_images=True)
     task_state.set_cn_tasks(flags.cn_ip, valid_ip_tasks)
 
     for cn_type in [flags.cn_faceid, flags.cn_pulid]:

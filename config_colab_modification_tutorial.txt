@@ -1,94 +1,37 @@
-You can modify your "D:\\AI\\Fooocus_Nex\\config.txt" using the below keys, formats, and examples.
+You can modify your "D:\\AI\\Fooocus_Nex\\config_colab.txt" using the below keys, formats, and examples.
 Do not modify this file. Modifications in this file will not take effect.
-This file is a tutorial and example. Please edit "D:\\AI\\Fooocus_Nex\\config.txt" to really change any settings.
+This file is a tutorial and example. Please edit "D:\\AI\\Fooocus_Nex\\config_colab.txt" to really change any settings.
 Remember to split the paths with "\\" rather than "\", and there is no "," before the last "}". 
 
 
 {
-    "path_checkpoints": [
-        "D:\\AI\\Imagine\\models\\checkpoints",
-        "D:\\AI\\Imagine\\models\\unet"
-    ],
-    "path_loras": [
-        "D:\\AI\\Imagine\\models\\loras"
-    ],
-    "path_embeddings": "D:\\AI\\Fooocus_Nex\\models\\embeddings",
-    "path_vae_approx": "D:\\AI\\Imagine\\models\\vae_approx",
-    "path_vae": "D:\\AI\\Imagine\\models\\vae",
-    "path_unet": [
-        "D:\\AI\\Imagine\\models\\unet"
-    ],
-    "path_clip": [
-        "D:\\AI\\Imagine\\models\\clip"
-    ],
-    "path_upscale_models": [
-        "D:\\AI\\Imagine\\models\\upscale_models"
-    ],
-    "path_inpaint": "D:\\AI\\Imagine\\models\\inpaint",
-    "path_controlnet": [
-        "D:\\AI\\Imagine\\models\\controlnet"
-    ],
-    "path_clip_vision": "D:\\AI\\Imagine\\models\\clip_vision",
-    "path_preprocessors": "D:\\AI\\Fooocus_Nex\\models\\preprocessors",
-    "path_insightface": "D:\\AI\\Fooocus_Nex\\models\\insightface",
-    "path_removals": "D:\\AI\\Fooocus_Nex\\models\\removals",
+    "path_checkpoints": "/content/models/checkpoints/",
+    "path_loras": "/content/models/loras/",
+    "path_embeddings": "/content/models/embeddings/",
+    "path_vae_approx": "/content/models/vae_approx/",
+    "path_vae": "/content/models/vae/",
+    "path_unet": "/content/models/unet/",
+    "path_clip": "/content/models/clip/",
+    "path_upscale_models": "/content/models/upscale_models/",
+    "path_inpaint": "/content/models/inpaint/",
+    "path_controlnet": "/content/models/controlnet/",
+    "path_clip_vision": "/content/models/clip_vision/",
+    "path_preprocessors": "/content/models/preprocessors/",
+    "path_insightface": "/content/models/insightface/",
+    "path_removals": "/content/models/removals/",
+    "path_wildcards": "D:\\AI\\Fooocus_Nex\\wildcards",
     "path_outputs": "D:\\AI\\Fooocus_Nex\\outputs",
     "path_download_manifests": "D:\\AI\\Fooocus_Nex\\configs\\download_manifests",
     "temp_path": "C:\\Users\\ACER\\AppData\\Local\\Temp\\fooocus",
     "temp_path_cleanup_on_launch": true,
-    "Selected_model": "IL_beretMixReal_v100_Q5_K_M.gguf",
-    "default_loras_min_weight": -5,
-    "default_loras_max_weight": 5,
+    "Selected_model": "None",
+    "default_loras_min_weight": -2,
+    "default_loras_max_weight": 2,
     "default_loras": [
         [
             true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
+            "sd_xl_offset_example-lora_1.0.safetensors",
+            0.1
         ],
         [
             true,
@@ -111,31 +54,34 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
             1.0
         ]
     ],
-    "default_max_lora_number": 14,
-    "default_cfg_scale": 7.0,
+    "default_max_lora_number": 5,
+    "default_cfg_scale": 4.0,
     "default_sample_sharpness": 2.0,
-    "default_sampler": "euler_ancestral",
-    "default_scheduler": "beta",
-    "default_vae": "sdxl_vae.safetensors",
+    "default_sampler": "dpmpp_2m_sde_gpu",
+    "default_scheduler": "karras",
+    "default_vae": "Default (model)",
     "default_styles": [
-        "Dj Illustrious",
-        "Dj Hyperrealism"
+        "Fooocus Enhance",
+        "Fooocus Sharp"
     ],
-    "default_prompt_negative": "ugly, duplicate, mutilated, out of frame, hand, feet, fingers, mutation, deformed, blurry, out of focus, cropped",
-    "default_prompt": "masterpiece, best quality, amazing quality, very aesthetic, promotional art, newest, dynamic angle, dramatic light, intricate details, cinematic, detailed background",
+    "default_prompt_negative": "",
+    "default_prompt": "",
     "default_image_prompt_checkbox": false,
     "default_advanced_checkbox": false,
     "default_developer_debug_mode_checkbox": false,
     "default_image_prompt_advanced_checkbox": false,
     "default_max_image_number": 32,
     "default_output_format": "png",
-    "default_image_number": 1,
-    "checkpoint_downloads": {},
-    "lora_downloads": {},
+    "default_image_number": 2,
+    "checkpoint_downloads": {
+        "juggernautXL_v8Rundiffusion.safetensors": "https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/juggernautXL_v8Rundiffusion.safetensors"
+    },
+    "lora_downloads": {
+        "sd_xl_offset_example-lora_1.0.safetensors": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_offset_example-lora_1.0.safetensors"
+    },
     "embeddings_downloads": {},
     "vae_downloads": {},
     "available_aspect_ratios": [
-        "512*512",
         "704*1408",
         "704*1344",
         "768*1344",
@@ -163,7 +109,7 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "1664*576",
         "1728*576"
     ],
-    "default_aspect_ratio": "832*1216",
+    "default_aspect_ratio": "1152*896",
     "default_inpaint_engine_version": "None",
     "default_outpaint_engine_version": "v2.6",
     "default_outpaint_expansion_size": 384,
@@ -190,8 +136,8 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "default_inpaint_method": "Outpaint (2-Step)",
     "default_cfg_tsnr": 7.0,
     "default_clip_skip": 2,
-    "default_clip": "IL_beretMixReal_v100_clips.safetensors",
-    "default_overwrite_step": 10,
+    "default_clip": "None",
+    "default_overwrite_step": -1,
     "default_overwrite_upscale": -1,
     "example_inpaint_prompts": [
         "highly detailed face",

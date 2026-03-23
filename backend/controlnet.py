@@ -355,6 +355,9 @@ class ControlLora(ControlNet):
 
 def load_controlnet(ckpt_path, model=None):
     controlnet_data = utils.load_torch_file(ckpt_path)
+    if any("lllite" in key.lower() for key in controlnet_data.keys()):
+        from backend.control_lllite import load_controllllite
+        return load_controllllite(ckpt_path, controlnet_data=controlnet_data)
     if "lora_controlnet" in controlnet_data:
         return ControlLora(controlnet_data)
 
