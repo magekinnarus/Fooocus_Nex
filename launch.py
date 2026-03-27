@@ -1,4 +1,4 @@
-import os
+﻿import os
 import ssl
 import sys
 
@@ -29,7 +29,7 @@ from modules.model_loader import load_file_from_url
 
 def prepare_environment():
     print(f"Python {sys.version}")
-    print(f"Fooocus version: {fooocus_version.version}")
+    print(f"{fooocus_version.app_name} version: {fooocus_version.version}")
     print("Dependency management is handled manually in Colab cells.")
     return
 
@@ -108,9 +108,10 @@ if __name__ == "__main__":
 
     config.default_base_model_name, config.checkpoint_downloads = download_models(
         config.default_base_model_name, config.checkpoint_downloads,
-        config.embeddings_downloads, config.lora_downloads, config.vae_downloads)
+        config.embeddings_downloads, config.lora_downloads, config.vae_downloads, config.upscale_downloads)
 
     config.update_files()
-    init_cache(config.model_filenames, config.paths_checkpoints, config.lora_filenames, config.paths_loras)
+    init_cache(config.model_filenames, config.paths_checkpoints, config.lora_filenames, config.paths_lora_lookup)
 
     from webui import *
+

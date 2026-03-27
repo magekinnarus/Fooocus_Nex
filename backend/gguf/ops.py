@@ -2,6 +2,7 @@
 import gguf
 import torch
 import logging
+import time
 
 from ldm_patched.modules import ops as comfy_ops
 from ldm_patched.modules import model_management as comfy_model_management
@@ -41,6 +42,42 @@ def get_torch_compiler_disable_decorator():
         return dummy_decorator
 
 torch_compiler_disable = get_torch_compiler_disable_decorator()
+
+_gguf_trace_stats = {
+    "calls": 0,
+    "quantized_calls": 0,
+    "patch_calls": 0,
+    "dequant_seconds": 0.0,
+    "patch_seconds": 0.0,
+    "total_seconds": 0.0,
+    "cpu_calls": 0,
+    "cuda_calls": 0,
+    "other_device_calls": 0,
+    "quantized_cpu_calls": 0,
+    "quantized_cuda_calls": 0,
+    "quantized_other_device_calls": 0,
+    "cpu_dequant_seconds": 0.0,
+    "cuda_dequant_seconds": 0.0,
+    "other_device_dequant_seconds": 0.0,
+    "source_cpu_calls": 0,
+    "source_cuda_calls": 0,
+    "source_other_calls": 0,
+    "source_quantized_cpu_calls": 0,
+    "source_quantized_cuda_calls": 0,
+    "source_quantized_other_calls": 0,
+}
+
+
+def reset_trace_stats():
+    for key in _gguf_trace_stats:
+        _gguf_trace_stats[key] = 0.0 if key.endswith("seconds") else 0
+
+
+def consume_trace_stats():
+    snapshot = dict(_gguf_trace_stats)
+    reset_trace_stats()
+    return snapshot
+
 
 class GGMLTensor(torch.Tensor):
     """
@@ -168,6 +205,26 @@ class GGMLLayer(torch.nn.Module):
         if tensor is None:
             return
 
+        trace_start = time.perf_counter()
+        quantized = is_quantized(tensor)
+        source_device_type = getattr(tensor.device, 'type', str(tensor.device))
+        device_type = source_device_type
+
+        if source_device_type == 'cpu':
+            _gguf_trace_stats["source_cpu_calls"] += 1
+        elif source_device_type == 'cuda':
+            _gguf_trace_stats["source_cuda_calls"] += 1
+        else:
+            _gguf_trace_stats["source_other_calls"] += 1
+
+        if quantized:
+            if source_device_type == 'cpu':
+                _gguf_trace_stats["source_quantized_cpu_calls"] += 1
+            elif source_device_type == 'cuda':
+                _gguf_trace_stats["source_quantized_cuda_calls"] += 1
+            else:
+                _gguf_trace_stats["source_quantized_other_calls"] += 1
+
         # consolidate and load patches to GPU in async
         patch_list = []
         device = tensor.device
@@ -175,20 +232,50 @@ class GGMLLayer(torch.nn.Module):
             patch_list += move_patch_to_device(patches, device)
 
         # dequantize tensor while patches load
+        dequant_start = time.perf_counter()
         weight = dequantize_tensor(tensor, dtype, self.dequant_dtype)
+        dequant_duration = time.perf_counter() - dequant_start
 
         # prevent propagating custom tensor class
         if isinstance(weight, GGMLTensor):
             weight = torch.Tensor(weight)
 
+        patch_duration = 0.0
         # apply patches
         if patch_list:
+            patch_start = time.perf_counter()
             if self.patch_dtype is None:
                 weight = function(patch_list, weight, key)
             else:
                 # for testing, may degrade image quality
                 patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
                 weight = function(patch_list, weight, key, patch_dtype)
+            patch_duration = time.perf_counter() - patch_start
+
+        _gguf_trace_stats["calls"] += 1
+        if device_type == 'cpu':
+            _gguf_trace_stats["cpu_calls"] += 1
+            _gguf_trace_stats["cpu_dequant_seconds"] += dequant_duration
+        elif device_type == 'cuda':
+            _gguf_trace_stats["cuda_calls"] += 1
+            _gguf_trace_stats["cuda_dequant_seconds"] += dequant_duration
+        else:
+            _gguf_trace_stats["other_device_calls"] += 1
+            _gguf_trace_stats["other_device_dequant_seconds"] += dequant_duration
+
+        if quantized:
+            _gguf_trace_stats["quantized_calls"] += 1
+            if device_type == 'cpu':
+                _gguf_trace_stats["quantized_cpu_calls"] += 1
+            elif device_type == 'cuda':
+                _gguf_trace_stats["quantized_cuda_calls"] += 1
+            else:
+                _gguf_trace_stats["quantized_other_device_calls"] += 1
+        if patch_list:
+            _gguf_trace_stats["patch_calls"] += 1
+        _gguf_trace_stats["dequant_seconds"] += dequant_duration
+        _gguf_trace_stats["patch_seconds"] += patch_duration
+        _gguf_trace_stats["total_seconds"] += time.perf_counter() - trace_start
         return weight
 
     @torch_compiler_disable()

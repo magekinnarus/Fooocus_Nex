@@ -1,0 +1,87 @@
+{
+  "groups": {
+    "generic_loras": [
+      {
+        "id": "example.generic.style_lora",
+        "alias": "style_example",
+        "name": "style_example.safetensors",
+        "root_key": "loras",
+        "relative_path": "style/style_example.safetensors",
+        "storage_tier": "colab",
+        "visibility": "generic",
+        "source_kind": "civitai",
+        "sources": [
+          {
+            "url": "https://civitai.com/api/download/models/0"
+          }
+        ]
+      }
+    ],
+    "preset_managed": [
+      {
+        "id": "example.performance.lcm",
+        "alias": "lcm_step",
+        "name": "sdxl_lcm_lora.safetensors",
+        "root_key": "loras_lcm",
+        "relative_path": "sdxl_lcm_lora.safetensors",
+        "storage_tier": "gdrive",
+        "visibility": "preset",
+        "preset_managed": true,
+        "source_kind": "huggingface",
+        "sources": [
+          {
+            "url": "https://huggingface.co/lllyasviel/misc/resolve/main/sdxl_lcm_lora.safetensors"
+          }
+        ]
+      },
+      {
+        "id": "example.performance.lightning",
+        "alias": "lightning_step",
+        "name": "sdxl_lightning_4step_lora.safetensors",
+        "root_key": "loras_lightning",
+        "relative_path": "sdxl_lightning_4step_lora.safetensors",
+        "storage_tier": "gdrive",
+        "visibility": "preset",
+        "preset_managed": true,
+        "source_kind": "huggingface",
+        "sources": [
+          {
+            "url": "https://huggingface.co/mashb1t/misc/resolve/main/sdxl_lightning_4step_lora.safetensors"
+          }
+        ]
+      }
+    ],
+    "support": [
+      {
+        "id": "example.faceid.lora",
+        "alias": "faceid_v2_lora",
+        "name": "ip-adapter-faceid-plusv2_sdxl_lora.safetensors",
+        "root_key": "faceid_loras",
+        "relative_path": "ip-adapter-faceid-plusv2_sdxl_lora.safetensors",
+        "storage_tier": "gdrive",
+        "visibility": "support",
+        "source_kind": "huggingface",
+        "sources": [
+          {
+            "url": "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid-plusv2_sdxl_lora.safetensors"
+          }
+        ]
+      },
+      {
+        "id": "example.vision.eva_clip",
+        "alias": "eva_clip",
+        "name": "EVA02_CLIP_L_336_psz14_s6B.pt",
+        "root_key": "vision_support",
+        "relative_path": "EVA02_CLIP_L_336_psz14_s6B.pt",
+        "storage_tier": "gdrive",
+        "visibility": "support",
+        "source_kind": "huggingface",
+        "sources": [
+          {
+            "url": "https://huggingface.co/QuanSun/EVA-CLIP/resolve/main/EVA02_CLIP_L_336_psz14_s6B.pt"
+          }
+        ]
+      }
+    ]
+  }
+}

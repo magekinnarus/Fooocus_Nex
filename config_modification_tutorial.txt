@@ -28,10 +28,14 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "path_controlnet": [
         "D:\\AI\\Imagine\\models\\controlnet"
     ],
-    "path_clip_vision": "D:\\AI\\Imagine\\models\\clip_vision",
+    "path_vision_support": "D:\\AI\\Imagine\\models\\vision_support",
+    "path_clip_vision": "D:\\AI\\Imagine\\models\\vision_support\\clip_vision",
     "path_preprocessors": "D:\\AI\\Fooocus_Nex\\models\\preprocessors",
     "path_insightface": "D:\\AI\\Fooocus_Nex\\models\\insightface",
     "path_removals": "D:\\AI\\Fooocus_Nex\\models\\removals",
+    "path_loras_lcm": "D:\\AI\\Imagine\\models\\performance_loras\\lcm",
+    "path_loras_lightning": "D:\\AI\\Imagine\\models\\performance_loras\\lightning",
+    "path_faceid_loras": "D:\\AI\\Imagine\\models\\faceid_loras",
     "path_outputs": "D:\\AI\\Fooocus_Nex\\outputs",
     "path_download_manifests": "D:\\AI\\Fooocus_Nex\\configs\\download_manifests",
     "temp_path": "C:\\Users\\ACER\\AppData\\Local\\Temp\\fooocus",
@@ -134,6 +138,15 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
     "lora_downloads": {},
     "embeddings_downloads": {},
     "vae_downloads": {},
+    "upscale_downloads": {
+        "2xNomosUni_span_multijpg_ldl.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/2xNomosUni_span_multijpg_ldl.pth",
+        "4xFFHQDAT.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xFFHQDAT.pth",
+        "4xNomos2_otf_esrgan.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos2_otf_esrgan.pth",
+        "4xNomos8kSCHAT-L.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos8kSCHAT-L.pth",
+        "4xNomosUniDAT_bokeh_jpg.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomosUniDAT_bokeh_jpg.pth",
+        "Real_HAT_GAN_SRx4.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Real_HAT_GAN_SRx4.pth",
+        "Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth"
+    },
     "available_aspect_ratios": [
         "512*512",
         "704*1408",
@@ -200,8 +213,8 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
         "detailed hand",
         "beautiful eyes"
     ],
-    "default_save_metadata_to_images": false,
-    "default_metadata_scheme": "fooocus",
+    "default_save_metadata_to_images": true,
+    "default_metadata_scheme": "fooocus_nex",
     "metadata_created_by": "",
     "default_inpaint_mask_model": "isnet-general-use",
     "default_inpaint_mask_cloth_category": "full"

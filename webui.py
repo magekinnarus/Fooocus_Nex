@@ -17,7 +17,7 @@ import modules.flags as flags
 import modules.gradio_hijack as grh
 import modules.style_sorter as style_sorter
 import modules.meta_parser
-import modules.ui_components.metadata_ui as metadata_ui
+import modules.ui_components.metadata_panel as metadata_panel
 import modules.ui_components.settings_panel as settings_panel
 import modules.ui_components.styles_panel as styles_panel
 import modules.ui_components.models_panel as models_panel
@@ -45,7 +45,7 @@ from modules.staging_api import staging_router
 
 # reload_javascript() removed; handled via gr.Blocks(head=...)
 
-title = f'Fooocus {fooocus_version.version}'
+title = f'{fooocus_version.app_name} {fooocus_version.version}'
 
 def make_nex_image_slot(slot_id, bridge_id, label, extra_attrs=''):
     attrs = f' {extra_attrs}' if extra_attrs else ''
@@ -174,7 +174,7 @@ with shared.gradio_root:
                                     f'ip_image_slot_{image_count}',
                                     f'ip_image_bridge_{image_count}',
                                     f'Guidance Image {image_count}',
-                                    f'data-upload-mode="api" data-path-field-id="cn_{image_count - 1}_image_path" data-workspace-field-id="cn_{image_count - 1}_workspace_id"'
+                                    f'data-upload-mode="api" data-path-field-id="cn_{image_count - 1}_image_path" data-workspace-field-id="cn_{image_count - 1}_workspace_id" data-method-field-id="cn_{image_count - 1}_type"'
                                 ))
                                 ip_image = gr.Image(
                                     label='Image',
@@ -219,7 +219,8 @@ with shared.gradio_root:
                                             value=default_type,
                                             allow_custom_value=True,
                                             container=False,
-                                            scale=1
+                                            scale=1,
+                                            elem_id=f'cn_{image_count - 1}_type'
                                         )
                                         ip_channel.change(
                                             fn=update_guidance_type_choices,
@@ -391,11 +392,12 @@ with shared.gradio_root:
 
 
                     with gr.Tab(label='Metadata', id='metadata_tab') as metadata_tab:
-                        with gr.Column():
-                            metadata_input_image = gr.Image(label='For images created by Fooocus', sources='upload', type='filepath')
-                            metadata_json = gr.JSON(label='Metadata')
-                            metadata_import_button = gr.Button(value='Apply Metadata')
-
+                        metadata_panel_result = metadata_panel.build_metadata_tab()
+                        metadata_input_image = metadata_panel_result['metadata_input_image']
+                        metadata_input_image_path = metadata_panel_result['metadata_input_image_path']
+                        metadata_input_workspace_id = metadata_panel_result['metadata_input_workspace_id']
+                        metadata_json = metadata_panel_result['metadata_json']
+                        metadata_import_button = metadata_panel_result['metadata_import_button']
 
             current_tab = gr.Textbox(value='uov', visible=False)
 
@@ -621,6 +623,8 @@ with shared.gradio_root:
             'generate_button': generate_button,
             'load_parameter_button': load_parameter_button,
             'metadata_input_image': metadata_input_image,
+            'metadata_input_image_path': metadata_input_image_path,
+            'metadata_input_workspace_id': metadata_input_workspace_id,
             'metadata_json': metadata_json,
             'inpaint_context_mask_data': inpaint_context_mask_data,
             'inpaint_replace_bb_nonce': inpaint_replace_bb_nonce,

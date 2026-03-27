@@ -3,6 +3,7 @@ import io
 import base64
 import shutil
 import datetime
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from PIL import Image
@@ -32,24 +33,32 @@ def get_workspace_dir(workspace_id: str):
 @image_router.post("/image_api/upload")
 async def upload_image(
     workspace_id: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    preserve_metadata: bool = Form(False)
 ):
-    """Uploads an image to a specific workspace and saves it as base.png."""
+    """Uploads an image to a specific workspace."""
     workspace_dir = get_workspace_dir(workspace_id)
-    
+
     try:
         contents = await file.read()
-        img = Image.open(io.BytesIO(contents)).convert("RGBA")
-        
-        filepath = os.path.join(workspace_dir, "base.png")
-        img.save(filepath, format="PNG")
-        
+
+        if preserve_metadata:
+            filename = Path(file.filename or "base.png").name or "base.png"
+            filepath = os.path.join(workspace_dir, filename)
+            with open(filepath, "wb") as f:
+                f.write(contents)
+        else:
+            img = Image.open(io.BytesIO(contents)).convert("RGBA")
+            filepath = os.path.join(workspace_dir, "base.png")
+            img.save(filepath, format="PNG")
+            filename = "base.png"
+
         return JSONResponse(content={
-            "status": "success", 
+            "status": "success",
             "workspace_id": workspace_id,
-            "filename": "base.png",
+            "filename": filename,
             "path": filepath,
-            "url": f"/image_api/image/{workspace_id}/base.png"
+            "url": f"/image_api/image/{workspace_id}/{filename}"
         })
     except Exception as e:
         print(f"[ImageAPI] Upload error: {e}")

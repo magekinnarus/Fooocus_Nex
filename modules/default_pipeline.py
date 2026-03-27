@@ -288,45 +288,50 @@ def get_candidate_vae(steps, denoise=1.0):
 @torch.inference_mode()
 def process_diffusion(positive_cond, negative_cond, steps, width, height, image_seed, callback, sampler_name, scheduler_name, latent=None, denoise=1.0, tiled=False, cfg_scale=7.0, disable_preview=False, quality=None):
     target_unet, target_vae, target_clip = final_unet, final_vae, final_clip
+    resources.begin_memory_phase('diffusion', notes={
+        'steps': steps,
+        'sampler': sampler_name,
+        'scheduler': scheduler_name,
+        'tiled': tiled,
+    })
 
-    if target_unet is None:
-        print('Error: Base model is not loaded. Please select a model in the Models tab.')
-        return
+    try:
+        if target_unet is None:
+            print('Error: Base model is not loaded. Please select a model in the Models tab.')
+            return
 
-    if latent is None:
-        initial_latent = core.generate_empty_latent(width=width, height=height, batch_size=1)
-    else:
-        initial_latent = latent
+        if latent is None:
+            initial_latent = core.generate_empty_latent(width=width, height=height, batch_size=1)
+        else:
+            initial_latent = latent
 
-    # Backend sampling handles noise internally. 
-    # BrownianTreeNoiseSamplerPatched monkey-patch is skipped.
-    
-    sampled_latent = core.ksampler(
-        model=target_unet,
-        positive=positive_cond,
-        negative=negative_cond,
-        latent=initial_latent,
-        steps=steps, start_step=0, last_step=steps, disable_noise=False, force_full_denoise=True,
-        seed=image_seed,
-        denoise=denoise,
-        callback_function=callback,
-        cfg=cfg_scale,
-        sampler_name=sampler_name,
-        scheduler=scheduler_name,
-        previewer_start=0,
-        previewer_end=steps,
-        disable_preview=disable_preview,
-        quality=quality
-    )
+        # Backend sampling handles noise internally.
+        # BrownianTreeNoiseSamplerPatched monkey-patch is skipped.
+        sampled_latent = core.ksampler(
+            model=target_unet,
+            positive=positive_cond,
+            negative=negative_cond,
+            latent=initial_latent,
+            steps=steps, start_step=0, last_step=steps, disable_noise=False, force_full_denoise=True,
+            seed=image_seed,
+            denoise=denoise,
+            callback_function=callback,
+            cfg=cfg_scale,
+            sampler_name=sampler_name,
+            scheduler=scheduler_name,
+            previewer_start=0,
+            previewer_end=steps,
+            disable_preview=disable_preview,
+            quality=quality
+        )
 
-    # Phase: Sampling \u2192 Decoding (Immediate Cleanup)
-    import gc
-    from backend import resources
-    gc.collect()
-    resources.soft_empty_cache()
-    print(f'[Nex-Memory] Phase: Sampling \u2192 Decoding')
+        # Phase: Sampling -> Decoding
+        import gc
+        gc.collect()
+        resources.soft_empty_cache()
+        print('[Nex-Memory] Phase: Sampling -> Decoding')
 
-    decoded_latent = core.decode_vae(vae=target_vae, latent_image=sampled_latent, tiled=tiled)
-
-    images = core.pytorch_to_numpy(decoded_latent)
-    return images
+        decoded_latent = core.decode_vae(vae=target_vae, latent_image=sampled_latent, tiled=tiled)
+        return core.pytorch_to_numpy(decoded_latent)
+    finally:
+        resources.end_memory_phase('diffusion', notes={'completed': True})

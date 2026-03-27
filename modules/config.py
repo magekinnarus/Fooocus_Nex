@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import math
 import numbers
@@ -218,10 +218,14 @@ path_clip = get_dir_or_set_default('path_clip', '../models/clip/', True, True)
 path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/', True, True)
 path_inpaint = get_dir_or_set_default('path_inpaint', '../models/inpaint/', make_directory=True)
 path_controlnet = get_dir_or_set_default('path_controlnet', '../models/controlnet/', True, True)
-path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/clip_vision/', make_directory=True)
+path_vision_support = get_dir_or_set_default('path_vision_support', '../models/vision_support/', make_directory=True)
+path_clip_vision = get_dir_or_set_default('path_clip_vision', '../models/vision_support/clip_vision/', make_directory=True)
 path_preprocessors = get_dir_or_set_default('path_preprocessors', '../models/preprocessors/', make_directory=True)
 path_insightface = get_dir_or_set_default('path_insightface', '../models/insightface/', make_directory=True)
 path_removals = get_dir_or_set_default('path_removals', '../models/removals/', make_directory=True)
+path_loras_lcm = get_dir_or_set_default('path_loras_lcm', '../models/performance_loras/lcm/', make_directory=True)
+path_loras_lightning = get_dir_or_set_default('path_loras_lightning', '../models/performance_loras/lightning/', make_directory=True)
+path_faceid_loras = get_dir_or_set_default('path_faceid_loras', '../models/faceid_loras/', make_directory=True)
 
 
 # Add unet path to checkpoints for base model selection
@@ -242,6 +246,14 @@ if isinstance(path_clip, list):
 else:
     paths_clips.append(path_clip)
 
+paths_lora_discovery = []
+for folder in paths_loras + [path_loras_lcm, path_loras_lightning]:
+    if folder not in paths_lora_discovery:
+        paths_lora_discovery.append(folder)
+paths_lora_lookup = list(paths_lora_discovery)
+if path_faceid_loras not in paths_lora_lookup:
+    paths_lora_lookup.append(path_faceid_loras)
+
 
 path_outputs = get_path_output()
 path_temp_outputs = os.path.join(path_outputs, 'temp')
@@ -251,6 +263,9 @@ path_download_manifests = get_dir_or_set_default('path_download_manifests', '../
 asset_root_paths = {
     'checkpoints': paths_checkpoints[0],
     'loras': paths_loras[0],
+    'loras_lcm': path_loras_lcm,
+    'loras_lightning': path_loras_lightning,
+    'faceid_loras': path_faceid_loras,
     'embeddings': path_embeddings,
     'vae_approx': path_vae_approx,
     'vae': path_vae,
@@ -260,6 +275,7 @@ asset_root_paths = {
     'inpaint': path_inpaint,
     'controlnet_models': path_controlnet[0],
     'clip_vision': path_clip_vision,
+    'vision_support': path_vision_support,
     'preprocessors': path_preprocessors,
     'insightface': path_insightface,
     'removals': path_removals,
@@ -532,6 +548,20 @@ vae_downloads = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items()),
     expected_type=dict
 )
+upscale_downloads = get_config_item_or_set_default(
+    key='upscale_downloads',
+    default_value={
+        '2xNomosUni_span_multijpg_ldl.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/2xNomosUni_span_multijpg_ldl.pth',
+        '4xFFHQDAT.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xFFHQDAT.pth',
+        '4xNomos2_otf_esrgan.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos2_otf_esrgan.pth',
+        '4xNomos8kSCHAT-L.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos8kSCHAT-L.pth',
+        '4xNomosUniDAT_bokeh_jpg.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomosUniDAT_bokeh_jpg.pth',
+        'Real_HAT_GAN_SRx4.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Real_HAT_GAN_SRx4.pth',
+        'Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth',
+    },
+    validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items()),
+    expected_type=dict
+)
 available_aspect_ratios = get_config_item_or_set_default(
     key='available_aspect_ratios',
     default_value=resolution_set_sdxl.get('available_aspect_ratios', modules.flags.sdxl_aspect_ratios),
@@ -678,7 +708,7 @@ default_save_metadata_to_images = get_config_item_or_set_default(
 )
 default_metadata_scheme = get_config_item_or_set_default(
     key='default_metadata_scheme',
-    default_value=MetadataScheme.FOOOCUS.value,
+    default_value=MetadataScheme.FOOOCUS_NEX.value,
     validator=lambda x: x in [y[1] for y in modules.flags.metadata_scheme if y[1] == x],
     expected_type=str
 )
@@ -800,7 +830,7 @@ def update_files():
     global model_filenames, clip_filenames, lora_filenames, vae_filenames, available_presets
     model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
     clip_filenames = sorted(list(set(get_model_filenames(paths_clips))))
-    lora_filenames = sorted(list(set(get_model_filenames(paths_loras))))
+    lora_filenames = sorted(list(set(get_model_filenames(paths_lora_discovery))))
     vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
     available_presets = get_presets()
     return
@@ -841,7 +871,7 @@ def downloading_inpaint_models(v):
 def downloading_sdxl_lcm_lora():
     load_file_from_url(
         url='https://huggingface.co/lllyasviel/misc/resolve/main/sdxl_lcm_lora.safetensors',
-        model_dir=paths_loras[0],
+        model_dir=path_loras_lcm,
         file_name='sdxl_lcm_lora.safetensors'
     )
     return 'sdxl_lcm_lora.safetensors'
@@ -850,7 +880,7 @@ def downloading_sdxl_lcm_lora():
 def downloading_sdxl_lightning_lora():
     load_file_from_url(
         url='https://huggingface.co/mashb1t/misc/resolve/main/sdxl_lightning_4step_lora.safetensors',
-        model_dir=paths_loras[0],
+        model_dir=path_loras_lightning,
         file_name='sdxl_lightning_4step_lora.safetensors'
     )
     return 'sdxl_lightning_4step_lora.safetensors'
@@ -913,3 +943,4 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
+

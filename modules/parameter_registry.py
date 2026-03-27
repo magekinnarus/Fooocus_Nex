@@ -1,4 +1,4 @@
-"""
+﻿"""
 Parameter Registry - Single source of truth for UI-to-backend parameter contract.
 
 Each parameter is registered by name with its target TaskState field.
@@ -113,7 +113,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     
     # --- Metadata (Conditional) ---
     ParamDef('save_metadata_to_images', 'save_metadata_to_images', False, bool),
-    ParamDef('metadata_scheme', 'metadata_scheme', 'fooocus', str),
+    ParamDef('metadata_scheme', 'metadata_scheme', 'fooocus_nex', str),
 ]
 
 def validate_ctrls(ctrls_dict: dict):
@@ -148,3 +148,4 @@ def validate_ctrls(ctrls_dict: dict):
         
     if extra:
         print(f"[Parameter Registry] Warning: Unrecognized extra parameters in ctrls_dict: {extra}")
+

@@ -1,4 +1,4 @@
-import gc
+﻿import gc
 import os
 import time
 import traceback
@@ -76,7 +76,7 @@ class AsyncTask:
 
         if not args_manager.args.disable_metadata:
             s.save_metadata_to_images = args.get('save_metadata_to_images', False)
-            scheme_val = args.get('metadata_scheme', 'fooocus')
+            scheme_val = args.get('metadata_scheme', 'fooocus_nex')
             try:
                 s.metadata_scheme = MetadataScheme(scheme_val)
             except ValueError:
@@ -165,7 +165,7 @@ def handler(async_task: AsyncTask):
     preparation_start_time = time.perf_counter()
     s.processing = True
     s.current_progress = 0
-
+    resources.begin_memory_phase('task', notes={'goals': list(s.goals)})
 
     print(f'[Parameters] Seed = {s.seed}')
     dims = re.findall(r'\d+', str(s.aspect_ratios_selection))
@@ -177,40 +177,44 @@ def handler(async_task: AsyncTask):
 
     if flags.remove_bg in s.goals or flags.remove_obj in s.goals:
         # User requested removals. Clean up diffusion models first to free ~2GB VRAM.
-        progressbar(s, 5, "Clearing VRAM for Removal Models...")
-        resources.soft_empty_cache()
-        resources.unload_all_models()
+        resources.begin_memory_phase('removal', notes={'goals': list(s.goals)})
+        try:
+            progressbar(s, 5, "Clearing VRAM for Removal Models...")
+            resources.soft_empty_cache(force=True)
+            resources.unload_all_models()
 
-        if flags.remove_bg in s.goals:
-            progressbar(s, 10, "Background Removal Starting...")
-            char_path, mask_path = bgr_engine.remove_background_from_file(
-                filepath=s.remove_base_image,
-                threshold=s.bgr_threshold,
-                jit=s.bgr_jit
-            )
-            bgr_engine.unload_model()
-            
-            # Record result
-            yield_result(s, [char_path, mask_path], 50 if flags.remove_obj in s.goals else 100, do_not_show_finished_images=True)
-            
-            # Handoff for sequential cleanup
+            if flags.remove_bg in s.goals:
+                progressbar(s, 10, "Background Removal Starting...")
+                char_path, mask_path = bgr_engine.remove_background_from_file(
+                    filepath=s.remove_base_image,
+                    threshold=s.bgr_threshold,
+                    jit=s.bgr_jit
+                )
+                bgr_engine.unload_model()
+                
+                # Record result
+                yield_result(s, [char_path, mask_path], 50 if flags.remove_obj in s.goals else 100, do_not_show_finished_images=True)
+                
+                # Handoff for sequential cleanup
+                if flags.remove_obj in s.goals:
+                    s.remove_mask_image = mask_path
+
             if flags.remove_obj in s.goals:
-                s.remove_mask_image = mask_path
+                progressbar(s, 60 if flags.remove_bg in s.goals else 10, "Object Removal Starting...")
+                res_path = objr_engine.remove_object_from_file(
+                    image_path=s.remove_base_image,
+                    mask_path=s.remove_mask_image,
+                    seed=s.seed,
+                    mask_dilate=s.objr_mask_dilate
+                )
+                objr_engine.unload_model()
+                
+                yield_result(s, [res_path], 100, do_not_show_finished_images=True)
 
-        if flags.remove_obj in s.goals:
-            progressbar(s, 60 if flags.remove_bg in s.goals else 10, "Object Removal Starting...")
-            res_path = objr_engine.remove_object_from_file(
-                image_path=s.remove_base_image,
-                mask_path=s.remove_mask_image,
-                seed=s.seed,
-                mask_dilate=s.objr_mask_dilate
-            )
-            objr_engine.unload_model()
-            
-            yield_result(s, [res_path], 100, do_not_show_finished_images=True)
-
-        s.processing = False
-        return
+            s.processing = False
+            return
+        finally:
+            resources.end_memory_phase('removal', notes={'completed': True})
     
     save_step1_result = None
     try:
@@ -222,10 +226,16 @@ def handler(async_task: AsyncTask):
         s.current_progress = 1
         progressbar(s, s.current_progress, 'Loading ControlNets ...')
         pipeline.refresh_controlnets(list(res.get('controlnet_paths', {}).values()) if s.input_image_checkbox else [])
-        
-        import extras.ip_adapter as ip_adapter
-        if res.get('ip_adapter_path') is not None:
-            ip_adapter.load_ip_adapter(res.get('clip_vision_path'), res.get('ip_negative_path'), res.get('ip_adapter_path'))
+        import backend.ip_adapter as contextual_ip_adapter
+        contextual_assets = res.get('contextual_assets') or {}
+        for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():
+            contextual_ip_adapter.load_contextual_model(
+                contextual_model_path,
+                clip_vision_path=contextual_assets.get('clip_vision_path'),
+                ip_negative_path=contextual_assets.get('ip_negative_path')
+            )
+        for insightface_model_name in contextual_assets.get('insightface_model_names', []):
+            contextual_ip_adapter.load_insightface(insightface_model_name)
 
         if s.input_image_checkbox:
             if 'outpaint' in s.goals:
@@ -310,7 +320,7 @@ def handler(async_task: AsyncTask):
         s.processing = False
         return
     if 'cn' in s.goals:
-        apply_control_nets(s, res.get('ip_adapter_path'), res.get('structural_preprocessor_paths'))
+        apply_control_nets(s, res.get('contextual_assets'), res.get('structural_preprocessor_paths'))
 
     steps, _, _ = apply_overrides(s)
     all_steps = max(steps * s.image_number, 1)
@@ -389,6 +399,10 @@ def worker():
                 set_active_task(None)
                 gc.collect()
                 resources.soft_empty_cache()
+                resources.end_memory_phase('task', notes={'completed': True})
 
 
 threading.Thread(target=worker, daemon=True).start()
+
+
+

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import gradio as gr
 from pathlib import Path
 import modules.config
@@ -216,7 +216,7 @@ def parse_meta_from_preset(preset_content):
                 width, height = default_aspect_ratio.split('*')
             else:
                 default_aspect_ratio = getattr(modules.config, settings_key)
-                width, height = default_aspect_ratio.split('×')
+                width, height = default_aspect_ratio.split('횞')
                 height = height[:height.index(" ")]
             preset_prepared[meta_key] = (width, height)
         else:
@@ -238,4 +238,6 @@ def trigger_metadata_import(file, state_is_generating):
         parsed_parameters = metadata_parser.to_json(parameters)
 
     return load_parameter_button_click(parsed_parameters, state_is_generating)
+
+
 

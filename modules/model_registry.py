@@ -3,7 +3,7 @@ import os
 import zipfile
 from functools import lru_cache
 
-from modules.model_loader import load_file_from_url
+from modules.model_download.runtime import download_file
 
 
 def _load_manifest(path):
@@ -140,11 +140,12 @@ def _ensure_file_asset(asset, target_path, progress=True):
     last_error = None
     for source in sources:
         try:
-            return load_file_from_url(
+            return download_file(
                 url=source["url"],
                 model_dir=download_dir,
                 file_name=file_name,
-                progress=progress
+                progress=progress,
+                headers=source.get('headers', ()),
             )
         except Exception as exc:
             last_error = exc
@@ -175,11 +176,12 @@ def _ensure_archive_asset(asset, extract_dir, progress=True):
     archive_path = None
     for source in sources:
         try:
-            archive_path = load_file_from_url(
+            archive_path = download_file(
                 url=source["url"],
                 model_dir=archive_cache_dir,
                 file_name=archive_name,
-                progress=progress
+                progress=progress,
+                headers=source.get('headers', ()),
             )
             break
         except Exception as exc:

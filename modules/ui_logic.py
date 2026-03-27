@@ -309,14 +309,20 @@ def outpaint_selection_change(choices):
 def trigger_metadata_preview(file):
     parameters, metadata_scheme = modules.meta_parser.read_info_from_image(file)
 
-    results = {}
+    lines = []
     if parameters is not None:
-        results['parameters'] = parameters
+        if isinstance(parameters, dict):
+            lines.append(json.dumps(parameters, indent=2, ensure_ascii=False))
+        else:
+            lines.append(str(parameters))
 
     if isinstance(metadata_scheme, flags.MetadataScheme):
-        results['metadata_scheme'] = metadata_scheme.value
+        lines.append(f"metadata_scheme: {metadata_scheme.value}")
 
-    return results
+    if not lines:
+        return "No metadata found."
+
+    return "\n".join(lines)
 
 def random_checked(r):
     return gr.update(visible=not r)
@@ -372,10 +378,11 @@ def preset_selection_change(preset, is_generating):
     embeddings_downloads = preset_prepared.get('embeddings_downloads', {})
     lora_downloads = preset_prepared.get('lora_downloads', {})
     vae_downloads = preset_prepared.get('vae_downloads', {})
+    upscale_downloads = preset_prepared.get('upscale_downloads', {})
 
     preset_prepared['base_model'], preset_prepared['checkpoint_downloads'] = download_models(
         default_model, checkpoint_downloads, embeddings_downloads, lora_downloads,
-        vae_downloads)
+        vae_downloads, upscale_downloads)
 
     if 'prompt' in preset_prepared and preset_prepared.get('prompt') == '':
         del preset_prepared['prompt']
@@ -414,7 +421,7 @@ def trigger_metadata_import(file, state_is_generating):
         metadata_parser = modules.meta_parser.get_metadata_parser(metadata_scheme)
         parsed_parameters = metadata_parser.to_json(parameters)
 
-    return metadata_ui.trigger_metadata_import(file, state_is_generating)
+    return metadata_ui.load_parameter_button_click(parsed_parameters, state_is_generating)
 
 
 
@@ -549,7 +556,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     load_parameter_button.click(metadata_ui.load_parameter_button_click, inputs=[prompt, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=False)
 
-    metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
+    metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image_path, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
         .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
 
     import modules.mask_processing as mask_proc
@@ -651,7 +658,5 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     skip_button.click(skip_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False)
 
     example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
-    metadata_input_image.upload(trigger_metadata_preview, inputs=metadata_input_image, outputs=metadata_json, queue=False, show_progress=True)
+    metadata_input_image_path.change(trigger_metadata_preview, inputs=metadata_input_image_path, outputs=metadata_json, queue=False, show_progress=True)
     outpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, outpaint_mask_image], outputs=[outpaint_mask_image], queue=False, show_progress=False)
-
-

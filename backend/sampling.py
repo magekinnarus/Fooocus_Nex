@@ -1,6 +1,7 @@
 import torch
 import math
 import logging
+import time
 from functools import partial
 from typing import Any, Callable, List, Dict, Optional, Union, Tuple
 
@@ -385,11 +386,52 @@ class CFGGuider:
 
         # Load model to GPU before inference
         from . import resources
+
+        gguf_ops = None
+        try:
+            from .gguf import ops as gguf_ops
+            gguf_ops.reset_trace_stats()
+        except Exception:
+            gguf_ops = None
+
+        sample_total_start = time.perf_counter()
+        load_start = time.perf_counter()
         resources.load_models_gpu([self.model_patcher])
+        model_load_duration = time.perf_counter() - load_start
 
         if self.inner_model is None:
             self.inner_model = self.model_patcher.model
 
+        cond_start = time.perf_counter()
         self.conds = process_conds(self.inner_model, noise, self.conds, self.inner_model.get_dtype(), latent_image=latent_image, denoise_mask=denoise_mask, seed=seed)
-            
-        return sampler.sample(self, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
+        cond_duration = time.perf_counter() - cond_start
+
+        denoise_start = time.perf_counter()
+        try:
+            return sampler.sample(self, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
+        finally:
+            denoise_duration = time.perf_counter() - denoise_start
+            total_duration = time.perf_counter() - sample_total_start
+            perf_message = (
+                f"[Nex-Perf] sampler timings model_load={model_load_duration:.3f}s "
+                f"cond_prep={cond_duration:.3f}s denoise={denoise_duration:.3f}s total={total_duration:.3f}s"
+            )
+            print(perf_message)
+            logging.info(perf_message)
+
+            if gguf_ops is not None:
+                stats = gguf_ops.consume_trace_stats()
+                if stats.get("calls", 0) > 0:
+                    avg_ms = (stats["total_seconds"] / stats["calls"]) * 1000.0
+                    perf_message = (
+                        f"[Nex-Perf] gguf get_weight calls={stats['calls']} quantized={stats['quantized_calls']} "
+                        f"patch_calls={stats['patch_calls']} dequant={stats['dequant_seconds']:.3f}s "
+                        f"patch={stats['patch_seconds']:.3f}s total={stats['total_seconds']:.3f}s avg={avg_ms:.3f}ms "
+                        f"src_cpu={stats['source_cpu_calls']} src_cuda={stats['source_cuda_calls']} src_other={stats['source_other_calls']} "
+                        f"src_quant_cpu={stats['source_quantized_cpu_calls']} src_quant_cuda={stats['source_quantized_cuda_calls']} src_quant_other={stats['source_quantized_other_calls']} "
+                        f"cpu_calls={stats['cpu_calls']} cuda_calls={stats['cuda_calls']} other_calls={stats['other_device_calls']} "
+                        f"quantized_cpu={stats['quantized_cpu_calls']} quantized_cuda={stats['quantized_cuda_calls']} quantized_other={stats['quantized_other_device_calls']} "
+                        f"cpu_dequant={stats['cpu_dequant_seconds']:.3f}s cuda_dequant={stats['cuda_dequant_seconds']:.3f}s other_dequant={stats['other_device_dequant_seconds']:.3f}s"
+                    )
+                    print(perf_message)
+                    logging.info(perf_message)

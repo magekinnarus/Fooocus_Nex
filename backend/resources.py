@@ -13,6 +13,7 @@ import weakref
 import gc
 import time
 import os
+import backend.memory_governor as memory_governor
 
 class VRAMState(Enum):
     DISABLED = 0    # No vram present: no need to move models to vram
@@ -77,6 +78,28 @@ set_vram_to = VRAMState.NORMAL_VRAM
 cpu_state = CPUState.GPU
 
 total_vram = 0
+
+
+def _memory_mb(value):
+    return float(value) / (1024 ** 2)
+
+
+def _describe_model_for_logs(model_patcher):
+    patcher_name = type(model_patcher).__name__
+    model_obj = getattr(model_patcher, "model", None)
+    model_name = type(model_obj).__name__ if model_obj is not None else "UnknownModel"
+
+    role = "model"
+    if model_obj is not None:
+        if hasattr(model_obj, "diffusion_model"):
+            role = "unet"
+        elif model_name == "CLIP" or hasattr(model_obj, "tokenizer"):
+            role = "clip"
+        elif model_name == "VAE" or hasattr(model_obj, "first_stage_model"):
+            role = "vae"
+
+    gguf_suffix = "[gguf]" if "GGUF" in patcher_name else ""
+    return f"{role}:{patcher_name}/{model_name}{gguf_suffix}"
 
 def get_supported_float8_types():
     float8_types = []
@@ -376,6 +399,7 @@ def get_torch_device_name(device):
         return "CUDA {}: {}".format(device, torch.cuda.get_device_name(device))
 
 current_loaded_models = []
+_last_soft_empty_cache = 0.0
 
 class LoadedModel:
     def __init__(self, model):
@@ -585,8 +609,9 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             vram_set_state = current_vram_state
         
         lowvram_model_memory = 0
+        loaded_memory = loaded_model.model_loaded_memory()
+        current_free_mem = None
         if vram_set_state in (VRAMState.LOW_VRAM, VRAMState.NORMAL_VRAM) and not force_full_load:
-            loaded_memory = loaded_model.model_loaded_memory()
             current_free_mem = get_free_memory(torch_dev) + loaded_memory
             lowvram_model_memory = max(128 * 1024 * 1024, (current_free_mem - minimum_memory_required), min(current_free_mem * MIN_WEIGHT_MEMORY_RATIO, current_free_mem - minimum_inference_memory()))
             if total_vram < 4096:
@@ -597,8 +622,34 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
         if vram_set_state == VRAMState.NO_VRAM:
             lowvram_model_memory = 0.1
 
+        model_label = _describe_model_for_logs(model)
+        target_memory = loaded_model.model_memory_required(torch_dev)
+        load_mode = 'partial' if lowvram_model_memory > 0 and lowvram_model_memory < target_memory else 'full'
+        free_mem_text = 'n/a' if current_free_mem is None else f"{_memory_mb(current_free_mem):.1f}"
+        perf_message = (
+            f"[Nex-Perf] load_models_gpu item={model_label} device={torch_dev} mode={load_mode} "
+            f"vram_state={vram_set_state.name} target={_memory_mb(target_memory):.1f}MB "
+            f"loaded={_memory_mb(loaded_memory):.1f}MB budget={_memory_mb(lowvram_model_memory):.1f}MB "
+            f"free={_memory_mb(extra_mem):.1f}MB min_req={_memory_mb(minimum_memory_required):.1f}MB "
+            f"current_free={free_mem_text}MB"
+        )
+        print(perf_message)
+        logging.info(perf_message)
+
+        model_load_start = time.perf_counter()
         loaded_model.model_load(lowvram_model_memory, force_patch_weights=force_patch_weights)
+        model_load_duration = time.perf_counter() - model_load_start
         current_loaded_models.insert(0, loaded_model)
+
+        lowvram_patch_counter = model.lowvram_patch_counter() if hasattr(model, 'lowvram_patch_counter') else 0
+        perf_message = (
+            f"[Nex-Perf] load_models_gpu complete item={model_label} "
+            f"loaded_now={_memory_mb(loaded_model.model_loaded_memory()):.1f}MB "
+            f"total={_memory_mb(loaded_model.model_memory()):.1f}MB "
+            f"lowvram_patches={lowvram_patch_counter} duration={model_load_duration:.3f}s"
+        )
+        print(perf_message)
+        logging.info(perf_message)
 
     load_time = time.time() - start_time
     logging.info(f"Nex Model Loading Time: {load_time:.2f} seconds")
@@ -654,7 +705,10 @@ def get_free_memory(dev=None, torch_free_too=False):
     else:
         return mem_free_total
 
-def soft_empty_cache():
+def soft_empty_cache(force=False):
+    if not memory_governor.should_flush_cache(force=force):
+        return
+
     if cpu_state == CPUState.MPS:
         torch.mps.empty_cache()
     elif is_intel_xpu():
@@ -662,6 +716,24 @@ def soft_empty_cache():
     elif torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+
+    memory_governor.note_cache_flush()
+
+
+def begin_memory_phase(phase, task=None, notes=None):
+    return memory_governor.begin_phase(phase, task=task, notes=notes)
+
+
+def end_memory_phase(phase=None, notes=None):
+    return memory_governor.end_phase(phase, notes=notes)
+
+
+def capture_memory_snapshot(notes=None, task=None):
+    return memory_governor.capture_snapshot(notes=notes, task=task)
+
+
+def current_memory_phase():
+    return memory_governor.current_phase()
 
 def is_device_type(device, type):
     if hasattr(device, 'type'):

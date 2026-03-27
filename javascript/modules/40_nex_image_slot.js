@@ -27,6 +27,7 @@
             this.pathFieldId = this.dataset.pathFieldId || '';
             this.workspaceFieldId = this.dataset.workspaceFieldId || '';
             this.toolGroup = this.dataset.toolGroup || '';
+            this.preserveMetadata = this.dataset.preserveMetadata === 'true';
             this.bridgeRoot = null;
             this.bridgeObserver = null;
             this.appObserver = null;
@@ -34,6 +35,7 @@
             this.workspaceField = null;
             this.apiPollHandle = null;
             this.lastApiStateKey = '';
+            this.apiUploadInFlight = false;
             this.onApiFieldChange = () => this.syncFromApiFields(true);
             this.objectUrl = null;
             this.render();
@@ -154,12 +156,46 @@
                 });
             });
 
-            this.dropZone.addEventListener('drop', (event) => {
-                const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+            this.dropZone.addEventListener('drop', async (event) => {
+                const dataTransfer = event.dataTransfer;
+                const file = dataTransfer && dataTransfer.files && dataTransfer.files[0];
                 if (file) {
-                    this.handleFile(file);
+                    await this.handleFile(file);
+                    return;
+                }
+
+                const droppedUrl = this.normalizeDroppedUrl(
+                    (dataTransfer && (
+                        dataTransfer.getData('text/uri-list') ||
+                        dataTransfer.getData('text/plain')
+                    )) || ''
+                );
+                if (!droppedUrl) {
+                    return;
+                }
+
+                try {
+                    const droppedFile = await this.fetchFileFromDroppedUrl(droppedUrl);
+                    if (droppedFile) {
+                        await this.handleFile(droppedFile);
+                    }
+                } catch (error) {
+                    console.error('[nex-image-slot] URL drop failed:', error);
                 }
             });
+        }
+
+        normalizeDroppedUrl(raw) {
+            if (!raw || typeof raw !== 'string') {
+                return '';
+            }
+            const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+            for (const line of lines) {
+                if (!line.startsWith('#')) {
+                    return line;
+                }
+            }
+            return '';
         }
 
         observeApp() {
@@ -282,8 +318,13 @@
         }
 
         async handleFile(file) {
-            this.setPreview(URL.createObjectURL(file), true);
             try {
+                if (this.uploadMode === 'api') {
+                    this.apiUploadInFlight = true;
+                    await this.prepareApiReplacement();
+                }
+
+                this.setPreview(URL.createObjectURL(file), true);
                 if (this.uploadMode === 'api') {
                     await this.pushFileToApi(file);
                 } else {
@@ -292,7 +333,39 @@
             } catch (error) {
                 console.error('[nex-image-slot] Upload failed:', error);
                 this.clearPreview();
+            } finally {
+                if (this.uploadMode === 'api') {
+                    this.apiUploadInFlight = false;
+                    this.syncFromApiFields(true);
+                }
             }
+        }
+
+        async fetchFileFromDroppedUrl(url) {
+            const formData = new FormData();
+            formData.append('url', url);
+
+            const uploadResponse = await fetch('/staging_api/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            if (!uploadResponse.ok) {
+                throw new Error(`Stage URL upload failed with status ${uploadResponse.status}`);
+            }
+
+            const payload = await uploadResponse.json();
+            if (!payload || payload.status !== 'success' || !payload.url) {
+                throw new Error('Stage URL upload returned an invalid payload');
+            }
+
+            const imageResponse = await fetch(payload.url);
+            if (!imageResponse.ok) {
+                throw new Error(`Staged URL fetch failed with status ${imageResponse.status}`);
+            }
+
+            const blob = await imageResponse.blob();
+            const filename = payload.file || this.getApiFilename(url) || 'dropped_image.png';
+            return new File([blob], filename, { type: blob.type || 'image/png' });
         }
 
         attachBridge() {
@@ -354,10 +427,10 @@
         }
 
         buildApiStateKey(workspaceId, pathValue) {
-            if (!workspaceId || !pathValue) {
+            if (!pathValue) {
                 return '';
             }
-            return `${workspaceId}::${pathValue}`;
+            return workspaceId ? `${workspaceId}::${pathValue}` : `direct::${pathValue}`;
         }
 
         getApiFilename(pathValue) {
@@ -369,23 +442,48 @@
         }
 
         getApiPreviewUrl(workspaceId, pathValue = '', bustCache = false) {
-            if (!workspaceId) {
+            if (!pathValue) {
                 return '';
             }
-            const filename = this.getApiFilename(pathValue);
-            const baseUrl = `/image_api/image/${encodeURIComponent(workspaceId)}/${encodeURIComponent(filename)}`;
-            return bustCache ? `${baseUrl}?v=${Date.now()}` : baseUrl;
+            let baseUrl = '';
+            if (workspaceId) {
+                const filename = this.getApiFilename(pathValue);
+                baseUrl = `/image_api/image/${encodeURIComponent(workspaceId)}/${encodeURIComponent(filename)}`;
+            } else {
+                const normalizedPath = String(pathValue).replace(/\\/g, '/');
+                if (normalizedPath.includes('/staging/')) {
+                    const filename = this.getApiFilename(pathValue);
+                    baseUrl = `/staging_api/image/${encodeURIComponent(filename)}`;
+                } else {
+                    baseUrl = `/file=${encodeURIComponent(pathValue)}`;
+                }
+            }
+            return bustCache ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}v=${Date.now()}` : baseUrl;
+        }
+
+        async prepareApiReplacement() {
+            const existingWorkspaceId = this.getFieldValue(this.workspaceFieldId);
+            if (existingWorkspaceId) {
+                try {
+                    await fetch(`/image_api/workspace/${encodeURIComponent(existingWorkspaceId)}`, { method: 'DELETE' });
+                } catch (error) {
+                    console.warn('[nex-image-slot] Previous workspace cleanup failed:', error);
+                }
+            }
+            this.setFieldValue(this.pathFieldId, '');
+            this.setFieldValue(this.workspaceFieldId, '');
+            this.lastApiStateKey = '';
         }
 
         async pushFileToApi(file) {
-            let workspaceId = this.getFieldValue(this.workspaceFieldId);
-            if (!workspaceId) {
-                workspaceId = this.buildWorkspaceId();
-                this.setFieldValue(this.workspaceFieldId, workspaceId);
-            }
+            const workspaceId = this.buildWorkspaceId();
+            this.setFieldValue(this.workspaceFieldId, workspaceId);
 
             const formData = new FormData();
             formData.append('workspace_id', workspaceId);
+            if (this.preserveMetadata) {
+                formData.append('preserve_metadata', 'true');
+            }
             formData.append('file', file, file.name || 'upload.png');
 
             const response = await fetch('/image_api/upload', {
@@ -470,6 +568,9 @@
         }
 
         syncFromApiFields(forceBustCache = false) {
+            if (this.apiUploadInFlight) {
+                return;
+            }
             const workspaceId = this.getFieldValue(this.workspaceFieldId);
             const pathValue = this.getFieldValue(this.pathFieldId);
             const nextStateKey = this.buildApiStateKey(workspaceId, pathValue);
@@ -533,3 +634,6 @@
         customElements.define('nex-image-slot', NexImageSlot);
     }
 })();
+
+
+

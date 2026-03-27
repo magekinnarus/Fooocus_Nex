@@ -9,8 +9,13 @@
     "path_upscale_models": "/content/models/upscale_models/",
     "path_inpaint": "/content/models/inpaint/",
     "path_controlnet": "/content/models/controlnet/",
-    "path_clip_vision": "/content/models/clip_vision/",
+    "path_clip_vision": "/content/drive/MyDrive/Fooocus_Nex/models/vision_support/clip_vision/",
     "path_preprocessors": "/content/drive/MyDrive/Fooocus_Nex/models/preprocessors/",
     "path_insightface": "/content/drive/MyDrive/Fooocus_Nex/models/insightface/",
-    "path_removals": "/content/models/removals/"
+    "path_removals": "/content/models/removals/",
+    "default_save_metadata_to_images": true,
+    "path_loras_lcm": "/content/drive/MyDrive/Fooocus_Nex/models/performance_loras/lcm/",
+    "path_loras_lightning": "/content/drive/MyDrive/Fooocus_Nex/models/performance_loras/lightning/",
+    "path_faceid_loras": "/content/drive/MyDrive/Fooocus_Nex/models/faceid_loras/",
+    "path_vision_support": "/content/drive/MyDrive/Fooocus_Nex/models/vision_support/"
 }

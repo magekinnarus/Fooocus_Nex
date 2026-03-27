@@ -1,4 +1,4 @@
-from enum import IntEnum, Enum
+﻿from enum import IntEnum, Enum
 from backend.sampling import SAMPLER_NAMES
 from backend.schedulers import SCHEDULER_NAMES
 
@@ -140,9 +140,11 @@ sdxl_aspect_ratios = [
 
 class MetadataScheme(Enum):
     FOOOCUS = 'fooocus'
+    FOOOCUS_NEX = 'fooocus_nex'
 
 
 metadata_scheme = [
+    (f'{MetadataScheme.FOOOCUS_NEX.value} (json)', MetadataScheme.FOOOCUS_NEX.value),
     (f'{MetadataScheme.FOOOCUS.value} (json)', MetadataScheme.FOOOCUS.value),
 ]
 
@@ -155,3 +157,4 @@ class OutputFormat(Enum):
     @classmethod
     def list(cls) -> list:
         return list(map(lambda c: c.value, cls))
+

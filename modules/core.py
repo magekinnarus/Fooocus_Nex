@@ -1,4 +1,6 @@
 import os
+import logging
+import time
 import einops
 import torch
 import numpy as np
@@ -213,7 +215,7 @@ class StableDiffusionModel:
             if os.path.exists(filename):
                 lora_filename = filename
             else:
-                lora_filename = get_file_from_folder_list(filename, modules.config.paths_loras)
+                lora_filename = get_file_from_folder_list(filename, modules.config.paths_lora_lookup)
 
             if not os.path.exists(lora_filename):
                 print(f'Lora file not found: {lora_filename}')
@@ -335,18 +337,42 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
 
 @torch.inference_mode()
 def decode_vae(vae, latent_image, tiled=False):
+    overall_start = time.perf_counter()
+    load_start = time.perf_counter()
     resources.load_models_gpu([vae.patcher])
-    result = vae.decode(latent_image["samples"], tiled=tiled)
-    resources.eject_model(vae.patcher)
-    return result
+    load_duration = time.perf_counter() - load_start
+    decode_start = time.perf_counter()
+    try:
+        return vae.decode(latent_image["samples"], tiled=tiled)
+    finally:
+        decode_duration = time.perf_counter() - decode_start
+        resources.eject_model(vae.patcher)
+        perf_message = (
+            f"[Nex-Perf] vae decode tiled={tiled} load={load_duration:.3f}s "
+            f"decode={decode_duration:.3f}s total={time.perf_counter() - overall_start:.3f}s"
+        )
+        print(perf_message)
+        logging.info(perf_message)
 
 
 @torch.inference_mode()
 def encode_vae(vae, pixels):
+    overall_start = time.perf_counter()
+    load_start = time.perf_counter()
     resources.load_models_gpu([vae.patcher])
-    result = vae.encode(pixels)
-    resources.eject_model(vae.patcher)
-    return result
+    load_duration = time.perf_counter() - load_start
+    encode_start = time.perf_counter()
+    try:
+        return vae.encode(pixels)
+    finally:
+        encode_duration = time.perf_counter() - encode_start
+        resources.eject_model(vae.patcher)
+        perf_message = (
+            f"[Nex-Perf] vae encode load={load_duration:.3f}s "
+            f"encode={encode_duration:.3f}s total={time.perf_counter() - overall_start:.3f}s"
+        )
+        print(perf_message)
+        logging.info(perf_message)
 
 
 @torch.no_grad()

@@ -1,6 +1,7 @@
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
+import os
 
 from PIL import Image
 
@@ -51,7 +52,7 @@ class MetadataParser(ABC):
         self.loras = []
         for (lora_name, lora_weight) in loras:
             if lora_name != 'None':
-                lora_path = get_file_from_folder_list(lora_name, modules.config.paths_loras)
+                lora_path = get_file_from_folder_list(lora_name, modules.config.paths_lora_lookup)
                 lora_hash = sha256_from_cache(lora_path)
                 self.loras.append((Path(lora_name).stem, lora_weight, lora_hash))
         self.vae_name = Path(vae_name).stem
@@ -59,8 +60,12 @@ class MetadataParser(ABC):
 
 
 class FooocusMetadataParser(MetadataParser):
+    def __init__(self, scheme: MetadataScheme = MetadataScheme.FOOOCUS_NEX):
+        super().__init__()
+        self.scheme = scheme
+
     def get_scheme(self) -> MetadataScheme:
-        return MetadataScheme.FOOOCUS
+        return self.scheme
 
     def to_json(self, metadata: dict) -> dict:
         for key, value in metadata.items():
@@ -121,26 +126,42 @@ class FooocusMetadataParser(MetadataParser):
 
 def get_metadata_parser(metadata_scheme: MetadataScheme) -> MetadataParser:
     if metadata_scheme == MetadataScheme.FOOOCUS:
-        return FooocusMetadataParser()
+        return FooocusMetadataParser(MetadataScheme.FOOOCUS)
+    if metadata_scheme == MetadataScheme.FOOOCUS_NEX:
+        return FooocusMetadataParser(MetadataScheme.FOOOCUS_NEX)
     raise NotImplementedError
 
 
 def read_info_from_image(file_or_path) -> tuple[str | None, MetadataScheme | None]:
-    if isinstance(file_or_path, str):
-        with Image.open(file_or_path) as img:
-            items = (img.info or {}).copy()
-    else:
-        items = (file_or_path.info or {}).copy()
+    if not file_or_path:
+        return None, None
+
+    try:
+        if isinstance(file_or_path, (str, os.PathLike)):
+            file_path = os.fspath(file_or_path)
+            if not file_path or not os.path.exists(file_path):
+                return None, None
+            with Image.open(file_path) as img:
+                items = (img.info or {}).copy()
+        else:
+            items = (file_or_path.info or {}).copy()
+    except Exception:
+        return None, None
 
     parameters = items.pop('parameters', None)
     metadata_scheme = items.pop('fooocus_scheme', None)
+    if isinstance(metadata_scheme, str):
+        try:
+            metadata_scheme = MetadataScheme(metadata_scheme)
+        except ValueError:
+            metadata_scheme = None
 
     if parameters is not None and is_json(parameters):
         parameters = json.loads(parameters)
-        metadata_scheme = MetadataScheme.FOOOCUS
+        if metadata_scheme is None:
+            metadata_scheme = MetadataScheme.FOOOCUS
 
     return parameters, metadata_scheme
-
 
 def get_exif(metadata: str | None, metadata_scheme: str):
     exif = Image.Exif()
@@ -148,7 +169,11 @@ def get_exif(metadata: str | None, metadata_scheme: str):
     # 0x9286 = UserComment
     exif[0x9286] = metadata
     # 0x0131 = Software
-    exif[0x0131] = 'Fooocus v' + fooocus_version.version
+    exif[0x0131] = f'{fooocus_version.app_name} {fooocus_version.version}'
     # 0x927C = MakerNote
     exif[0x927C] = metadata_scheme
     return exif
+
+
+
+

@@ -7,7 +7,7 @@ import math
 from PIL import Image
 from typing import List, Tuple
 
-import modules.model_loader as model_loader
+from modules.model_download.runtime import download_file
 import modules.config as config
 import modules.mask_processing as mask_processing
 from ldm_patched.pfn.architecture.MAT import MAT
@@ -124,7 +124,7 @@ def load_model(model_name: str = "Places_512_FullData_G.pth") -> MAT:
     
     # Download if missing
     url = "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Places_512_FullData_G.pth"
-    checkpoint_path = model_loader.load_file_from_url(
+    checkpoint_path = download_file(
         url=url,
         model_dir=model_dir,
         file_name=model_name

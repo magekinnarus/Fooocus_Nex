@@ -1,1 +1,2 @@
-version = '2.5.5'
+﻿app_name = 'Fooocus_Nex'
+version = 'V1.0.0'

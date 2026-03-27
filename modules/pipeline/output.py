@@ -1,4 +1,4 @@
-import os
+﻿import os
 import math
 import cv2
 import numpy as np
@@ -114,8 +114,9 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
         
         d.append(('Metadata Scheme', 'metadata_scheme',
                   task_state.metadata_scheme.value if task_state.save_metadata_to_images else task_state.save_metadata_to_images))
-        d.append(('Version', 'version', 'Fooocus v' + fooocus_version.version))
+        d.append(('Version', 'version', f'{fooocus_version.app_name} {fooocus_version.version}'))
         
         img_paths.append(log(x, d, metadata_parser_instance, task_state.output_format, task_dict, persist_image))
 
     return img_paths
+
