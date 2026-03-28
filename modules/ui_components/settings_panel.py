@@ -13,6 +13,9 @@ def build_settings_tab():
     """
     results = {}
 
+    default_aspect_ratio_labels = modules.config.get_aspect_ratio_labels_for_model(modules.config.default_base_model_name)
+    default_aspect_ratio_label = modules.config.get_default_aspect_ratio_label_for_model(modules.config.default_base_model_name)
+
     if not args_manager.args.disable_preset_selection:
         results['preset_selection'] = gr.Dropdown(
             label='Preset',
@@ -26,8 +29,8 @@ def build_settings_tab():
         results['aspect_ratios_selection'] = gr.Radio(
             label='Aspect Ratios',
             show_label=False,
-            choices=modules.config.available_aspect_ratios_labels,
-            value=modules.config.default_aspect_ratio,
+            choices=default_aspect_ratio_labels,
+            value=default_aspect_ratio_label,
             info='width × height',
             elem_classes='aspect_ratios'
         )

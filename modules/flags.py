@@ -1,4 +1,4 @@
-﻿from enum import IntEnum, Enum
+from enum import IntEnum, Enum
 from backend.sampling import SAMPLER_NAMES
 from backend.schedulers import SCHEDULER_NAMES
 
@@ -135,6 +135,12 @@ sdxl_aspect_ratios = [
     '1088*960', '1088*896', '1152*896', '1152*832', '1216*832', '1280*768',
     '1344*768', '1344*704', '1408*704', '1472*704', '1536*640', '1600*640',
     '1664*576', '1728*576'
+]
+
+sd15_aspect_ratios = [
+    '512*768', '512*704', '576*704', '576*640', '640*640', '640*576',
+    '704*576', '704*512', '768*512', '512*512', '768*768', '896*512',
+    '512*896', '1024*512', '512*1024'
 ]
 
 

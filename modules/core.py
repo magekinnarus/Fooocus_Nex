@@ -169,13 +169,18 @@ opModelSamplingContinuousEDM = ModelSamplingContinuousEDM()
 
 
 class StableDiffusionModel:
-    def __init__(self, unet=None, vae=None, clip=None, clip_vision=None, filename=None, vae_filename=None):
+    def __init__(self, unet=None, vae=None, clip=None, clip_vision=None, filename=None, vae_filename=None, architecture=None, sub_architecture=None, compatibility_family=None, taxonomy_source='default', catalog_entry_id=None):
         self.unet = unet
         self.vae = vae
         self.clip = clip
         self.clip_vision = clip_vision
         self.filename = filename
         self.vae_filename = vae_filename
+        self.architecture = architecture
+        self.sub_architecture = sub_architecture
+        self.compatibility_family = compatibility_family
+        self.taxonomy_source = taxonomy_source
+        self.catalog_entry_id = catalog_entry_id
         self.unet_with_lora = unet
         self.clip_with_lora = clip
         self.visited_loras = ''
@@ -263,6 +268,16 @@ def apply_controlnet(positive, negative, control_net, image, strength, start_per
         image=image, strength=strength, start_percent=start_percent, end_percent=end_percent)
 
 
+def _resolve_loaded_architecture(unet):
+    if unet is None:
+        return None
+
+    latent_format = getattr(getattr(unet, 'model', None), 'latent_format', None)
+    if isinstance(latent_format, ldm_patched.modules.latent_formats.SDXL):
+        return modules.model_taxonomy.ARCHITECTURE_SDXL
+    return modules.model_taxonomy.ARCHITECTURE_SD15
+
+
 @torch.no_grad()
 @torch.inference_mode()
 def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
@@ -272,6 +287,7 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
         return StableDiffusionModel(filename=ckpt_filename)
 
     basename = os.path.basename(ckpt_filename).lower()
+    resolved_taxonomy = modules.config.resolve_model_taxonomy(ckpt_filename)
 
     unet = None
     clip = None
@@ -287,12 +303,22 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
             print(f'[Nex Warning] GGUF is UNet-only. Please select CLIP and VAE in the Models tab.')
         except Exception as e:
             print(f'[Nex Error] Failed to load GGUF UNet: {e}')
-    elif basename.startswith("xl_") or "sdxl" in basename or basename.startswith("xl-"):
+    elif resolved_taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SDXL:
         unet, clip, vae = loader.load_sdxl_checkpoint(ckpt_filename)
     else:
         unet, clip, vae = loader.load_sd15_checkpoint(ckpt_filename)
 
-    is_sdxl_base = basename.endswith('.gguf') or basename.startswith("xl_") or "sdxl" in basename or basename.startswith("xl-")
+    loaded_architecture = _resolve_loaded_architecture(unet)
+    if loaded_architecture is not None and loaded_architecture != resolved_taxonomy.architecture:
+        resolved_taxonomy = modules.model_taxonomy.build_resolved_model_taxonomy(
+            architecture=loaded_architecture,
+            sub_architecture=resolved_taxonomy.sub_architecture if loaded_architecture == modules.model_taxonomy.ARCHITECTURE_SDXL else None,
+            compatibility_family=resolved_taxonomy.compatibility_family if loaded_architecture == modules.model_taxonomy.ARCHITECTURE_SDXL else modules.model_taxonomy.ARCHITECTURE_SD15,
+            source='runtime',
+            catalog_entry_id=resolved_taxonomy.catalog_entry_id,
+        )
+
+    is_sdxl_base = resolved_taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SDXL
 
     # Support for separate CLIP if provided
     if clip_filename is not None and clip_filename != 'None':
@@ -326,7 +352,18 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
     if vae is None:
         print(f'[Nex Warning] No VAE loaded. Please select a VAE in Advanced > Models.')
 
-    return StableDiffusionModel(unet=unet, clip=clip, vae=vae, filename=ckpt_filename, vae_filename=vae_filename)
+    return StableDiffusionModel(
+        unet=unet,
+        clip=clip,
+        vae=vae,
+        filename=ckpt_filename,
+        vae_filename=vae_filename,
+        architecture=resolved_taxonomy.architecture,
+        sub_architecture=resolved_taxonomy.sub_architecture,
+        compatibility_family=resolved_taxonomy.compatibility_family,
+        taxonomy_source=resolved_taxonomy.source,
+        catalog_entry_id=resolved_taxonomy.catalog_entry_id,
+    )
 
 
 @torch.no_grad()

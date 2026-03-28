@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
@@ -19,9 +19,25 @@ class ModelCatalogEntry:
     root_key: str
     relative_path: str
     alias: str | None = None
+    display_name: str | None = None
+    source_file_name: str | None = None
+    source_key: str | None = None
+    model_type: str = 'unknown'
+    architecture: str = 'unknown'
+    sub_architecture: str = 'general'
+    compatibility_family: str | None = None
+    asset_group_key: str | None = None
+    thumbnail_key: str | None = None
+    thumbnail_url: str | None = None
+    thumbnail_library_relative: str | None = None
+    source_provider: str = 'direct'
+    source_model_id: str | None = None
+    source_version_id: str | None = None
+    token_env: str | None = None
+    catalog_source: str | None = None
     source_kind: str = 'direct'
     sources: Tuple[ModelSource, ...] = ()
-    storage_tier: str = 'colab'
+    storage_tier: str = 'session'
     visibility: str = 'generic'
     preset_managed: bool = False
     token_required: bool = False

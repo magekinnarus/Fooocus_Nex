@@ -345,6 +345,15 @@ def update_history_link():
 
     return gr.update(value=f'<a href="file={get_current_html_path(output_format)}" target="_blank">\U0001F4DA History Log</a>')
 
+def update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio):
+    labels = modules.config.get_aspect_ratio_labels_for_model(base_model_name)
+    if not labels:
+        labels = modules.config.available_aspect_ratios_labels
+
+    value = current_aspect_ratio if current_aspect_ratio in labels else modules.config.get_default_aspect_ratio_label_for_model(base_model_name)
+    return gr.update(choices=labels, value=value)
+
+
 def update_style_label(selections):
     if not selections or len(selections) == 0:
         return gr.update(label='Prompt Presets')
@@ -503,6 +512,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     shared.gradio_root.load(refresh_upscale_models, outputs=upscale_model, queue=False, show_progress=False)
 
+    base_model.change(update_aspect_ratio_choices_for_model, inputs=[base_model, aspect_ratios_selection], outputs=[aspect_ratios_selection], queue=False, show_progress=False)
     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
 

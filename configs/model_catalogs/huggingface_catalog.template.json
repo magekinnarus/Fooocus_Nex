@@ -1,0 +1,856 @@
+﻿{
+    "schema_version":  "m06-draft-1",
+    "catalog_id":  "preset.huggingface.template",
+    "catalog_label":  "Preset HuggingFace Catalog Template",
+    "source_provider":  "huggingface",
+    "generated_from":  "D:\\AI\\Imagine_sup\\Model_Json_Files\\model_configs_hug.json",
+    "generated_at":  "2026-03-28",
+    "notes":  [
+                  "Draft normalized template for M06 W01.",
+                  "Entries were converted from the external HuggingFace source catalog.",
+                  "Entry IDs are variant-specific; asset_group_key and thumbnail_key remain shared when the family stem matches.",
+                  "Missing thumbnails currently fall back to 0001_default."
+              ],
+    "entries":  [
+                    {
+                        "id":  "huggingface.unet.sdxl.noob.homoveritasxl_v20naixleps_q4_k_m.1_homoveritasxl_v20naixleps_q4_k_m",
+                        "alias":  null,
+                        "name":  "homoveritasXL_v20NAIXLEPS_Q4_K_M.gguf",
+                        "source_key":  "1_homoveritasXL_v20NAIXLEPS_Q4_K_M",
+                        "display_name":  "homoveritasXL v20NAIXLEPS",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "noob",
+                        "root_key":  "unet",
+                        "relative_path":  "noob/homoveritasXL_v20NAIXLEPS_Q4_K_M.gguf",
+                        "asset_group_key":  "noob.homoveritas",
+                        "thumbnail_key":  "noob.homoveritas",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS/homoveritasXL_v20NAIXLEPS_Q4_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.noob.homoveritasxl_v20naixleps_q5_k_m.2_homoveritasxl_v20naixleps_q5_k_m",
+                        "alias":  null,
+                        "name":  "homoveritasXL_v20NAIXLEPS_Q5_K_M.gguf",
+                        "source_key":  "2_homoveritasXL_v20NAIXLEPS_Q5_K_M",
+                        "display_name":  "homoveritasXL v20NAIXLEPS",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "noob",
+                        "root_key":  "unet",
+                        "relative_path":  "noob/homoveritasXL_v20NAIXLEPS_Q5_K_M.gguf",
+                        "asset_group_key":  "noob.homoveritas",
+                        "thumbnail_key":  "noob.homoveritas",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS/homoveritasXL_v20NAIXLEPS_Q5_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.noob.homoveritasxl_v20naixleps_q8.3_homoveritasxl_v20naixleps_q8",
+                        "alias":  null,
+                        "name":  "homoveritasXL_v20NAIXLEPS_Q8.gguf",
+                        "source_key":  "3_homoveritasXL_v20NAIXLEPS_Q8",
+                        "display_name":  "homoveritasXL v20NAIXLEPS",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "noob",
+                        "root_key":  "unet",
+                        "relative_path":  "noob/homoveritasXL_v20NAIXLEPS_Q8.gguf",
+                        "asset_group_key":  "noob.homoveritas",
+                        "thumbnail_key":  "noob.homoveritas",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS/homoveritasXL_v20NAIXLEPS_Q8.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.clip.sdxl.noob.homoveritasxl_v20naixleps_clips.4_homoveritasxl_v20naixleps_clips",
+                        "alias":  null,
+                        "name":  "homoveritasXL_v20NAIXLEPS_clips.safetensors",
+                        "source_key":  "4_homoveritasXL_v20NAIXLEPS_clips",
+                        "display_name":  "homoveritasXL v20NAIXLEPS",
+                        "model_type":  "clip",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "noob",
+                        "root_key":  "clip",
+                        "relative_path":  "noob/homoveritasXL_v20NAIXLEPS_clips.safetensors",
+                        "asset_group_key":  "noob.homoveritas",
+                        "thumbnail_key":  "noob.homoveritas",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Noob/homoveritasXL_v20NAIXLEPS/homoveritasXL_v20NAIXLEPS_clips.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v100_q4_k_m.5_beretmixreal_v100_q4_k_m",
+                        "alias":  null,
+                        "name":  "beretMixReal_v100_Q4_K_M.gguf",
+                        "source_key":  "5_beretMixReal_v100_Q4_K_M",
+                        "display_name":  "beretMixReal v100",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v100_Q4_K_M.gguf",
+                        "asset_group_key":  "illustrious.beretmix10",
+                        "thumbnail_key":  "illustrious.beretmix10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100/beretMixReal_v100_Q4_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v100_q5_k_m.6_beretmixreal_v100_q5_k_m",
+                        "alias":  null,
+                        "name":  "beretMixReal_v100_Q5_K_M.gguf",
+                        "source_key":  "6_beretMixReal_v100_Q5_K_M",
+                        "display_name":  "beretMixReal v100",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v100_Q5_K_M.gguf",
+                        "asset_group_key":  "illustrious.beretmix10",
+                        "thumbnail_key":  "illustrious.beretmix10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100/beretMixReal_v100_Q5_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v100_q8.7_beretmixreal_v100_q8",
+                        "alias":  null,
+                        "name":  "beretMixReal_v100_Q8.gguf",
+                        "source_key":  "7_beretMixReal_v100_Q8",
+                        "display_name":  "beretMixReal v100",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v100_Q8.gguf",
+                        "asset_group_key":  "illustrious.beretmix10",
+                        "thumbnail_key":  "illustrious.beretmix10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100/beretMixReal_v100_Q8.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.clip.sdxl.illustrious.beretmixreal_v100_clips.8_beretmixreal_v100_clips",
+                        "alias":  null,
+                        "name":  "beretMixReal_v100_clips.safetensors",
+                        "source_key":  "8_beretMixReal_v100_clips",
+                        "display_name":  "beretMixReal v100",
+                        "model_type":  "clip",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "clip",
+                        "relative_path":  "illustrious/beretMixReal_v100_clips.safetensors",
+                        "asset_group_key":  "illustrious.beretmix10",
+                        "thumbnail_key":  "illustrious.beretmix10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v100/beretMixReal_v100_clips.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v80_q4_k_m.9_beretmixreal_v80_q4_k_m",
+                        "alias":  null,
+                        "name":  "beretMixReal_v80_Q4_K_M.gguf",
+                        "source_key":  "9_beretMixReal_v80_Q4_K_M",
+                        "display_name":  "beretMixReal v80",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v80_Q4_K_M.gguf",
+                        "asset_group_key":  "illustrious.beretmix8",
+                        "thumbnail_key":  "illustrious.beretmix8",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80/beretMixReal_v80_Q4_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v80_q5_k_m.10_beretmixreal_v80_q5_k_m",
+                        "alias":  null,
+                        "name":  "beretMixReal_v80_Q5_K_M.gguf",
+                        "source_key":  "10_beretMixReal_v80_Q5_K_M",
+                        "display_name":  "beretMixReal v80",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v80_Q5_K_M.gguf",
+                        "asset_group_key":  "illustrious.beretmix8",
+                        "thumbnail_key":  "illustrious.beretmix8",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80/beretMixReal_v80_Q5_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.beretmixreal_v80_q8.11_beretmixreal_v80_q8",
+                        "alias":  null,
+                        "name":  "beretMixReal_v80_Q8.gguf",
+                        "source_key":  "11_beretMixReal_v80_Q8",
+                        "display_name":  "beretMixReal v80",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/beretMixReal_v80_Q8.gguf",
+                        "asset_group_key":  "illustrious.beretmix8",
+                        "thumbnail_key":  "illustrious.beretmix8",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80/beretMixReal_v80_Q8.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.clip.sdxl.illustrious.beretmixreal_v80_clips.12_beretmixreal_v80_clips",
+                        "alias":  null,
+                        "name":  "beretMixReal_v80_clips.safetensors",
+                        "source_key":  "12_beretMixReal_v80_clips",
+                        "display_name":  "beretMixReal v80",
+                        "model_type":  "clip",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "clip",
+                        "relative_path":  "illustrious/beretMixReal_v80_clips.safetensors",
+                        "asset_group_key":  "illustrious.beretmix8",
+                        "thumbnail_key":  "illustrious.beretmix8",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/beretMixReal_v80/beretMixReal_v80_clips.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.cyberrealistic_illustsemirealv15_q4_k_m.13_cyberrealistic_illustsemirealv15_q4_k_m",
+                        "alias":  null,
+                        "name":  "cyberrealistic_illustSemiRealV15_Q4_K_M.gguf",
+                        "source_key":  "13_cyberrealistic_illustSemiRealV15_Q4_K_M",
+                        "display_name":  "cyberrealistic illustSemiRealV15",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/cyberrealistic_illustSemiRealV15_Q4_K_M.gguf",
+                        "asset_group_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15/cyberrealistic_illustSemiRealV15_Q4_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.cyberrealistic_illustsemirealv15_q5_k_m.14_cyberrealistic_illustsemirealv15_q5_k_m",
+                        "alias":  null,
+                        "name":  "cyberrealistic_illustSemiRealV15_Q5_K_M.gguf",
+                        "source_key":  "14_cyberrealistic_illustSemiRealV15_Q5_K_M",
+                        "display_name":  "cyberrealistic illustSemiRealV15",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/cyberrealistic_illustSemiRealV15_Q5_K_M.gguf",
+                        "asset_group_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15/cyberrealistic_illustSemiRealV15_Q5_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.cyberrealistic_illustsemirealv15_q8.15_cyberrealistic_illustsemirealv15_q8",
+                        "alias":  null,
+                        "name":  "cyberrealistic_illustSemiRealV15_Q8.gguf",
+                        "source_key":  "15_cyberrealistic_illustSemiRealV15_Q8",
+                        "display_name":  "cyberrealistic illustSemiRealV15",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/cyberrealistic_illustSemiRealV15_Q8.gguf",
+                        "asset_group_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15/cyberrealistic_illustSemiRealV15_Q8.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.clip.sdxl.illustrious.cyberrealistic_illustsemirealv15_clips.16_cyberrealistic_illustsemirealv15_clips",
+                        "alias":  null,
+                        "name":  "cyberrealistic_illustSemiRealV15_clips.safetensors",
+                        "source_key":  "16_cyberrealistic_illustSemiRealV15_clips",
+                        "display_name":  "cyberrealistic illustSemiRealV15",
+                        "model_type":  "clip",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "clip",
+                        "relative_path":  "illustrious/cyberrealistic_illustSemiRealV15_clips.safetensors",
+                        "asset_group_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_key":  "illustrious.cyberrealistic_semirealv15",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/cyberrealistic_illustSemiRealV15/cyberrealistic_illustSemiRealV15_clips.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.dutch_v30_q4_k_m.17_dutch_v30_q4_k_m",
+                        "alias":  null,
+                        "name":  "dutch_v30_Q4_K_M.gguf",
+                        "source_key":  "17_dutch_v30_Q4_K_M",
+                        "display_name":  "dutch v30",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/dutch_v30_Q4_K_M.gguf",
+                        "asset_group_key":  "illustrious.dutch_v30",
+                        "thumbnail_key":  "illustrious.dutch_v30",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30/dutch_v30_Q4_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.dutch_v30_q5_k_m.18_dutch_v30_q5_k_m",
+                        "alias":  null,
+                        "name":  "dutch_v30_Q5_K_M.gguf",
+                        "source_key":  "18_dutch_v30_Q5_K_M",
+                        "display_name":  "dutch v30",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/dutch_v30_Q5_K_M.gguf",
+                        "asset_group_key":  "illustrious.dutch_v30",
+                        "thumbnail_key":  "illustrious.dutch_v30",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30/dutch_v30_Q5_K_M.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.unet.sdxl.illustrious.dutch_v30_q8.19_dutch_v30_q8",
+                        "alias":  null,
+                        "name":  "dutch_v30_Q8.gguf",
+                        "source_key":  "19_dutch_v30_Q8",
+                        "display_name":  "dutch v30",
+                        "model_type":  "unet",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "unet",
+                        "relative_path":  "illustrious/dutch_v30_Q8.gguf",
+                        "asset_group_key":  "illustrious.dutch_v30",
+                        "thumbnail_key":  "illustrious.dutch_v30",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30/dutch_v30_Q8.gguf",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.clip.sdxl.illustrious.dutch_v30_clips.20_dutch_v30_clips",
+                        "alias":  null,
+                        "name":  "dutch_v30_clips.safetensors",
+                        "source_key":  "20_dutch_v30_clips",
+                        "display_name":  "dutch v30",
+                        "model_type":  "clip",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "clip",
+                        "relative_path":  "illustrious/dutch_v30_clips.safetensors",
+                        "asset_group_key":  "illustrious.dutch_v30",
+                        "thumbnail_key":  "illustrious.dutch_v30",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/GGUF/Illustrious/dutch_v30/dutch_v30_clips.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.lora.sdxl.xl.futuristic_princesses_sdxl_000001.21_futuristic_princesses_sdxl_000001",
+                        "alias":  null,
+                        "name":  "Futuristic_princesses_SDXL-000001.safetensors",
+                        "source_key":  "21_Futuristic_princesses_SDXL-000001",
+                        "display_name":  "Futuristic princesses SDXL-000001",
+                        "model_type":  "lora",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "loras",
+                        "relative_path":  "sdxl/Futuristic_princesses_SDXL-000001.safetensors",
+                        "asset_group_key":  "xl.futuristic_princesses_sdxl_000001",
+                        "thumbnail_key":  "xl.futuristic_princesses_sdxl_000001",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras/Futuristic_princesses_SDXL-000001.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.lora.sdxl.xl.small_body_and_tits.22_small_body_and_tits",
+                        "alias":  null,
+                        "name":  "Small_body_and_tits.safetensors",
+                        "source_key":  "22_Small_body_and_tits",
+                        "display_name":  "Small body and tits",
+                        "model_type":  "lora",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "loras",
+                        "relative_path":  "sdxl/Small_body_and_tits.safetensors",
+                        "asset_group_key":  "xl.small_body_and_tits",
+                        "thumbnail_key":  "xl.small_body_and_tits",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras/Small_body_and_tits.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.vae.sdxl.xl.sdxl_vae.23_sdxl_vae",
+                        "alias":  null,
+                        "name":  "sdxl_vae.safetensors",
+                        "source_key":  "23_sdxl_vae",
+                        "display_name":  "sdxl vae",
+                        "model_type":  "vae",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "vae",
+                        "relative_path":  "sdxl/sdxl_vae.safetensors",
+                        "asset_group_key":  "xl.sdxl_vae",
+                        "thumbnail_key":  "xl.sdxl_vae",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/stabilityai/sdxl-vae/resolve/main",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "persistent",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.vae.sdxl.xl.fixfp16errorssdxllowermemoryuse_v10.24_fixfp16errorssdxl",
+                        "alias":  null,
+                        "name":  "fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                        "source_key":  "24_fixFP16ErrorsSDXL",
+                        "display_name":  "fixFP16ErrorsSDXLLowerMemoryUse v10",
+                        "model_type":  "vae",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "vae",
+                        "relative_path":  "sdxl/fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                        "asset_group_key":  "xl.fixfp16errorssdxllowermemoryuse_v10",
+                        "thumbnail_key":  "xl.fixfp16errorssdxllowermemoryuse_v10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "persistent",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae/fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.vae.sdxl.xl.fixfp16errorssdxllowermemoryuse_v10.25_fixfp16errorssdxl",
+                        "alias":  null,
+                        "name":  "fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                        "source_key":  "25_fixFP16ErrorsSDXL",
+                        "display_name":  "fixFP16ErrorsSDXLLowerMemoryUse v10",
+                        "model_type":  "vae",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "vae",
+                        "relative_path":  "sdxl/fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                        "asset_group_key":  "xl.fixfp16errorssdxllowermemoryuse_v10",
+                        "thumbnail_key":  "xl.fixfp16errorssdxllowermemoryuse_v10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "persistent",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae/fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.vae.unknown.general.vae_ft_mse_840000_ema_pruned.26_vae_ft_mse_840000_ema",
+                        "alias":  null,
+                        "name":  "vae-ft-mse-840000-ema-pruned.safetensors",
+                        "source_key":  "26_vae-ft-mse-840000-ema",
+                        "display_name":  "vae-ft-mse-840000-ema-pruned",
+                        "model_type":  "vae",
+                        "architecture":  "unknown",
+                        "sub_architecture":  "general",
+                        "root_key":  "vae",
+                        "relative_path":  "sd15/vae-ft-mse-840000-ema-pruned.safetensors",
+                        "asset_group_key":  "general.vae_ft_mse_840000_ema_pruned",
+                        "thumbnail_key":  "general.vae_ft_mse_840000_ema_pruned",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "persistent",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae/vae-ft-mse-840000-ema-pruned.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.vae.unknown.general.klf8anime2vae.27_klf8anime2vae",
+                        "alias":  null,
+                        "name":  "klF8Anime2VAE.safetensors",
+                        "source_key":  "27_klF8Anime2VAE",
+                        "display_name":  "klF8Anime2VAE",
+                        "model_type":  "vae",
+                        "architecture":  "unknown",
+                        "sub_architecture":  "general",
+                        "root_key":  "vae",
+                        "relative_path":  "sd15/klF8Anime2VAE.safetensors",
+                        "asset_group_key":  "general.klf8anime2vae",
+                        "thumbnail_key":  "general.klf8anime2vae",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "persistent",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/vae/klF8Anime2VAE.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    },
+                    {
+                        "id":  "huggingface.checkpoint.sdxl.xl.innovision_v10.28_innovision_v10",
+                        "alias":  null,
+                        "name":  "innovision_v10.safetensors",
+                        "source_key":  "28_innovision_v10",
+                        "display_name":  "innovision v10",
+                        "model_type":  "checkpoint",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "xl",
+                        "root_key":  "checkpoints",
+                        "relative_path":  "sdxl/innovision_v10.safetensors",
+                        "asset_group_key":  "xl.innovision_v10",
+                        "thumbnail_key":  "xl.innovision_v10",
+                        "thumbnail_library_relative":  "thumbnails/checkpoints/sdxl/0001_default.jpg",
+                        "source_provider":  "huggingface",
+                        "source_model_id":  null,
+                        "source_version_id":  null,
+                        "source_repo":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sdxl",
+                        "catalog_source":  "model_configs_hug.json",
+                        "storage_tier":  "session",
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "sources":  [
+                                        {
+                                            "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sdxl/innovision_v10.safetensors",
+                                            "kind":  "huggingface"
+                                        }
+                                    ]
+                    }
+                ]
+}

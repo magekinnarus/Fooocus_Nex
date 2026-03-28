@@ -1,10 +1,10 @@
-﻿{
-  "schema_version": "m06-draft-1",
-  "catalog_id": "example.multi_source.template",
-  "catalog_label": "Example Model Catalog",
+{
+  "schema_version": "m06-runtime-seed-1",
+  "catalog_id": "m06.runtime.seed",
+  "catalog_label": "M06 Runtime Seed",
   "entries": [
     {
-      "id": "example.checkpoint.sdxl.base.stoiqo",
+      "id": "seed.checkpoint.sdxl.base.stoiqo",
       "alias": "stoiqo",
       "name": "stoiqoNewreality.safetensors",
       "source_file_name": "SDXL_stoiqoNewreality.safetensors",
@@ -36,7 +36,7 @@
       ]
     },
     {
-      "id": "example.unet.sdxl.noob.homoveritas_q4",
+      "id": "seed.unet.sdxl.noob.homoveritas_q4",
       "name": "homoveritasXL_v20NAIXLEPS_Q4_K_M.gguf",
       "source_key": "1_homoveritasXL_v20NAIXLEPS_Q4_K_M",
       "display_name": "homoveritasXL v20NAIXLEPS",
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "id": "example.performance.lcm",
+      "id": "seed.performance.lcm",
       "alias": "lcm_step",
       "name": "sdxl_lcm_lora.safetensors",
       "display_name": "sdxl_lcm_lora",

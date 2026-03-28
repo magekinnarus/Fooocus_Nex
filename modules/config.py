@@ -7,6 +7,8 @@ import args_manager
 import tempfile
 import modules.flags
 import modules.sdxl_styles
+import modules.model_taxonomy
+import modules.model_catalog_index
 
 from modules.model_loader import load_file_from_url
 from modules.extra_utils import makedirs_with_log, get_files_from_folder, try_eval_env_var
@@ -46,6 +48,135 @@ def try_load_json_file(path):
 
 runtime_defaults = try_load_json_file(os.path.abspath('./configs/defaults/runtime_default.json'))
 resolution_set_sdxl = try_load_json_file(os.path.abspath('./configs/resolution_sets/sdxl.json'))
+resolution_set_sd15 = try_load_json_file(os.path.abspath('./configs/resolution_sets/sd15.json'))
+resolution_sets = {
+    'sdxl': resolution_set_sdxl,
+    'sd15': resolution_set_sd15,
+}
+
+
+def get_resolution_set_config(resolution_set_id):
+    normalized_id = modules.model_taxonomy.normalize_resolution_set_id(resolution_set_id)
+    return resolution_sets.get(normalized_id, {})
+
+
+def get_available_aspect_ratios_for_architecture(architecture=None, sub_architecture=None):
+    resolution_set_id = modules.model_taxonomy.resolve_resolution_set_id(architecture, sub_architecture)
+    resolution_set = get_resolution_set_config(resolution_set_id)
+    if resolution_set_id == modules.model_taxonomy.ARCHITECTURE_SD15:
+        fallback = modules.flags.sd15_aspect_ratios
+    else:
+        fallback = modules.flags.sdxl_aspect_ratios
+    return resolution_set.get('available_aspect_ratios', fallback)
+
+
+def get_default_aspect_ratio_for_architecture(architecture=None, sub_architecture=None):
+    available_ratios = get_available_aspect_ratios_for_architecture(architecture, sub_architecture)
+    preferred_ratio = modules.model_taxonomy.get_preferred_aspect_ratio(architecture, sub_architecture)
+    if preferred_ratio in available_ratios:
+        return preferred_ratio
+    return available_ratios[0]
+
+def _normalize_model_selector(value):
+    if value is None:
+        return None
+    normalized = str(value).replace('\\', '/').strip()
+    return normalized or None
+
+
+def _build_model_selector_candidates(name_or_path, folder_paths):
+    candidates = []
+
+    def add_candidate(candidate):
+        normalized = _normalize_model_selector(candidate)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    add_candidate(name_or_path)
+    if name_or_path is None:
+        return candidates
+
+    value = str(name_or_path)
+    add_candidate(os.path.basename(value))
+
+    if os.path.isabs(value):
+        for folder in folder_paths:
+            try:
+                relative_path = os.path.relpath(value, folder)
+            except ValueError:
+                continue
+            if relative_path.startswith('..'):
+                continue
+            add_candidate(relative_path)
+
+    return candidates
+
+
+def resolve_model_catalog_entry(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    if folder_paths is None:
+        folder_paths = paths_checkpoints
+
+    index = modules.model_catalog_index.load_runtime_model_catalog_index(get_model_catalog_directories())
+    candidates = _build_model_selector_candidates(name_or_path, folder_paths)
+
+    for candidate in candidates:
+        record = index.find_by_relative_path(candidate, root_keys=root_keys)
+        if record is not None:
+            return record.entry
+
+    for candidate in candidates:
+        record = index.find_by_name(candidate, root_keys=root_keys)
+        if record is not None:
+            return record.entry
+
+    for candidate in candidates:
+        entry = index.get(candidate)
+        if entry is not None and (root_keys is None or entry.root_key in set(root_keys)):
+            return entry
+
+    return None
+
+
+def resolve_model_taxonomy(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    entry = resolve_model_catalog_entry(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
+    if entry is not None:
+        return modules.model_taxonomy.build_resolved_model_taxonomy(
+            architecture=entry.architecture,
+            sub_architecture=entry.sub_architecture,
+            compatibility_family=entry.compatibility_family,
+            source='catalog',
+            catalog_entry_id=entry.id,
+        )
+
+    architecture, sub_architecture = modules.model_taxonomy.infer_model_taxonomy_from_filename(name_or_path)
+    if architecture is not None:
+        return modules.model_taxonomy.build_resolved_model_taxonomy(
+            architecture=architecture,
+            sub_architecture=sub_architecture,
+            source='filename',
+        )
+
+    return modules.model_taxonomy.build_resolved_model_taxonomy(source='default')
+
+
+def get_aspect_ratios_for_model(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    taxonomy = resolve_model_taxonomy(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
+    return get_available_aspect_ratios_for_architecture(taxonomy.architecture, taxonomy.sub_architecture)
+
+
+def get_aspect_ratio_labels_for_model(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    taxonomy = resolve_model_taxonomy(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
+    return get_available_aspect_ratio_labels_for_architecture(taxonomy.architecture, taxonomy.sub_architecture)
+
+
+def get_default_aspect_ratio_for_model(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    taxonomy = resolve_model_taxonomy(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
+    return get_default_aspect_ratio_for_architecture(taxonomy.architecture, taxonomy.sub_architecture)
+
+
+def get_default_aspect_ratio_label_for_model(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
+    return add_ratio(get_default_aspect_ratio_for_model(name_or_path, root_keys=root_keys, folder_paths=folder_paths))
+
 
 config_dict.update(runtime_defaults)
 
@@ -259,6 +390,20 @@ path_outputs = get_path_output()
 path_temp_outputs = os.path.join(path_outputs, 'temp')
 os.makedirs(path_temp_outputs, exist_ok=True)
 path_download_manifests = get_dir_or_set_default('path_download_manifests', '../configs/download_manifests/')
+path_model_catalogs_preset = get_dir_or_set_default('path_model_catalogs_preset', '../configs/model_catalogs/', make_directory=True)
+path_model_catalogs_user = get_dir_or_set_default('path_model_catalogs_user', '../configs/model_catalogs/user/', make_directory=True)
+
+
+def get_model_catalog_directories():
+    directories = []
+    for path in [path_model_catalogs_preset, path_model_catalogs_user]:
+        if path and path not in directories:
+            directories.append(path)
+    return directories
+
+
+def get_writable_model_catalog_directory():
+    return path_model_catalogs_user
 
 asset_root_paths = {
     'checkpoints': paths_checkpoints[0],
@@ -364,10 +509,12 @@ default_base_model_name = default_model = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, str),
     expected_type=str
 )
+default_model_taxonomy = resolve_model_taxonomy(default_base_model_name)
 
 if getattr(args_manager.args, 'skip_model_load', False):
     print("Skipping model load: Forcing Selected_model to None")
     default_base_model_name = default_model = 'None'
+    default_model_taxonomy = resolve_model_taxonomy(default_base_model_name)
 default_loras_min_weight = get_config_item_or_set_default(
     key='default_loras_min_weight',
     default_value=runtime_defaults.get('default_loras_min_weight', -2),
@@ -564,13 +711,19 @@ upscale_downloads = get_config_item_or_set_default(
 )
 available_aspect_ratios = get_config_item_or_set_default(
     key='available_aspect_ratios',
-    default_value=resolution_set_sdxl.get('available_aspect_ratios', modules.flags.sdxl_aspect_ratios),
+    default_value=get_available_aspect_ratios_for_architecture(
+        default_model_taxonomy.architecture,
+        default_model_taxonomy.sub_architecture,
+    ),
     validator=lambda x: isinstance(x, list) and all('*' in v for v in x) and len(x) > 1,
     expected_type=list
 )
 default_aspect_ratio = get_config_item_or_set_default(
     key='default_aspect_ratio',
-    default_value='1152*896' if '1152*896' in available_aspect_ratios else available_aspect_ratios[0],
+    default_value=get_default_aspect_ratio_for_architecture(
+        default_model_taxonomy.architecture,
+        default_model_taxonomy.sub_architecture,
+    ),
     validator=lambda x: x in available_aspect_ratios,
     expected_type=str
 )
@@ -785,6 +938,14 @@ def add_ratio(x):
     a, b = int(a), int(b)
     g = math.gcd(a, b)
     return f'{a}x{b} ({a // g}:{b // g})'
+
+
+def get_available_aspect_ratio_labels_for_architecture(architecture=None, sub_architecture=None):
+    return [add_ratio(x) for x in get_available_aspect_ratios_for_architecture(architecture, sub_architecture)]
+
+
+def get_default_aspect_ratio_label_for_architecture(architecture=None, sub_architecture=None):
+    return add_ratio(get_default_aspect_ratio_for_architecture(architecture, sub_architecture))
 
 
 default_aspect_ratio = add_ratio(default_aspect_ratio)
