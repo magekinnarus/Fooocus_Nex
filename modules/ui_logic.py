@@ -28,6 +28,7 @@ import modules.ui_components.outpaint_panel as outpaint_panel
 import args_manager
 import copy
 from modules.setup_utils import download_models
+from modules.model_manager import default_model_manager
 
 from modules.sdxl_styles import legal_style_names
 from modules.private_logger import get_current_html_path
@@ -354,6 +355,54 @@ def update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio)
     return gr.update(choices=labels, value=value)
 
 
+def get_filtered_lora_choices_for_model(base_model_name):
+    try:
+        choices = default_model_manager.list_installed_lora_dropdown_choices(base_model_name=base_model_name)
+    except Exception as exc:
+        print(f'Failed to build filtered LoRA choices for {base_model_name}: {exc}')
+        choices = modules.config.lora_filenames
+    return ['None'] + choices
+
+
+def update_model_dependent_choices(base_model_name, current_aspect_ratio, *current_lora_models):
+    aspect_ratio_update = update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio)
+    lora_choices = get_filtered_lora_choices_for_model(base_model_name)
+    lora_updates = []
+    for current_lora_model in current_lora_models:
+        value = current_lora_model if current_lora_model in lora_choices else 'None'
+        lora_updates.append(gr.update(choices=lora_choices, value=value))
+    return [aspect_ratio_update] + lora_updates
+
+
+def refresh_files_clicked(current_base_model, current_aspect_ratio, *current_lora_models):
+    modules.config.update_files()
+    try:
+        default_model_manager.refresh_installed_index()
+    except Exception as exc:
+        print(f'Failed to refresh installed model index: {exc}')
+
+    base_model_choices = modules.config.model_filenames
+    base_model_value = current_base_model if current_base_model in base_model_choices else modules.config.default_base_model_name
+    if base_model_choices and base_model_value not in base_model_choices:
+        base_model_value = base_model_choices[0]
+
+    aspect_ratio_update, *lora_model_updates = update_model_dependent_choices(
+        base_model_value,
+        current_aspect_ratio,
+        *current_lora_models,
+    )
+
+    results = [gr.update(choices=base_model_choices, value=base_model_value)]
+    results += [aspect_ratio_update]
+    results += [gr.update(choices=[modules.flags.default_vae] + modules.config.vae_filenames)]
+    results += [gr.update(choices=['None'] + modules.config.clip_filenames)]
+    if not args_manager.args.disable_preset_selection:
+        results += [gr.update(choices=modules.config.available_presets)]
+    for lora_model_update in lora_model_updates:
+        results += [gr.update(interactive=True), lora_model_update, gr.update()]
+    return results
+
+
 def update_style_label(selections):
     if not selections or len(selections) == 0:
         return gr.update(label='Prompt Presets')
@@ -364,18 +413,6 @@ def update_style_label(selections):
         label += f" ... (+{len(selections) - 2} more)"
     
     return gr.update(label=label)
-
-def refresh_files_clicked():
-    modules.config.update_files()
-    results = [gr.update(choices=modules.config.model_filenames)]
-    results += [gr.update(choices=[modules.flags.default_vae] + modules.config.vae_filenames)]
-    results += [gr.update(choices=['None'] + modules.config.clip_filenames)]
-    if not args_manager.args.disable_preset_selection:
-        results += [gr.update(choices=modules.config.available_presets)]
-    for i in range(modules.config.default_max_lora_number):
-        results += [gr.update(interactive=True),
-                    gr.update(choices=['None'] + modules.config.lora_filenames), gr.update()]
-    return results
 
 def preset_selection_change(preset, is_generating):
     preset_content = modules.config.try_get_preset_content(preset) if preset != 'initial' else {}
@@ -512,7 +549,12 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     shared.gradio_root.load(refresh_upscale_models, outputs=upscale_model, queue=False, show_progress=False)
 
-    base_model.change(update_aspect_ratio_choices_for_model, inputs=[base_model, aspect_ratios_selection], outputs=[aspect_ratios_selection], queue=False, show_progress=False)
+    lora_model_ctrls = [lora_ctrls[i * 3 + 1] for i in range(modules.config.default_max_lora_number)]
+    model_choice_inputs = [base_model, aspect_ratios_selection] + lora_model_ctrls
+    model_choice_outputs = [aspect_ratios_selection] + lora_model_ctrls
+
+    base_model.change(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
+    shared.gradio_root.load(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
 
@@ -540,14 +582,15 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
                             show_progress=False).then(
         lambda: None, js='()=>{refresh_style_localization();}')
 
-    refresh_files_output = [base_model, vae_model, clip_model]
+    refresh_files_output = [base_model, aspect_ratios_selection, vae_model, clip_model]
     if not args_manager.args.disable_preset_selection:
         refresh_files_output += [preset_selection]
-    refresh_files.click(refresh_files_clicked, [], refresh_files_output + lora_ctrls,
+    refresh_files.click(refresh_files_clicked, [base_model, aspect_ratios_selection] + lora_model_ctrls, refresh_files_output + lora_ctrls,
                         queue=False, show_progress=False)
 
     if not args_manager.args.disable_preset_selection:
         preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
+            .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
             .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
             .then(lambda: None, js='()=>{refresh_style_localization();}')
 
@@ -564,9 +607,11 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     prompt.input(parse_meta, inputs=[prompt, state_is_generating], outputs=[prompt, generate_button, load_parameter_button], queue=False, show_progress=False)
 
-    load_parameter_button.click(metadata_ui.load_parameter_button_click, inputs=[prompt, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=False)
+    load_parameter_button.click(metadata_ui.load_parameter_button_click, inputs=[prompt, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=False) \
+        .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
 
     metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image_path, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
+        .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
         .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
 
     import modules.mask_processing as mask_proc

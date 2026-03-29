@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
@@ -36,7 +36,7 @@ class CivitAIResolver(DownloadResolver):
         source = _first_source(entry)
         token = os.getenv(self.token_env, '')
         resolved_url = source.url
-        if token and 'civitai.com/api/download/models/' not in resolved_url:
+        if entry.token_required and token:
             resolved_url = f'{resolved_url}{"&" if "?" in resolved_url else "?"}token={token}'
 
         destination_root = policy.resolve_root_path(entry)
@@ -78,3 +78,4 @@ def _first_source(entry: ModelCatalogEntry) -> ModelSource:
     if not entry.sources:
         raise ValueError(f'Catalog entry {entry.id} does not define any sources')
     return entry.sources[0]
+

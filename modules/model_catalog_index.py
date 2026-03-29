@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -9,6 +10,7 @@ from modules.model_download.catalog import ModelCatalog
 from modules.model_download.spec import ModelCatalogEntry
 
 ACTIVE_CATALOG_SUFFIX = '.catalog.json'
+_RUNTIME_CATALOG_INDEX_CACHE: dict[tuple[str, ...], tuple[tuple[tuple[str, int, int], ...], 'ModelCatalogIndex']] = {}
 
 
 def _normalize_selector(value: str | Path | None) -> str | None:
@@ -16,6 +18,24 @@ def _normalize_selector(value: str | Path | None) -> str | None:
         return None
     normalized = str(value).replace('\\', '/').strip()
     return normalized or None
+
+
+def _normalize_catalog_directories(directories: Iterable[str | Path]) -> tuple[str, ...]:
+    return tuple(str(Path(directory).resolve()) for directory in directories)
+
+
+def _build_catalog_snapshot(directories: Iterable[str | Path], pattern: str = f'*{ACTIVE_CATALOG_SUFFIX}') -> tuple[tuple[str, int, int], ...]:
+    snapshot: list[tuple[str, int, int]] = []
+    for path in iter_catalog_files(directories, pattern=pattern):
+        stat = path.stat()
+        snapshot.append((str(path.resolve()), stat.st_mtime_ns, stat.st_size))
+    return tuple(snapshot)
+
+
+def _build_qualified_alias(alias: str, catalog_id: str | None) -> str | None:
+    if not alias or not catalog_id:
+        return None
+    return f'{catalog_id}:{alias}'
 
 
 @dataclass(frozen=True)
@@ -39,6 +59,8 @@ class ModelCatalogIndex:
         self._records: list[CatalogIndexRecord] = []
         self._records_by_id: dict[str, CatalogIndexRecord] = {}
         self._records_by_alias: dict[str, CatalogIndexRecord] = {}
+        self._ambiguous_aliases: dict[str, list[CatalogIndexRecord]] = {}
+        self._records_by_qualified_alias: dict[str, CatalogIndexRecord] = {}
         self._records_by_relative_path: dict[str, list[CatalogIndexRecord]] = {}
         self._records_by_name: dict[str, list[CatalogIndexRecord]] = {}
         self._sources: list[CatalogSourceRecord] = list(sources)
@@ -54,8 +76,26 @@ class ModelCatalogIndex:
             )
         self._records.append(record)
         self._records_by_id[entry.id] = record
-        if entry.alias and entry.alias not in self._records_by_alias:
-            self._records_by_alias[entry.alias] = record
+
+        qualified_alias = _build_qualified_alias(entry.alias, record.catalog_id)
+        if qualified_alias is not None:
+            existing = self._records_by_qualified_alias.get(qualified_alias)
+            if existing is not None:
+                raise ValueError(
+                    f'Duplicate qualified catalog alias: {qualified_alias} ({existing.source_path} vs {record.source_path})'
+                )
+            self._records_by_qualified_alias[qualified_alias] = record
+
+        if entry.alias:
+            existing_alias = self._records_by_alias.get(entry.alias)
+            if existing_alias is None and entry.alias not in self._ambiguous_aliases:
+                self._records_by_alias[entry.alias] = record
+            else:
+                collisions = self._ambiguous_aliases.setdefault(entry.alias, [])
+                if existing_alias is not None:
+                    collisions.append(existing_alias)
+                    del self._records_by_alias[entry.alias]
+                collisions.append(record)
 
         normalized_relative_path = _normalize_selector(entry.relative_path)
         if normalized_relative_path:
@@ -70,7 +110,15 @@ class ModelCatalogIndex:
         return None if record is None else record.entry
 
     def get_record(self, selector: str) -> CatalogIndexRecord | None:
-        return self._records_by_id.get(selector) or self._records_by_alias.get(selector)
+        record = self._records_by_id.get(selector) or self._records_by_qualified_alias.get(selector)
+        if record is not None:
+            return record
+        if selector in self._ambiguous_aliases:
+            collisions = ', '.join(sorted(record.source_path for record in self._ambiguous_aliases[selector]))
+            raise ValueError(
+                f'Ambiguous catalog alias: {selector} ({collisions}). Use a qualified alias like <catalog_id>:{selector}.'
+            )
+        return self._records_by_alias.get(selector)
 
     def find_by_relative_path(self, relative_path: str | Path, root_keys: Iterable[str] | None = None) -> CatalogIndexRecord | None:
         normalized_path = _normalize_selector(relative_path)
@@ -184,12 +232,27 @@ def is_runtime_catalog_file(path: str | Path) -> bool:
 
 
 
-def load_runtime_model_catalog_index(catalog_dirs: Iterable[str | Path] | None = None) -> ModelCatalogIndex:
+def clear_runtime_model_catalog_index_cache() -> None:
+    _RUNTIME_CATALOG_INDEX_CACHE.clear()
+
+
+
+def load_runtime_model_catalog_index(catalog_dirs: Iterable[str | Path] | None = None, *, force_refresh: bool = False) -> ModelCatalogIndex:
     if catalog_dirs is None:
         import modules.config as config
 
         catalog_dirs = config.get_model_catalog_directories()
-    return ModelCatalogIndex.from_directories(catalog_dirs)
+    normalized_dirs = _normalize_catalog_directories(catalog_dirs)
+    snapshot = _build_catalog_snapshot(normalized_dirs)
+    cached = None if force_refresh else _RUNTIME_CATALOG_INDEX_CACHE.get(normalized_dirs)
+    if cached is not None:
+        cached_snapshot, cached_index = cached
+        if cached_snapshot == snapshot:
+            return cached_index
+    index = ModelCatalogIndex.from_directories(normalized_dirs)
+    _RUNTIME_CATALOG_INDEX_CACHE[normalized_dirs] = (snapshot, index)
+    return index
+
 
 
 def _first_filtered_record(records: Iterable[CatalogIndexRecord], root_keys: Iterable[str] | None = None) -> CatalogIndexRecord | None:

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import gradio as gr
 from pathlib import Path
 import modules.config
@@ -58,12 +58,14 @@ def get_steps(key: str, fallback: str | None, source_dict: dict, results: list, 
     except:
         results.append(-1)
 
-def get_resolution(key: str, fallback: str | None, source_dict: dict, results: list, default=None):
+def get_resolution(key: str, fallback: str | None, source_dict: dict, results: list, default=None, valid_labels=None):
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
         width, height = eval(h)
         formatted = modules.config.add_ratio(f'{width}*{height}')
-        if formatted in modules.config.available_aspect_ratios_labels:
+        if valid_labels is None:
+            valid_labels = modules.config.available_aspect_ratios_labels
+        if formatted in valid_labels:
             results.append(formatted)
             results.append(-1)
             results.append(-1)
@@ -165,13 +167,15 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     assert isinstance(loaded_parameter_dict, dict)
 
     results = []
+    base_model_name = loaded_parameter_dict.get('base_model', loaded_parameter_dict.get('Base Model', modules.config.default_base_model_name))
+    resolution_labels = modules.config.get_aspect_ratio_labels_for_model(base_model_name)
 
     get_image_number('image_number', 'Image Number', loaded_parameter_dict, results)
     get_str('prompt', 'Prompt', loaded_parameter_dict, results)
     get_str('negative_prompt', 'Negative Prompt', loaded_parameter_dict, results)
     get_list('styles', 'Styles', loaded_parameter_dict, results)
     get_steps('steps', 'Steps', loaded_parameter_dict, results)
-    get_resolution('resolution', 'Resolution', loaded_parameter_dict, results)
+    get_resolution('resolution', 'Resolution', loaded_parameter_dict, results, valid_labels=resolution_labels)
     get_number('guidance_scale', 'Guidance Scale', loaded_parameter_dict, results)
     get_number('sharpness', 'Sharpness', loaded_parameter_dict, results)
     get_adm_guidance('adm_guidance', 'ADM Guidance', loaded_parameter_dict, results)

@@ -1,4 +1,4 @@
-﻿# Model Catalogs
+# Model Catalogs
 
 This folder holds normalized model-catalog JSON files for M06.
 
@@ -21,31 +21,72 @@ These are draft normalized templates generated from the Director's existing sour
 
 ## Source Catalogs vs Runtime Catalogs
 
-Source catalogs may differ by provider and should be treated as import sources:
+Every catalog should declare its upstream provider when it is created.
+
+For M06, the provider layer is currently:
 - CivitAI catalogs
 - HuggingFace catalogs
-- private catalogs
-- personal catalogs
+
+Private or personal catalogs are still expected to fall under one of those providers. In other words:
+- `private` / `personal` describe ownership and maintenance
+- `source_provider` describes the actual download source and token behavior
+
+Examples:
+- a personal CivitAI catalog should still use `source_provider: "civitai"`
+- a private HuggingFace catalog should still use `source_provider: "huggingface"`
 
 The app should normalize them into one unified runtime index, but users can still maintain them as separate JSON files.
 
-## Recommended SDXL Family Layout
+## Recommended Asset Layout
 
-For clarity, SDXL-family assets should be organized by architecture first, then subtype:
+For clarity, model assets should be organized by model root first, then architecture, then subtype where that subtype is meaningful.
+
+Checkpoint layout:
+- `checkpoints/sd15/base/`
 - `checkpoints/sdxl/base/`
 - `checkpoints/sdxl/pony/`
 - `checkpoints/sdxl/illustrious/`
 - `checkpoints/sdxl/noob/`
+
+GGUF quantized assets are SDXL-only in this project:
+- quantized UNet files go under `unet/`
+- extracted CLIP files go under `clip/`
+- there is no `unet/sd15/base/`
+
+Recommended UNet layout:
 - `unet/sdxl/base/`
 - `unet/sdxl/pony/`
 - `unet/sdxl/illustrious/`
 - `unet/sdxl/noob/`
+
+Recommended CLIP layout:
+- `clip/sdxl/base/`
+- `clip/sdxl/pony/`
+- `clip/sdxl/illustrious/`
+- `clip/sdxl/noob/`
+
+LoRAs follow the same convention as checkpoints and UNet, except there is no Noob LoRA bucket:
+- `loras/sd15/base/`
 - `loras/sdxl/base/`
 - `loras/sdxl/pony/`
 - `loras/sdxl/illustrious/`
-- `loras/sdxl/noob/`
 
-These subfolders are for organization, not hard compatibility walls. By default, SDXL, Pony, Illustrious, and Noob entries should all resolve to the same `compatibility_family: "sdxl"`, especially for LoRA browsing and activation.
+Embeddings are architecture-scoped but do not use Pony / Illustrious / Noob subtype buckets:
+- `embeddings/sd15/`
+- `embeddings/sdxl/`
+
+VAE is also architecture-scoped only:
+- `vae/sd15/`
+- `vae/sdxl/`
+
+For quantized SDXL workflows, the same SDXL VAE family may be shared across multiple models, including fp16 and other variants.
+
+The `loras/sdxl/noob/` example from earlier drafts should be considered obsolete.
+
+These subfolders are for organization, not hard compatibility walls. By default:
+- SDXL, Pony, Illustrious, and Noob checkpoints / UNets / CLIP assets should resolve to `compatibility_family: "sdxl"`
+- Pony and Illustrious LoRAs should still be treated as SDXL-family assets for runtime compatibility
+- SD15 assets should resolve to `compatibility_family: "sd15"`
 
 ## Recommended Multi-Catalog Layout
 
@@ -71,7 +112,7 @@ Do not use filenames alone as the canonical identity.
 Each normalized entry should distinguish between:
 - `id`: unique entry identity
 - `architecture`: broad runtime family such as `sdxl` or `sd15`
-- `sub_architecture`: organization subtype such as `base`, `pony`, `illustrious`, `noob`
+- `sub_architecture`: organization subtype such as `base`, `pony`, `illustrious`, `noob`, or `null` when no subtype split is needed
 - `compatibility_family`: runtime compatibility group, for example all SDXL subtypes map to `sdxl`
 - `asset_group_key`: shared family identity across variants
 - `thumbnail_key`: shared visual identity
@@ -165,3 +206,4 @@ Common fields in the current draft templates include:
 - `modules/model_download/transport.py`
 - `modules/model_download/orchestrator.py`
 - future M06 runtime index / manager modules
+

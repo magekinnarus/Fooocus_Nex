@@ -1,7 +1,8 @@
-import os
+﻿import os
 import time
+import urllib.request
 from urllib.parse import urlparse
-from typing import Optional
+from typing import Iterable, Optional
 
 
 def load_file_from_url(
@@ -12,6 +13,7 @@ def load_file_from_url(
         file_name: Optional[str] = None,
         retries: int = 3,
         retry_delay: float = 2.0,
+        headers: Iterable[tuple[str, str]] = (),
 ) -> str:
     """Download a file from `url` into `model_dir`, using the file present if possible.
 
@@ -26,15 +28,17 @@ def load_file_from_url(
     cached_file = os.path.abspath(os.path.join(model_dir, file_name))
     partial_file = f"{cached_file}.downloading"
     if not os.path.exists(cached_file):
-        from torch.hub import download_url_to_file
-
         last_error = None
         for attempt in range(1, retries + 1):
             try:
                 if os.path.exists(partial_file):
                     os.remove(partial_file)
                 print(f'Downloading: "{url}" to {cached_file} (attempt {attempt}/{retries})\n')
-                download_url_to_file(url, partial_file, progress=progress)
+                if headers:
+                    _download_url_to_file_with_headers(url, partial_file, headers=headers)
+                else:
+                    from torch.hub import download_url_to_file
+                    download_url_to_file(url, partial_file, progress=progress)
                 os.replace(partial_file, cached_file)
                 break
             except Exception as exc:
@@ -48,3 +52,14 @@ def load_file_from_url(
         if not os.path.exists(cached_file) and last_error is not None:
             raise last_error
     return cached_file
+
+
+def _download_url_to_file_with_headers(url: str, destination: str, *, headers: Iterable[tuple[str, str]] = ()) -> None:
+    request_headers = {key: value for key, value in headers}
+    request = urllib.request.Request(url, headers=request_headers)
+    with urllib.request.urlopen(request) as response, open(destination, 'wb') as target:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            target.write(chunk)

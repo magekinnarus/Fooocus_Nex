@@ -143,21 +143,34 @@ def build_resolved_model_taxonomy(
     )
 
 
+def _normalize_path_segments(value):
+    normalized = str(value or '').replace('\\', '/').strip().lower()
+    if not normalized:
+        return [], ''
+    segments = [segment for segment in normalized.split('/') if segment not in {'', '.'}]
+    basename = os.path.basename(normalized)
+    return segments, basename
+
+
 def infer_model_taxonomy_from_filename(filename):
-    basename = os.path.basename(str(filename or '')).lower()
+    segments, basename = _normalize_path_segments(filename)
     if not basename:
         return None, None
 
     sub_architecture = None
-    if basename.startswith('pony_') or basename.startswith('pony-') or 'pony' in basename:
+    if SUB_ARCHITECTURE_PONY in segments or basename.startswith('pony_') or basename.startswith('pony-') or 'pony' in basename:
         sub_architecture = SUB_ARCHITECTURE_PONY
-    elif basename.startswith('il_') or basename.startswith('il-') or 'illustrious' in basename:
+    elif SUB_ARCHITECTURE_ILLUSTRIOUS in segments or basename.startswith('il_') or basename.startswith('il-') or 'illustrious' in basename:
         sub_architecture = SUB_ARCHITECTURE_ILLUSTRIOUS
-    elif basename.startswith('noob_') or basename.startswith('noob-') or 'noob' in basename:
+    elif SUB_ARCHITECTURE_NOOB in segments or basename.startswith('noob_') or basename.startswith('noob-') or 'noob' in basename:
         sub_architecture = SUB_ARCHITECTURE_NOOB
 
     architecture = None
     if basename.endswith('.gguf'):
+        architecture = ARCHITECTURE_SDXL
+    elif ARCHITECTURE_SD15 in segments or 'sd1.5' in segments:
+        architecture = ARCHITECTURE_SD15
+    elif ARCHITECTURE_SDXL in segments or 'xl' in segments:
         architecture = ARCHITECTURE_SDXL
     elif basename.startswith('sd15_') or basename.startswith('sd15-') or 'sd1.5' in basename or 'sd15' in basename:
         architecture = ARCHITECTURE_SD15

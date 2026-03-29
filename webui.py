@@ -1,4 +1,4 @@
-import gradio as gr
+﻿import gradio as gr
 import os
 
 gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
@@ -680,9 +680,11 @@ def patched_create_app(*args, **kwargs):
     from modules.staging_api import staging_router
     from modules.monitor_api import monitor_router
     from modules.image_api import image_router
+    from modules.model_api import model_router
     app.include_router(staging_router)
     app.include_router(monitor_router)
     app.include_router(image_router)
+    app.include_router(model_router)
     return app
 
 gradio.routes.App.create_app = patched_create_app
@@ -701,3 +703,5 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
+
+

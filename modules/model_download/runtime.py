@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import shutil
@@ -44,6 +44,7 @@ def download_file(
         model_dir=model_dir,
         file_name=file_name,
         progress=progress,
+        headers=headers,
     )
 
 
@@ -81,3 +82,4 @@ def _cleanup_partial_download(destination: str) -> None:
                 os.remove(candidate)
         except OSError:
             pass
+
