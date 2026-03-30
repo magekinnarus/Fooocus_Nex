@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "inpaint.flux_fill.unet.q8_0",
+      "kind": "inpaint_model",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "q8_0",
+      "internal_only": true,
+      "loader_type": "flux_fill_unet",
+      "artifact_type": "file",
+      "destination": "unet",
+      "relative_path": "flux_fill/flux1-fill-dev-Q8_0.gguf",
+      "requires": [
+        "inpaint.flux_fill.text_encoder.t5xxl.q8_0",
+        "inpaint.flux_fill.text_encoder.clip_l",
+        "inpaint.flux_fill.ae"
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/YarvixPA/FLUX.1-Fill-dev-GGUF/resolve/main/flux1-fill-dev-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.unet.q4_k_s",
+      "kind": "inpaint_model",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "q4_k_s",
+      "internal_only": true,
+      "loader_type": "flux_fill_unet",
+      "artifact_type": "file",
+      "destination": "unet",
+      "relative_path": "flux_fill/flux1-fill-dev-Q4_K_S.gguf",
+      "requires": [
+        "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m",
+        "inpaint.flux_fill.text_encoder.clip_l",
+        "inpaint.flux_fill.ae"
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/YarvixPA/FLUX.1-Fill-dev-GGUF/resolve/main/flux1-fill-dev-Q4_K_S.gguf"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.text_encoder.t5xxl.q8_0",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "t5xxl_q8_0",
+      "internal_only": true,
+      "loader_type": "flux_fill_t5",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux_fill/t5-v1_1-xxl-encoder-Q8_0.gguf",
+      "sources": [
+        {
+          "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q8_0.gguf"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "t5xxl_q4_k_m",
+      "internal_only": true,
+      "loader_type": "flux_fill_t5",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux_fill/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/t5-v1_1-xxl-encoder-Q4_K_M.gguf"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.text_encoder.clip_l",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "clip_l",
+      "internal_only": true,
+      "loader_type": "flux_fill_clip_l",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux_fill/clip_l.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/clip_l.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.ae",
+      "kind": "vae",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "ae",
+      "internal_only": true,
+      "loader_type": "flux_fill_ae",
+      "artifact_type": "file",
+      "destination": "vae",
+      "relative_path": "flux_fill/ae.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/ae.safetensors"
+        }
+      ]
+    }
+  ]
+}

@@ -7,7 +7,7 @@ import math
 from PIL import Image
 from typing import List, Tuple
 
-from modules.model_download.runtime import download_file
+from modules import model_registry
 import modules.config as config
 import modules.mask_processing as mask_processing
 from ldm_patched.pfn.architecture.MAT import MAT
@@ -118,34 +118,30 @@ def load_model(model_name: str = "Places_512_FullData_G.pth") -> MAT:
     global _model_instance
     if _model_instance is not None:
         return _model_instance
-    
-    model_dir = config.path_removals
-    os.makedirs(model_dir, exist_ok=True)
-    
-    # Download if missing
-    url = "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Places_512_FullData_G.pth"
-    checkpoint_path = download_file(
-        url=url,
-        model_dir=model_dir,
-        file_name=model_name
-    )
-    
+
+    if model_name != "Places_512_FullData_G.pth":
+        checkpoint_path = os.path.join(config.path_removals, model_name)
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Object removal model not found: {model_name}")
+    else:
+        checkpoint_path = model_registry.ensure_asset('removals.object.mat.places512', progress=True)
+
     logger.info(f"Loading MAT Object Removal Engine from {checkpoint_path} ...")
-    
+
     state_dict = torch.load(checkpoint_path, map_location="cpu")
     # Remap keys
     new_state = {}
     for k, v in state_dict.items():
         new_key = k.replace("synthesis", "model.synthesis").replace("mapping", "model.mapping")
         new_state[new_key] = v
-        
+
     model = MAT()
     model.load_state_dict(new_state)
     model.eval()
-    
+
     # Force float32 for Pascal stability
     model.to(torch.float32)
-    
+
     _model_instance = model
     return _model_instance
 
@@ -269,3 +265,6 @@ def remove_object_from_file(image_path: str, mask_path: str, seed: int = 0, mask
     res_np = remove_object(img_np, msk_np, seed=seed, mask_dilate=mask_dilate)
     
     return mask_processing.save_to_temp_png(res_np)
+
+
+

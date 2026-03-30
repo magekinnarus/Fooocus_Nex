@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "removals.background.inspyrenet.base",
+      "kind": "removal_engine",
+      "category": "removal",
+      "engine_family": "background_removal",
+      "variant": "base",
+      "internal_only": true,
+      "loader_type": "background_removal",
+      "artifact_type": "file",
+      "destination": "removals",
+      "relative_path": "ckpt_base.pth",
+      "sources": [
+        {
+          "url": "https://github.com/plemeri/transparent-background/releases/download/1.2.12/ckpt_base.pth"
+        }
+      ]
+    },
+    {
+      "id": "removals.object.mat.places512",
+      "kind": "removal_engine",
+      "category": "removal",
+      "engine_family": "object_removal",
+      "variant": "places512",
+      "internal_only": true,
+      "loader_type": "object_removal",
+      "artifact_type": "file",
+      "destination": "removals",
+      "relative_path": "Places_512_FullData_G.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Places_512_FullData_G.pth"
+        }
+      ]
+    }
+  ]
+}

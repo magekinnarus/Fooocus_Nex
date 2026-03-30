@@ -14,12 +14,19 @@ from modules.model_manager import ModelManager, default_model_manager
 DEFAULT_DOWNLOAD_MESSAGE = 'Download queued'
 
 
+def _resolver_token_env(entry, default: str) -> str:
+    for source in entry.sources:
+        if source.token_env:
+            return source.token_env
+    return default
+
+
 def _select_resolver(entry):
     provider = (entry.source_provider or entry.source_kind or 'direct').lower()
     if provider == 'civitai':
-        return CivitAIResolver(token_env=entry.token_env or 'CIVITAI_TOKEN')
+        return CivitAIResolver(token_env=_resolver_token_env(entry, 'CIVITAI_TOKEN'))
     if provider in {'huggingface', 'hf'}:
-        return HuggingFaceResolver(token_env=entry.token_env or 'HUGGINGFACE_TOKEN')
+        return HuggingFaceResolver(token_env=_resolver_token_env(entry, 'HUGGINGFACE_TOKEN'))
     return DirectResolver()
 
 
@@ -182,6 +189,64 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 preset_managed=False if not include_preset_managed else None,
             ),
             'count': len(records),
+        })
+
+    @router.get('/api/models/thumbnail')
+    def get_thumbnail(selector: str = Query(...), slug: str | None = Query(default=None)):
+        try:
+            entry, resolution = manager.resolve_entry_thumbnail(selector, slug=slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content={
+            'entry_id': entry.id,
+            'selector': selector,
+            'thumbnail': {
+                'relative_path': resolution.relative_path,
+                'absolute_path': resolution.absolute_path,
+                'exists': resolution.exists,
+                'source': resolution.source,
+            },
+        })
+
+    @router.post('/api/models/thumbnail')
+    def persist_thumbnail(payload: dict = Body(...)):
+        selector = payload.get('selector') if isinstance(payload, dict) else None
+        source_path = payload.get('source_path') if isinstance(payload, dict) else None
+        slug = payload.get('slug') if isinstance(payload, dict) else None
+        size = payload.get('size') if isinstance(payload, dict) else None
+
+        if not selector:
+            raise HTTPException(status_code=400, detail='Missing selector')
+        if not source_path:
+            raise HTTPException(status_code=400, detail='Missing source_path')
+
+        try:
+            entry, resolution = manager.persist_entry_thumbnail(
+                str(selector),
+                str(source_path),
+                slug=slug,
+                size=size,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        record = manager.inventory_record(entry)
+        return JSONResponse(content={
+            'status': 'success',
+            'entry': record.to_dict(),
+            'thumbnail': {
+                'relative_path': resolution.relative_path,
+                'absolute_path': resolution.absolute_path,
+                'exists': resolution.exists,
+                'source': resolution.source,
+            },
         })
 
     @router.post('/api/models/download')

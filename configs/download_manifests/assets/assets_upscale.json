@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "upscale.2x_nomosuni_span_multijpg_ldl",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "2x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "2xNomosUni_span_multijpg_ldl.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/2xNomosUni_span_multijpg_ldl.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.4xffhqdat",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "4xFFHQDAT.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xFFHQDAT.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.4xnomos2_otf_esrgan",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "4xNomos2_otf_esrgan.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos2_otf_esrgan.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.4xnomos8kschat_l",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "4xNomos8kSCHAT-L.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos8kSCHAT-L.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.4xnomosunidat_bokeh_jpg",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "4xNomosUniDAT_bokeh_jpg.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomosUniDAT_bokeh_jpg.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.real_hat_gan_srx4",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "Real_HAT_GAN_SRx4.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Real_HAT_GAN_SRx4.pth"
+        }
+      ]
+    },
+    {
+      "id": "upscale.swin2sr_realworldsr_x4_64_bsrgan_psnr",
+      "kind": "upscaler",
+      "category": "upscale",
+      "engine_family": "gan_upscale",
+      "variant": "4x",
+      "internal_only": true,
+      "loader_type": "upscale_model",
+      "artifact_type": "file",
+      "destination": "upscale_models",
+      "relative_path": "Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth"
+        }
+      ]
+    }
+  ]
+}

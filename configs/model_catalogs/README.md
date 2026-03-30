@@ -83,11 +83,6 @@ For quantized SDXL workflows, the same SDXL VAE family may be shared across mult
 
 The `loras/sdxl/noob/` example from earlier drafts should be considered obsolete.
 
-These subfolders are for organization, not hard compatibility walls. By default:
-- SDXL, Pony, Illustrious, and Noob checkpoints / UNets / CLIP assets should resolve to `compatibility_family: "sdxl"`
-- Pony and Illustrious LoRAs should still be treated as SDXL-family assets for runtime compatibility
-- SD15 assets should resolve to `compatibility_family: "sd15"`
-
 ## Recommended Multi-Catalog Layout
 
 Preset/example catalogs can live in this repo folder.
@@ -113,14 +108,12 @@ Each normalized entry should distinguish between:
 - `id`: unique entry identity
 - `architecture`: broad runtime family such as `sdxl` or `sd15`
 - `sub_architecture`: organization subtype such as `base`, `pony`, `illustrious`, `noob`, or `null` when no subtype split is needed
-- `compatibility_family`: runtime compatibility group, for example all SDXL subtypes map to `sdxl`
 - `asset_group_key`: shared family identity across variants
-- `thumbnail_key`: shared visual identity
-- source identity such as `source_provider`, `source_model_id`, `source_version_id`
+- source identity such as `source_provider` and `source_version_id`
 
 This allows:
 - installed models to be removed from the Available view
-- checkpoint and extracted UNet variants to share one thumbnail
+- quantized variants such as `Q8`, `Q5_K_M`, and `Q4_K_M` to share one thumbnail simply by pointing to the same `thumbnail_library_relative`
 - Colab session downloads to disappear without breaking thumbnail lookup
 
 ## Thumbnail Strategy
@@ -128,22 +121,49 @@ This allows:
 Thumbnails are repo-owned assets, not runtime-fetched dependencies.
 
 Recommended behavior:
-- use `thumbnail_library_relative` when present
-- otherwise resolve by `thumbnail_key`
-- if no specific thumbnail exists, fall back to `0001_default.jpg`
+- store `thumbnail_library_relative` as the authoritative thumbnail path
+- when registering a new model, auto-generate that mirrored path from the model taxonomy and chosen slug
+- if no specific thumbnail exists, store or resolve `thumbnails/default_0001.png`
+
+The repo thumbnail tree should mirror the effective model tree wherever grouping is meaningful.
+
+Examples:
+- `thumbnails/checkpoints/sd15/`
+- `thumbnails/checkpoints/sdxl/base/`
+- `thumbnails/checkpoints/sdxl/pony/`
+- `thumbnails/unet/sdxl/noob/`
+- `thumbnails/loras/sdxl/illustrious/`
+- `thumbnails/embeddings/sdxl/`
+- `thumbnails/vae/sdxl/`
 
 ### Naming Convention
 
 Human-friendly thumbnail filenames should use:
-- `{code}_{slug}.jpg`
+- `{code}_{slug}.png`
+
+Where `code` is generated from taxonomy only when that taxonomy is actually meaningful for the model type:
+- SD15 all types: `{architecture}_{model_type}`
+- SDXL checkpoints / UNet / CLIP: `{architecture}_{sub_architecture}_{model_type}`
+- SDXL LoRAs: `{architecture}_{sub_architecture}_{model_type}` with no `noob` LoRA bucket
+- SDXL embeddings / VAE: `{architecture}_{model_type}`
 
 Examples:
-- `0001_default.jpg`
-- `0002_stoiqoNewreality.jpg`
-- `0003_eventHorizon.jpg`
-- `0004_homoveritas.jpg`
+- `default_0001.png`
+- `sd15_checkpoint_anything_v5.png`
+- `sdxl_base_checkpoint_stoiqo.png`
+- `sdxl_pony_lora_powerpuff.png`
+- `sdxl_noob_unet_homoveritas.png`
+- `sdxl_vae_sdxl_vae.png`
 
-The actual binding should still come from JSON fields such as `thumbnail_key` and `thumbnail_library_relative`, not just filename matching.
+The actual persisted binding should come from `thumbnail_library_relative`, not just filename matching.
+
+Normal users should not need to invent thumbnail labels manually. The app should auto-generate the code/filename stem from the model metadata and shared-family identity, while still allowing advanced/manual overrides later if needed.
+
+Display names should also be auto-generated rather than hand-authored. The rule is: take `name`, remove the file extension, and replace underscores with spaces so distinct variants like `Q4_K_M`, `Q5_K_M`, and `Q8` remain visibly distinct in the UI.
+
+If a user skips thumbnail selection entirely, the catalog entry should simply resolve to `thumbnails/default_0001.png`.
+
+PNG is the preferred thumbnail format for M06 so the library can grow into metadata-bearing thumbnails later without another format migration.
 
 ## CivitAI Download Convention
 
@@ -156,7 +176,7 @@ Expected pattern:
 Normalized CivitAI entries should therefore typically declare:
 - `source_provider: "civitai"`
 - `token_required: true`
-- `token_env: "CIVITAI_TOKEN"`
+- a `sources` entry with `token_env: "CIVITAI_TOKEN"`
 
 ## Legacy Filename Prefixes
 
@@ -168,7 +188,7 @@ Legacy prefixes such as:
 
 should be treated as import hints, not part of the long-term canonical naming scheme.
 
-Normalized entries may preserve the original imported filename for traceability, but runtime taxonomy should come from metadata and folder structure rather than name prefixes.
+Normalized entries should use the normalized `name` as the persisted filename field, and runtime taxonomy should come from metadata and folder structure rather than name prefixes.
 
 ## Key Fields in the Draft Schema
 
@@ -176,26 +196,20 @@ Common fields in the current draft templates include:
 - `id`
 - `alias`
 - `name`
-- `source_file_name` or `source_key`
 - `display_name`
 - `model_type`
 - `architecture`
 - `sub_architecture`
-- `compatibility_family`
 - `root_key`
 - `relative_path`
 - `asset_group_key`
-- `thumbnail_key`
 - `thumbnail_library_relative`
 - `source_provider`
-- `source_model_id`
 - `source_version_id`
-- `catalog_source`
 - `storage_tier`
 - `visibility`
 - `preset_managed`
 - `token_required`
-- `token_env`
 - `sources`
 
 ## Planned Runtime Consumers

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "inpaint.fooocus_patch.v1",
+      "kind": "inpaint_patch",
+      "category": "inpaint",
+      "engine_family": "fooocus_patch",
+      "variant": "v1",
+      "internal_only": true,
+      "loader_type": "inpaint_patch",
+      "artifact_type": "file",
+      "destination": "inpaint",
+      "relative_path": "inpaint.fooocus.patch",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint.fooocus.patch"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.fooocus_patch.v2_5",
+      "kind": "inpaint_patch",
+      "category": "inpaint",
+      "engine_family": "fooocus_patch",
+      "variant": "v2.5",
+      "internal_only": true,
+      "loader_type": "inpaint_patch",
+      "artifact_type": "file",
+      "destination": "inpaint",
+      "relative_path": "inpaint_v25.fooocus.patch",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint_v25.fooocus.patch"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.fooocus_patch.v2_6",
+      "kind": "inpaint_patch",
+      "category": "inpaint",
+      "engine_family": "fooocus_patch",
+      "variant": "v2.6",
+      "internal_only": true,
+      "loader_type": "inpaint_patch",
+      "artifact_type": "file",
+      "destination": "inpaint",
+      "relative_path": "inpaint_v26.fooocus.patch",
+      "sources": [
+        {
+          "url": "https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint_v26.fooocus.patch"
+        }
+      ]
+    }
+  ]
+}

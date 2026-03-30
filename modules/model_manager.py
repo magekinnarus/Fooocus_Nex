@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import modules.config as config
 import modules.model_catalog_index as catalog_index
 import modules.model_taxonomy as model_taxonomy
+import modules.model_thumbnails as model_thumbnails
 from modules.extra_utils import get_files_from_folder
 from modules.model_download.spec import ModelCatalogEntry
 
@@ -187,15 +190,11 @@ class ModelInventoryRecord:
             'sub_architecture': self.entry.sub_architecture,
             'compatibility_family': self.entry.compatibility_family,
             'source_provider': self.entry.source_provider,
-            'source_model_id': self.entry.source_model_id,
             'source_version_id': self.entry.source_version_id,
-            'catalog_source': self.entry.catalog_source,
             'storage_tier': self.entry.storage_tier,
             'visibility': self.entry.visibility,
             'preset_managed': self.entry.preset_managed,
             'token_required': self.entry.token_required,
-            'thumbnail_key': self.entry.thumbnail_key,
-            'thumbnail_url': self.entry.thumbnail_url,
             'thumbnail_library_relative': self.entry.thumbnail_library_relative,
             'installed': self.installed,
             'installed_path': self.installed_path,
@@ -356,11 +355,11 @@ class ModelManager:
     def root_map(self) -> dict[str, list[str]]:
         return {key: list(paths) for key, paths in self._root_map.items()}
 
-    def refresh_catalog_index(self):
+    def refresh_catalog_index(self, *, force_refresh: bool = False):
         catalog_dirs = self._catalog_dirs
         if catalog_dirs is None:
             catalog_dirs = config.get_model_catalog_directories()
-        self._catalog_index = catalog_index.load_runtime_model_catalog_index(catalog_dirs)
+        self._catalog_index = catalog_index.load_runtime_model_catalog_index(catalog_dirs, force_refresh=force_refresh)
         return self._catalog_index
 
     def refresh_installed_index(self):
@@ -423,6 +422,80 @@ class ModelManager:
         record = self._find_catalog_record(selector, root_keys=root_keys)
         return None if record is None else record.entry
 
+    def _catalog_path(self, source_path: str) -> Path:
+        return Path(source_path).resolve()
+
+    def _load_catalog_payload(self, source_path: str) -> dict[str, Any]:
+        path = self._catalog_path(source_path)
+        return json.loads(path.read_text(encoding='utf-8-sig'))
+
+    def _write_catalog_payload(self, source_path: str, payload: dict[str, Any]) -> None:
+        path = self._catalog_path(source_path)
+        path.write_text(json.dumps(payload, indent=4, ensure_ascii=False) + '\n', encoding='utf-8')
+
+    def _iter_payload_entries(self, node: Any):
+        if isinstance(node, list):
+            for item in node:
+                yield from self._iter_payload_entries(item)
+        elif isinstance(node, dict):
+            if 'id' in node and 'name' in node and 'root_key' in node and 'relative_path' in node:
+                yield node
+            else:
+                for value in node.values():
+                    yield from self._iter_payload_entries(value)
+
+    def update_catalog_entry_thumbnail_path(self, selector: str, thumbnail_library_relative: str) -> ModelCatalogEntry:
+        record = self._find_catalog_record(selector)
+        if record is None:
+            raise KeyError(f'Unknown model selector: {selector}')
+
+        normalized_relative = str(thumbnail_library_relative).replace('\\', '/').strip().lstrip('/')
+        payload = self._load_catalog_payload(record.source_path)
+        updated = False
+        for entry_data in self._iter_payload_entries(payload):
+            if entry_data.get('id') != record.entry.id:
+                continue
+            entry_data['thumbnail_library_relative'] = normalized_relative
+            updated = True
+            break
+
+        if not updated:
+            raise KeyError(f'Catalog entry {record.entry.id} not found in {record.source_path}')
+
+        self._write_catalog_payload(record.source_path, payload)
+        self.refresh_catalog_index(force_refresh=True)
+        refreshed_entry = self.get_entry(record.entry.id)
+        if refreshed_entry is None:
+            raise RuntimeError(f'Catalog entry {record.entry.id} disappeared after catalog refresh')
+        return refreshed_entry
+
+    def persist_entry_thumbnail(
+        self,
+        selector: str,
+        source: str | os.PathLike[str] | Any,
+        *,
+        slug: str | None = None,
+        size: int | None = None,
+    ) -> tuple[ModelCatalogEntry, model_thumbnails.ThumbnailResolution]:
+        record = self._find_catalog_record(selector)
+        if record is None:
+            raise KeyError(f'Unknown model selector: {selector}')
+
+        resolution = model_thumbnails.persist_thumbnail_image(
+            source,
+            entry=record.entry,
+            slug=slug,
+            size=size,
+        )
+        refreshed_entry = self.update_catalog_entry_thumbnail_path(record.entry.id, resolution.relative_path)
+        return refreshed_entry, resolution
+
+    def resolve_entry_thumbnail(self, selector: str, *, slug: str | None = None) -> tuple[ModelCatalogEntry, model_thumbnails.ThumbnailResolution]:
+        record = self._find_catalog_record(selector)
+        if record is None:
+            raise KeyError(f'Unknown model selector: {selector}')
+        return record.entry, model_thumbnails.resolve_thumbnail(record.entry, slug=slug)
+
     def _entry_installation(self, entry: ModelCatalogEntry) -> tuple[str | None, str | None]:
         roots = self._root_map.get(entry.root_key, [])
         if not roots:
@@ -430,7 +503,7 @@ class ModelManager:
 
         canonical_relative = _normalize_path(entry.relative_path)
         candidate_names: list[str] = []
-        for candidate in (entry.name, entry.source_file_name, os.path.basename(entry.relative_path)):
+        for candidate in (entry.name, os.path.basename(entry.relative_path)):
             normalized = _normalize_path(candidate)
             if normalized and normalized not in candidate_names:
                 candidate_names.append(normalized)

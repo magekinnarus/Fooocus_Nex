@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import math
 import numbers
@@ -392,6 +392,7 @@ os.makedirs(path_temp_outputs, exist_ok=True)
 path_download_manifests = get_dir_or_set_default('path_download_manifests', '../configs/download_manifests/')
 path_model_catalogs_preset = get_dir_or_set_default('path_model_catalogs_preset', '../configs/model_catalogs/', make_directory=True)
 path_model_catalogs_user = get_dir_or_set_default('path_model_catalogs_user', '../configs/model_catalogs/user/', make_directory=True)
+path_model_thumbnails = get_dir_or_set_default('path_model_thumbnails', '../thumbnails/', make_directory=True)
 
 
 def get_model_catalog_directories():
@@ -404,6 +405,23 @@ def get_model_catalog_directories():
 
 def get_writable_model_catalog_directory():
     return path_model_catalogs_user
+
+
+def get_model_thumbnail_directory():
+    return path_model_thumbnails
+
+
+def get_default_thumbnail_relative_path():
+    return 'thumbnails/default_0001.png'
+
+
+def get_model_thumbnail_size():
+    return int(get_config_item_or_set_default(
+        'model_thumbnail_size',
+        512,
+        lambda value: isinstance(value, int) and value > 0,
+        expected_type=int,
+    ))
 
 asset_root_paths = {
     'checkpoints': paths_checkpoints[0],
@@ -697,15 +715,7 @@ vae_downloads = get_config_item_or_set_default(
 )
 upscale_downloads = get_config_item_or_set_default(
     key='upscale_downloads',
-    default_value={
-        '2xNomosUni_span_multijpg_ldl.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/2xNomosUni_span_multijpg_ldl.pth',
-        '4xFFHQDAT.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xFFHQDAT.pth',
-        '4xNomos2_otf_esrgan.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos2_otf_esrgan.pth',
-        '4xNomos8kSCHAT-L.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomos8kSCHAT-L.pth',
-        '4xNomosUniDAT_bokeh_jpg.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/4xNomosUniDAT_bokeh_jpg.pth',
-        'Real_HAT_GAN_SRx4.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Real_HAT_GAN_SRx4.pth',
-        'Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth': 'https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/utils/Swin2SR_RealworldSR_X4_64_BSRGAN_PSNR.pth',
-    },
+    default_value={},
     validator=lambda x: isinstance(x, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in x.items()),
     expected_type=dict
 )
@@ -1000,34 +1010,18 @@ def update_files():
 def downloading_inpaint_models(v):
     assert v in modules.flags.inpaint_engine_versions
 
-    patch_file = None
+    asset_ids = {
+        'v1': 'inpaint.fooocus_patch.v1',
+        'v2.5': 'inpaint.fooocus_patch.v2_5',
+        'v2.6': 'inpaint.fooocus_patch.v2_6',
+    }
+    asset_id = asset_ids.get(v)
+    if asset_id is None:
+        return None
 
-    if v == 'v1':
-        load_file_from_url(
-            url='https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint.fooocus.patch',
-            model_dir=path_inpaint,
-            file_name='inpaint.fooocus.patch'
-        )
-        patch_file = os.path.join(path_inpaint, 'inpaint.fooocus.patch')
+    from modules import model_registry
 
-    if v == 'v2.5':
-        load_file_from_url(
-            url='https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint_v25.fooocus.patch',
-            model_dir=path_inpaint,
-            file_name='inpaint_v25.fooocus.patch'
-        )
-        patch_file = os.path.join(path_inpaint, 'inpaint_v25.fooocus.patch')
-
-    if v == 'v2.6':
-        load_file_from_url(
-            url='https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/inpaint_v26.fooocus.patch',
-            model_dir=path_inpaint,
-            file_name='inpaint_v26.fooocus.patch'
-        )
-        patch_file = os.path.join(path_inpaint, 'inpaint_v26.fooocus.patch')
-
-    return patch_file
-
+    return model_registry.ensure_asset(asset_id)
 
 def downloading_sdxl_lcm_lora():
     load_file_from_url(
@@ -1104,4 +1098,6 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
+
+
 

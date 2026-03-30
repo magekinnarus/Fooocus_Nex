@@ -46,17 +46,35 @@ def get_asset(asset_id):
     return _load_asset_index().get(asset_id)
 
 
-def list_assets(channel=None, method=None, kind=None):
+def _asset_matches(asset, filters):
+    for key, expected in filters.items():
+        if expected is None:
+            continue
+        if asset.get(key) != expected:
+            return False
+    return True
+
+
+def list_assets(channel=None, method=None, kind=None, category=None, engine_family=None, internal_only=None, destination=None):
+    filters = {
+        "channel": channel,
+        "method": method,
+        "kind": kind,
+        "category": category,
+        "engine_family": engine_family,
+        "internal_only": internal_only,
+        "destination": destination,
+    }
+
     results = []
     for asset in _load_asset_index().values():
-        if channel is not None and asset.get("channel") != channel:
-            continue
-        if method is not None and asset.get("method") != method:
-            continue
-        if kind is not None and asset.get("kind") != kind:
-            continue
-        results.append(asset)
+        if _asset_matches(asset, filters):
+            results.append(asset)
     return results
+
+
+def list_asset_ids(**filters):
+    return [asset["id"] for asset in list_assets(**filters)]
 
 
 def _require_asset(asset_id):
@@ -145,7 +163,7 @@ def _ensure_file_asset(asset, target_path, progress=True):
                 model_dir=download_dir,
                 file_name=file_name,
                 progress=progress,
-                headers=source.get('headers', ()),
+                headers=source.get("headers", ()),
             )
         except Exception as exc:
             last_error = exc
@@ -181,7 +199,7 @@ def _ensure_archive_asset(asset, extract_dir, progress=True):
                 model_dir=archive_cache_dir,
                 file_name=archive_name,
                 progress=progress,
-                headers=source.get('headers', ()),
+                headers=source.get("headers", ()),
             )
             break
         except Exception as exc:

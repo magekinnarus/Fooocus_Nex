@@ -70,12 +70,11 @@ def _iter_entry_dicts(node):
 
 def _entry_from_dict(data: dict) -> ModelCatalogEntry:
     source_provider = data.get('source_provider', data.get('source_kind', 'direct'))
-    token_env = data.get('token_env')
     sources = tuple(
         ModelSource(
             url=source['url'],
             kind=source.get('kind', source_provider),
-            token_env=source.get('token_env', token_env),
+            token_env=source.get('token_env'),
             headers=tuple(tuple(header) for header in source.get('headers', [])),
         )
         for source in data.get('sources', [])
@@ -107,21 +106,14 @@ def _entry_from_dict(data: dict) -> ModelCatalogEntry:
         root_key=root_key,
         relative_path=data['relative_path'],
         display_name=display_name,
-        source_file_name=data.get('source_file_name'),
-        source_key=data.get('source_key'),
         model_type=model_type,
         architecture=architecture,
         sub_architecture=sub_architecture or 'general',
         compatibility_family=compatibility_family,
         asset_group_key=data.get('asset_group_key'),
-        thumbnail_key=data.get('thumbnail_key'),
-        thumbnail_url=data.get('thumbnail_url'),
         thumbnail_library_relative=data.get('thumbnail_library_relative'),
         source_provider=source_provider,
-        source_model_id=_coerce_optional_str(data.get('source_model_id')),
         source_version_id=_coerce_optional_str(data.get('source_version_id')),
-        token_env=token_env,
-        catalog_source=data.get('catalog_source'),
         source_kind=data.get('source_kind', source_provider),
         sources=sources,
         storage_tier=_normalize_storage_tier(data.get('storage_tier', 'session')),

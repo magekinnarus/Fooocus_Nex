@@ -1,5 +1,5 @@
 import os
-from modules import config
+from modules import config, model_registry
 from modules.model_download.runtime import download_file
 
 vae_approx_filenames = [
@@ -9,10 +9,14 @@ vae_approx_filenames = [
      'https://huggingface.co/mashb1t/misc/resolve/main/xl-to-v1_interposer-v4.0.safetensors')
 ]
 
+
+def _ensure_internal_assets(category, progress=False):
+    for asset in sorted(model_registry.list_assets(category=category, internal_only=True), key=lambda item: item['id']):
+        model_registry.ensure_asset(asset['id'], progress=progress)
+
+
 def download_models(default_model, checkpoint_downloads, embeddings_downloads, lora_downloads, vae_downloads, upscale_downloads):
     from modules.util import get_file_from_folder_list
-    from args_manager import args
-    import os
 
     for file_name, url in vae_approx_filenames:
         download_file(url=url, model_dir=config.path_vae_approx, file_name=file_name)
@@ -24,7 +28,7 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
             if any(f.endswith(('.safetensors', '.ckpt')) for f in os.listdir(folder)):
                 model_found = True
                 break
-    
+
     if not model_found:
         print('No checkpoint models found in your checkpoints directories.')
         print('Please add at least one model to your checkpoints folder to start generating.')
@@ -51,6 +55,11 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
         download_file(url=url, model_dir=preferred_root, file_name=file_name)
     for file_name, url in vae_downloads.items():
         download_file(url=url, model_dir=config.path_vae, file_name=file_name)
+
+    # Internal upscalers now come from the centralized manifest system.
+    _ensure_internal_assets('upscale', progress=False)
+
+    # Keep preset/config-defined entries as additive custom downloads rather than the source of truth.
     for file_name, url in upscale_downloads.items():
         download_file(url=url, model_dir=config.path_upscale_models[0], file_name=file_name)
 
