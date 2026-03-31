@@ -514,16 +514,16 @@
         },
         {
             "id": "huggingface.lora.sdxl.base.futuristic_princesses_sdxl",
-            "alias": "futuristic_princesses_sdxl",
-            "name": "Futuristic_princesses_SDXL-000001.safetensors",
+            "alias": "futuristic_princesses",
+            "name": "Futuristic_princesses_SDXL.safetensors",
             "display_name": "Futuristic princesses SDXL",
             "model_type": "lora",
             "architecture": "sdxl",
             "sub_architecture": "base",
             "root_key": "loras",
-            "relative_path": "sdxl/base/Futuristic_princesses_SDXL-000001.safetensors",
+            "relative_path": "sdxl/base/Futuristic_princesses_SDXL.safetensors",
             "asset_group_key": "base.futuristic_princesses_sdxl",
-            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_loras_Futuristic_princesses_SDXL.png",
+            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_Futuristic_princesses_SDXL.png",
             "source_provider": "huggingface",
             "source_version_id": null,
             "storage_tier": "session",
@@ -532,7 +532,7 @@
             "token_required": false,
             "sources": [
                 {
-                    "url": "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras/Futuristic_princesses_SDXL-000001.safetensors",
+                    "url": "https://huggingface.co/Old-Fisherman/SDXL_Models/resolve/main/SDXL_loras/Futuristic_princesses_SDXL.safetensors",
                     "kind": "huggingface"
                 }
             ]
@@ -548,7 +548,7 @@
             "root_key": "loras",
             "relative_path": "sdxl/base/Small_body_and_tits.safetensors",
             "asset_group_key": "base.small_body_and_tits",
-            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_loras_small_body_and_tits.png",
+            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_small_body_and_tits.png",
             "source_provider": "huggingface",
             "source_version_id": null,
             "storage_tier": "session",
@@ -683,6 +683,81 @@
             "sources": [
                 {
                     "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sdxl/innovision_v10.safetensors",
+                    "kind": "huggingface"
+                }
+            ]
+        },
+        {
+            "id": "huggingface.lora.sdxl.base.cfg_boost",
+            "alias": "cfg_boost",
+            "name": "cfg_scale_boost.safetensors",
+            "display_name": "cfg scale boost",
+            "model_type": "lora",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "root_key": "loras",
+            "relative_path": "sdxl/base/cfg_scale_boost.safetensors",
+            "asset_group_key": "base.cfg_scale_boost",
+            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_cfg_boost.png",
+            "source_provider": "huggingface",
+            "source_version_id": null,
+            "storage_tier": "session",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "sources": [
+                {
+                    "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/cfg_scale_boost.safetensors",
+                    "kind": "huggingface"
+                }
+            ]
+        },
+        {
+            "id": "huggingface.lora.sdxl.base.sdxl_enhance",
+            "alias": "sdxl_enhance",
+            "name": "enhance.safetensors",
+            "display_name": "SDXL enhance",
+            "model_type": "lora",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "root_key": "loras",
+            "relative_path": "sdxl/base/enhance.safetensors",
+            "asset_group_key": "base.sdxl_enhance",
+            "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_sdxl_enhance.png",
+            "source_provider": "huggingface",
+            "source_version_id": null,
+            "storage_tier": "session",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "sources": [
+                {
+                    "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/sdxl_enhance.safetensors",
+                    "kind": "huggingface"
+                }
+            ]
+        },
+        {
+            "id": "huggingface.checkpoint.sd15.base.realcartoon3d",
+            "alias": "realcartoon3d",
+            "name": "realcartoon3d_v18.safetensors",
+            "display_name": "realcartoon3d v18",
+            "model_type": "checkpoint",
+            "architecture": "sd15",
+            "sub_architecture": "base",
+            "root_key": "checkpoints",
+            "relative_path": "sd15/base/realcartoon3d_v18.safetensors",
+            "asset_group_key": "base.realcartoon3d",
+            "thumbnail_library_relative": "thumbnails/checkpoints/sd15/base/sd15_checkpoint_realcartoon3d.png",
+            "source_provider": "huggingface",
+            "source_version_id": null,
+            "storage_tier": "session",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "sources": [
+                {
+                    "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sd15/realcartoon3d_v18.safetensors",
                     "kind": "huggingface"
                 }
             ]
