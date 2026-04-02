@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -9,14 +9,14 @@ from typing import Iterable
 from modules.model_download.catalog import ModelCatalog
 from modules.model_download.spec import ModelCatalogEntry
 
-ACTIVE_CATALOG_SUFFIX = '.catalog.json'
+ACTIVE_CATALOG_SUFFIXES = ('.catalog.json', '_catalog.json')
 _RUNTIME_CATALOG_INDEX_CACHE: dict[tuple[str, ...], tuple[tuple[tuple[str, int, int], ...], 'ModelCatalogIndex']] = {}
 
 
 def _normalize_selector(value: str | Path | None) -> str | None:
     if value is None:
         return None
-    normalized = str(value).replace('\\', '/').strip()
+    normalized = str(value).replace('\\', '/').strip().lower()
     return normalized or None
 
 
@@ -24,7 +24,7 @@ def _normalize_catalog_directories(directories: Iterable[str | Path]) -> tuple[s
     return tuple(str(Path(directory).resolve()) for directory in directories)
 
 
-def _build_catalog_snapshot(directories: Iterable[str | Path], pattern: str = f'*{ACTIVE_CATALOG_SUFFIX}') -> tuple[tuple[str, int, int], ...]:
+def _build_catalog_snapshot(directories: Iterable[str | Path], pattern: str = '*.json') -> tuple[tuple[str, int, int], ...]:
     snapshot: list[tuple[str, int, int]] = []
     for path in iter_catalog_files(directories, pattern=pattern):
         stat = path.stat()
@@ -126,11 +126,23 @@ class ModelCatalogIndex:
             return None
         return _first_filtered_record(self._records_by_relative_path.get(normalized_path, []), root_keys=root_keys)
 
+    def list_by_relative_path(self, relative_path: str | Path, root_keys: Iterable[str] | None = None) -> list[CatalogIndexRecord]:
+        normalized_path = _normalize_selector(relative_path)
+        if normalized_path is None:
+            return []
+        return _filtered_records(self._records_by_relative_path.get(normalized_path, []), root_keys=root_keys)
+
     def find_by_name(self, name: str | Path, root_keys: Iterable[str] | None = None) -> CatalogIndexRecord | None:
         normalized_name = _normalize_selector(name)
         if normalized_name is None:
             return None
         return _first_filtered_record(self._records_by_name.get(normalized_name, []), root_keys=root_keys)
+
+    def list_by_name(self, name: str | Path, root_keys: Iterable[str] | None = None) -> list[CatalogIndexRecord]:
+        normalized_name = _normalize_selector(name)
+        if normalized_name is None:
+            return []
+        return _filtered_records(self._records_by_name.get(normalized_name, []), root_keys=root_keys)
 
     def list(self) -> list[ModelCatalogEntry]:
         return [record.entry for record in self._records]
@@ -149,7 +161,7 @@ class ModelCatalogIndex:
         compatibility_family: str | None = None,
         model_type: str | None = None,
         root_key: str | None = None,
-        storage_tier: str | None = None,
+        registration_state: str | None = None,
         visibility: str | None = None,
     ) -> list[ModelCatalogEntry]:
         results = []
@@ -165,7 +177,7 @@ class ModelCatalogIndex:
                 continue
             if root_key is not None and entry.root_key != root_key:
                 continue
-            if storage_tier is not None and entry.storage_tier != storage_tier:
+            if registration_state is not None and entry.registration_state != registration_state:
                 continue
             if visibility is not None and entry.visibility != visibility:
                 continue
@@ -206,19 +218,21 @@ class ModelCatalogIndex:
     def from_directories(
         cls,
         directories: Iterable[str | Path],
-        pattern: str = f'*{ACTIVE_CATALOG_SUFFIX}',
+        pattern: str = '*.json',
     ) -> 'ModelCatalogIndex':
         return cls.from_files(iter_catalog_files(directories, pattern=pattern))
 
 
 
-def iter_catalog_files(directories: Iterable[str | Path], pattern: str = f'*{ACTIVE_CATALOG_SUFFIX}'):
+def iter_catalog_files(directories: Iterable[str | Path], pattern: str = '*.json'):
     seen: set[str] = set()
     for directory in directories:
         root = Path(directory)
         if not root.is_dir():
             continue
         for path in sorted(root.glob(pattern)):
+            if not path.is_file() or not is_runtime_catalog_file(path):
+                continue
             resolved = str(path.resolve())
             if resolved in seen:
                 continue
@@ -228,7 +242,8 @@ def iter_catalog_files(directories: Iterable[str | Path], pattern: str = f'*{ACT
 
 
 def is_runtime_catalog_file(path: str | Path) -> bool:
-    return Path(path).name.endswith(ACTIVE_CATALOG_SUFFIX)
+    name = Path(path).name
+    return any(name.endswith(suffix) for suffix in ACTIVE_CATALOG_SUFFIXES)
 
 
 
@@ -256,13 +271,16 @@ def load_runtime_model_catalog_index(catalog_dirs: Iterable[str | Path] | None =
 
 
 def _first_filtered_record(records: Iterable[CatalogIndexRecord], root_keys: Iterable[str] | None = None) -> CatalogIndexRecord | None:
+    filtered = _filtered_records(records, root_keys=root_keys)
+    for record in filtered:
+        return record
+    return None
+
+
+def _filtered_records(records: Iterable[CatalogIndexRecord], root_keys: Iterable[str] | None = None) -> list[CatalogIndexRecord]:
     if root_keys is None:
-        for record in records:
-            return record
-        return None
+        return list(records)
 
     allowed_root_keys = {str(root_key) for root_key in root_keys}
-    for record in records:
-        if record.entry.root_key in allowed_root_keys:
-            return record
-    return None
+    return [record for record in records if record.entry.root_key in allowed_root_keys]
+

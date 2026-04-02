@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 from modules.model_download.policy import ModelDownloadPolicy
 from modules.model_download.resolver import CivitAIResolver, DirectResolver, HuggingFaceResolver
@@ -14,15 +14,48 @@ from modules.model_manager import ModelManager, default_model_manager
 DEFAULT_DOWNLOAD_MESSAGE = 'Download queued'
 
 
+def _queue_download_with_companion(manager: ModelManager, worker, entry, queued_jobs: list, skipped: list, queued_ids: set[str]):
+    def try_queue(candidate_entry, *, reason_prefix: str = ''):
+        if candidate_entry is None:
+            return None
+        if candidate_entry.id in queued_ids:
+            skipped.append({'selector': candidate_entry.id, 'reason': f'{reason_prefix}already_queued'.strip('.')})
+            return None
+        inventory_record = manager.inventory_record(candidate_entry)
+        if inventory_record.installed:
+            skipped.append({'selector': candidate_entry.id, 'reason': f'{reason_prefix}already_installed'.strip('.')})
+            return None
+        if candidate_entry.registration_state == 'unregistered' or candidate_entry.source is None:
+            skipped.append({'selector': candidate_entry.id, 'reason': f'{reason_prefix}not_downloadable'.strip('.')})
+            return None
+        try:
+            job = manager.start_download_job(candidate_entry.id, worker=worker)
+        except Exception as exc:
+            skipped.append({'selector': candidate_entry.id, 'reason': f'{reason_prefix}{exc}'.strip('.')})
+            return None
+        queued_ids.add(candidate_entry.id)
+        queued_jobs.append(job.to_dict())
+        return job
+
+    primary_job = try_queue(entry)
+    if primary_job is None:
+        return
+
+    if entry.root_key == 'unet':
+        companion_entry = manager.resolve_companion_clip(entry)
+        if companion_entry is not None:
+            try_queue(companion_entry, reason_prefix='companion_')
+
+
+
 def _resolver_token_env(entry, default: str) -> str:
-    for source in entry.sources:
-        if source.token_env:
-            return source.token_env
+    if entry.source is not None and entry.source.token_env:
+        return entry.source.token_env
     return default
 
 
 def _select_resolver(entry):
-    provider = (entry.source_provider or entry.source_kind or 'direct').lower()
+    provider = (entry.source_provider or 'direct').lower()
     if provider == 'civitai':
         return CivitAIResolver(token_env=_resolver_token_env(entry, 'CIVITAI_TOKEN'))
     if provider in {'huggingface', 'hf'}:
@@ -60,6 +93,13 @@ def _serialize_records(records):
     return [record.to_dict() for record in records]
 
 
+def _is_downloadable_browser_record(record) -> bool:
+    entry = record.entry
+    provider = str(entry.source_provider or '').strip().lower()
+    has_source_url = bool(entry.source is not None and str(entry.source.url or '').strip())
+    return has_source_url and provider in {'civitai', 'huggingface', 'hf'}
+
+
 def _catalog_sources_payload(manager: ModelManager) -> list[dict[str, Any]]:
     sources = []
     for source in manager.catalog_index.list_sources():
@@ -70,6 +110,16 @@ def _catalog_sources_payload(manager: ModelManager) -> list[dict[str, Any]]:
             'entry_count': source.entry_count,
         })
     return sources
+
+
+def _registration_updates_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    if isinstance(payload.get('updates'), dict):
+        return dict(payload['updates'])
+
+    ignored = {'selector', 'matched_selector'}
+    return {key: value for key, value in payload.items() if key not in ignored}
 
 
 def create_model_router(manager: ModelManager | None = None, download_worker=None) -> APIRouter:
@@ -83,7 +133,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
         compatibility_family: str | None = Query(default=None),
         model_type: str | None = Query(default=None),
         root_key: str | None = Query(default=None),
-        storage_tier: str | None = Query(default=None),
+        registration_state: str | None = Query(default=None),
         visibility: str | None = Query(default=None),
         preset_managed: bool | None = Query(default=None),
         installed: bool | None = Query(default=None),
@@ -94,7 +144,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             compatibility_family=compatibility_family,
             model_type=model_type,
             root_key=root_key,
-            storage_tier=storage_tier,
+            registration_state=registration_state,
             visibility=visibility,
             preset_managed=preset_managed,
             installed=installed,
@@ -107,7 +157,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 compatibility_family=compatibility_family,
                 model_type=model_type,
                 root_key=root_key,
-                storage_tier=storage_tier,
+                registration_state=registration_state,
                 visibility=visibility,
                 preset_managed=preset_managed,
                 installed=installed,
@@ -123,6 +173,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
         compatibility_family: str | None = Query(default=None),
         model_type: str | None = Query(default=None),
         root_key: str | None = Query(default=None),
+        registration_state: str | None = Query(default=None),
         preset_managed: bool | None = Query(default=None),
     ):
         records = manager.list_installed(
@@ -131,6 +182,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             compatibility_family=compatibility_family,
             model_type=model_type,
             root_key=root_key,
+            registration_state=registration_state,
             preset_managed=preset_managed,
         )
         return JSONResponse(content={
@@ -141,6 +193,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 compatibility_family=compatibility_family,
                 model_type=model_type,
                 root_key=root_key,
+                registration_state=registration_state,
                 preset_managed=preset_managed,
                 installed=True,
             ),
@@ -176,11 +229,27 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             records = [record for record in records if not record.entry.preset_managed]
 
         installed_records = [record for record in records if record.installed]
-        available_records = [record for record in records if not record.installed]
+        available_records = [record for record in records if not record.installed and _is_downloadable_browser_record(record)]
+        installed_registered_records = [
+            record for record in installed_records if record.entry.registration_state != 'unregistered'
+        ]
+        installed_unregistered_records = [
+            record for record in installed_records if record.entry.registration_state == 'unregistered'
+        ]
+        available_registered_records = [
+            record for record in available_records if record.entry.registration_state != 'unregistered'
+        ]
+        available_unregistered_records = [
+            record for record in available_records if record.entry.registration_state == 'unregistered'
+        ]
         return JSONResponse(content={
             'scope': scope,
             'installed': _serialize_records(installed_records),
             'available': _serialize_records(available_records),
+            'installed_registered': _serialize_records(installed_registered_records),
+            'installed_unregistered': _serialize_records(installed_unregistered_records),
+            'available_registered': _serialize_records(available_registered_records),
+            'available_unregistered': _serialize_records(available_unregistered_records),
             'groups': manager.build_architecture_groups(
                 architecture=architecture,
                 sub_architecture=sub_architecture,
@@ -210,6 +279,20 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 'source': resolution.source,
             },
         })
+
+
+    @router.get('/api/models/thumbnail/file')
+    def get_thumbnail_file(selector: str = Query(...), slug: str | None = Query(default=None)):
+        try:
+            _, resolution = manager.resolve_entry_thumbnail(selector, slug=slug)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        if not resolution.absolute_path:
+            raise HTTPException(status_code=404, detail='Thumbnail not found')
+        return FileResponse(resolution.absolute_path)
 
     @router.post('/api/models/thumbnail')
     def persist_thumbnail(payload: dict = Body(...)):
@@ -249,6 +332,184 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             },
         })
 
+    @router.post('/api/models/thumbnail/upload')
+    async def upload_thumbnail(
+        selector: str = Form(...),
+        file: UploadFile = File(...),
+        slug: str | None = Form(default=None),
+        size: int | None = Form(default=None),
+    ):
+        try:
+            entry, resolution = manager.persist_entry_thumbnail(
+                str(selector),
+                file.file,
+                slug=slug,
+                size=size,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            await file.close()
+
+        record = manager.inventory_record(entry)
+        return JSONResponse(content={
+            'status': 'success',
+            'entry': record.to_dict(),
+            'thumbnail': {
+                'relative_path': resolution.relative_path,
+                'absolute_path': resolution.absolute_path,
+                'exists': resolution.exists,
+                'source': resolution.source,
+            },
+        })
+
+    @router.get('/api/models/registration')
+    def registration_context(
+        selector: str = Query(...),
+        suggest_limit: int = Query(default=3),
+        source_provider: str | None = Query(default=None),
+        source_version_id: str | None = Query(default=None),
+        matched_selector: str | None = Query(default=None),
+    ):
+        try:
+            context = manager.build_registration_context(
+                selector,
+                suggest_limit=suggest_limit,
+                source_provider=source_provider,
+                source_version_id=source_version_id,
+                matched_selector=matched_selector,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content=context)
+
+    @router.post('/api/models/registration')
+    def register_model(payload: dict = Body(...)):
+        selector = payload.get('selector') if isinstance(payload, dict) else None
+        matched_selector = payload.get('matched_selector') if isinstance(payload, dict) else None
+        if not selector:
+            raise HTTPException(status_code=400, detail='Missing selector')
+
+        try:
+            result = manager.register_model_entry_bundle(
+                str(selector),
+                matched_selector=str(matched_selector) if matched_selector else None,
+                updates=_registration_updates_from_payload(payload),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        response_payload = {
+            'status': 'success',
+            'entry': manager.inventory_record(result['entry']).to_dict(),
+        }
+        if result.get('installed_link') is not None:
+            response_payload['installed_link'] = result['installed_link']
+        if result.get('companion_clip') is not None:
+            response_payload['companion_clip'] = result['companion_clip']
+        return JSONResponse(content=response_payload)
+
+
+    @router.get('/api/models/installed-link')
+    def installed_link_context(
+        selector: str = Query(...),
+        suggest_limit: int = Query(default=3),
+    ):
+        try:
+            context = manager.build_installed_link_context(
+                selector,
+                suggest_limit=suggest_limit,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content=context)
+
+    @router.post('/api/models/installed-link')
+    def update_installed_link(payload: dict = Body(...)):
+        selector = payload.get('selector') if isinstance(payload, dict) else None
+        matched_selector = payload.get('matched_selector') if isinstance(payload, dict) else None
+        if not selector:
+            raise HTTPException(status_code=400, detail='Missing selector')
+
+        try:
+            result = manager.update_installed_model_link_bundle(
+                str(selector),
+                matched_selector=str(matched_selector) if matched_selector else None,
+                updates=_registration_updates_from_payload(payload),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        response_payload = {
+            'status': 'success',
+            'entry': manager.inventory_record(result['entry']).to_dict(),
+        }
+        if result.get('installed_link') is not None:
+            response_payload['installed_link'] = result['installed_link']
+        return JSONResponse(content=response_payload)
+
+    @router.post('/api/models/downloads/batch')
+    def start_batch_download(payload: dict = Body(...)):
+        selectors = payload.get('selectors') if isinstance(payload, dict) else None
+        allowed_root_keys = []
+        if isinstance(payload, dict):
+            root_key = payload.get('root_key')
+            root_keys = payload.get('root_keys')
+            if root_key:
+                allowed_root_keys.append(str(root_key))
+            if isinstance(root_keys, list):
+                allowed_root_keys.extend(str(value) for value in root_keys if value)
+        allowed_root_keys = list(dict.fromkeys(allowed_root_keys))
+
+        if not isinstance(selectors, list) or not selectors:
+            raise HTTPException(status_code=400, detail='Missing selectors')
+        if not allowed_root_keys:
+            raise HTTPException(status_code=400, detail='Missing root_key')
+
+        worker = _build_job_worker(manager, download_worker=download_worker)
+        queued_jobs = []
+        skipped = []
+        queued_ids: set[str] = set()
+        for selector in selectors:
+            entry = manager.get_entry(str(selector))
+            if entry is None:
+                skipped.append({'selector': selector, 'reason': 'unknown'})
+                continue
+            if entry.root_key not in allowed_root_keys:
+                skipped.append({'selector': selector, 'reason': 'different_root_key'})
+                continue
+            _queue_download_with_companion(manager, worker, entry, queued_jobs, skipped, queued_ids)
+
+        status_code = 202 if queued_jobs else 200
+        return JSONResponse(content={
+            'status': 'queued' if queued_jobs else 'noop',
+            'root_keys': allowed_root_keys,
+            'queued_count': len(queued_jobs),
+            'skipped_count': len(skipped),
+            'jobs': queued_jobs,
+            'skipped': skipped,
+        }, status_code=status_code)
+
     @router.post('/api/models/download')
     def start_download(payload: dict = Body(...)):
         selector = payload.get('selector') if isinstance(payload, dict) else None
@@ -258,17 +519,33 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             raise HTTPException(status_code=400, detail='Missing selector')
 
         worker = _build_job_worker(manager, download_worker=download_worker)
+        entry = manager.get_entry(str(selector))
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f'Unknown model selector: {selector}')
+        queued_jobs = []
+        skipped = []
+        queued_ids: set[str] = set()
         try:
-            job = manager.start_download_job(str(selector), worker=worker)
+            _queue_download_with_companion(manager, worker, entry, queued_jobs, skipped, queued_ids)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+        if not queued_jobs:
+            return JSONResponse(content={
+                'status': 'noop',
+                'message': DEFAULT_DOWNLOAD_MESSAGE,
+                'jobs': [],
+                'skipped': skipped,
+            }, status_code=200)
+
         return JSONResponse(content={
             'status': 'queued',
             'message': DEFAULT_DOWNLOAD_MESSAGE,
-            'job': job.to_dict(),
+            'job': queued_jobs[0],
+            'jobs': queued_jobs,
+            'skipped': skipped,
         }, status_code=202)
 
     @router.get('/api/models/downloads/{job_id}')
@@ -280,11 +557,13 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
 
     @router.post('/api/models/refresh')
     def refresh_models():
-        manager.refresh_installed_index()
+        manager.refresh()
+        unregistered_records = manager.iter_inventory(registration_state='unregistered', installed=True)
         return JSONResponse(content={
             'status': 'success',
             'installed': len(manager.list_installed()),
             'available': len(manager.list_available()),
+            'unregistered_installed': len(unregistered_records),
             'groups': manager.build_architecture_groups(),
         })
 
@@ -292,3 +571,5 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
 
 
 model_router = create_model_router(default_model_manager)
+
+

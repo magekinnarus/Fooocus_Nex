@@ -1,13 +1,22 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
 
 
+REGISTRATION_STATE_UNREGISTERED = 'unregistered'
+REGISTRATION_STATE_LOCALLY_REGISTERED = 'locally_registered'
+REGISTRATION_STATE_SOURCED_REGISTERED = 'sourced_registered'
+REGISTRATION_STATES = (
+    REGISTRATION_STATE_UNREGISTERED,
+    REGISTRATION_STATE_LOCALLY_REGISTERED,
+    REGISTRATION_STATE_SOURCED_REGISTERED,
+)
+
+
 @dataclass(frozen=True)
 class ModelSource:
     url: str
-    kind: str = 'direct'
     token_env: str | None = None
     headers: Tuple[Tuple[str, str], ...] = ()
 
@@ -28,9 +37,8 @@ class ModelCatalogEntry:
     thumbnail_library_relative: str | None = None
     source_provider: str = 'direct'
     source_version_id: str | None = None
-    source_kind: str = 'direct'
-    sources: Tuple[ModelSource, ...] = ()
-    storage_tier: str = 'session'
+    source: ModelSource | None = None
+    registration_state: str = REGISTRATION_STATE_SOURCED_REGISTERED
     visibility: str = 'generic'
     preset_managed: bool = False
     token_required: bool = False
@@ -54,3 +62,4 @@ class DownloadResult:
     transport: str
     message: str = ''
     skipped: bool = False
+

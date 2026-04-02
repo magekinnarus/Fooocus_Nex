@@ -8,7 +8,7 @@ The app-facing goal is:
 - normalize different provider formats into one runtime view
 - keep thumbnails repo-owned and stable across Colab sessions
 
-## Current Draft Templates
+## Preset References
 
 - `civitai_catalog.template.json`
 - `huggingface_catalog.template.json`
@@ -17,7 +17,7 @@ The app-facing goal is:
 
 - `m06_runtime_seed.catalog.json`
 
-These are draft normalized templates generated from the Director's existing source files and are intended to serve as starter examples for user-created catalogs.
+These remain reference copies. Active authoritative catalogs may live in the user catalog folder when the Director wants to manage them there directly.
 
 ## Source Catalogs vs Runtime Catalogs
 
@@ -26,14 +26,16 @@ Every catalog should declare its upstream provider when it is created.
 For M06, the provider layer is currently:
 - CivitAI catalogs
 - HuggingFace catalogs
+- local catalogs for installed-only assets
 
-Private or personal catalogs are still expected to fall under one of those providers. In other words:
+Private or personal catalogs may still fall under one of those providers. In other words:
 - `private` / `personal` describe ownership and maintenance
 - `source_provider` describes the actual download source and token behavior
 
 Examples:
 - a personal CivitAI catalog should still use `source_provider: "civitai"`
 - a private HuggingFace catalog should still use `source_provider: "huggingface"`
+- a discovered local-only model can use `source_provider: "local"`
 
 The app should normalize them into one unified runtime index, but users can still maintain them as separate JSON files.
 
@@ -91,9 +93,11 @@ User/private catalogs should live in a writable catalog folder and be loaded alo
 
 Recommended runtime naming:
 - active catalogs: `*.catalog.json`
+- compatible user/runtime catalogs: `*_catalog.json`
 - starter references: `*.template.json`, `*.example.json`
 
-The runtime loader should only ingest `*.catalog.json` files so templates and examples remain available without automatically appearing in the app.
+The runtime loader ingests `*.catalog.json` and `*_catalog.json` files so user-maintained catalogs can keep a more descriptive filename style. Template and example files remain excluded.
+
 
 Conceptually, the runtime view is built from:
 1. one or more catalog JSON files
@@ -107,7 +111,7 @@ Do not use filenames alone as the canonical identity.
 Each normalized entry should distinguish between:
 - `id`: unique entry identity
 - `architecture`: broad runtime family such as `sdxl` or `sd15`
-- `sub_architecture`: organization subtype such as `base`, `pony`, `illustrious`, `noob`, or `null` when no subtype split is needed
+- `sub_architecture`: organization subtype such as `base`, `pony`, `illustrious`, `noob`, or `none` when no subtype split is needed
 - `asset_group_key`: shared family identity across variants
 - source identity such as `source_provider` and `source_version_id`
 
@@ -159,7 +163,7 @@ The actual persisted binding should come from `thumbnail_library_relative`, not 
 
 Normal users should not need to invent thumbnail labels manually. The app should auto-generate the code/filename stem from the model metadata and shared-family identity, while still allowing advanced/manual overrides later if needed.
 
-Display names should also be auto-generated rather than hand-authored. The rule is: take `name`, remove the file extension, and replace underscores with spaces so distinct variants like `Q4_K_M`, `Q5_K_M`, and `Q8` remain visibly distinct in the UI.
+Display names may be auto-generated from `name`, but catalogs can also override them when a cleaner UI label is helpful. A good default rule is: take `name`, remove the file extension, and replace underscores with spaces so distinct variants like `Q4_K_M`, `Q5_K_M`, and `Q8` remain visibly distinct in the UI.
 
 If a user skips thumbnail selection entirely, the catalog entry should simply resolve to `thumbnails/default_0001.png`.
 
@@ -176,7 +180,7 @@ Expected pattern:
 Normalized CivitAI entries should therefore typically declare:
 - `source_provider: "civitai"`
 - `token_required: true`
-- a `sources` entry with `token_env: "CIVITAI_TOKEN"`
+- a `source` entry with `token_env: "CIVITAI_TOKEN"`
 
 ## Legacy Filename Prefixes
 
@@ -190,9 +194,16 @@ should be treated as import hints, not part of the long-term canonical naming sc
 
 Normalized entries should use the normalized `name` as the persisted filename field, and runtime taxonomy should come from metadata and folder structure rather than name prefixes.
 
-## Key Fields in the Draft Schema
+## Registration States
 
-Common fields in the current draft templates include:
+`registration_state` tracks where an entry sits in the catalog lifecycle:
+- `unregistered`: auto-discovered or draft metadata that still needs user review
+- `locally_registered`: confirmed catalog entry without a remote download source
+- `sourced_registered`: confirmed catalog entry backed by a remote source such as HuggingFace or CivitAI
+
+## Key Fields in the Runtime Schema
+
+Common runtime fields include:
 - `id`
 - `alias`
 - `name`
@@ -201,16 +212,16 @@ Common fields in the current draft templates include:
 - `architecture`
 - `sub_architecture`
 - `root_key`
-- `relative_path`
+- `relative_path` (optional for authoritative sourced catalogs; derived from `architecture`, `sub_architecture`, and `name` when omitted)
 - `asset_group_key`
 - `thumbnail_library_relative`
 - `source_provider`
 - `source_version_id`
-- `storage_tier`
+- `registration_state`
 - `visibility`
 - `preset_managed`
 - `token_required`
-- `sources`
+- `source`
 
 ## Planned Runtime Consumers
 
@@ -220,4 +231,6 @@ Common fields in the current draft templates include:
 - `modules/model_download/transport.py`
 - `modules/model_download/orchestrator.py`
 - future M06 runtime index / manager modules
+
+
 

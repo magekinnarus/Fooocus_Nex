@@ -6,6 +6,7 @@ ARCHITECTURE_SDXL = 'sdxl'
 DEFAULT_ARCHITECTURE = ARCHITECTURE_SDXL
 DEFAULT_COMPATIBILITY_FAMILY = DEFAULT_ARCHITECTURE
 
+SUB_ARCHITECTURE_NONE = 'none'
 SUB_ARCHITECTURE_BASE = 'base'
 SUB_ARCHITECTURE_PONY = 'pony'
 SUB_ARCHITECTURE_ILLUSTRIOUS = 'illustrious'
@@ -30,9 +31,12 @@ SUB_ARCHITECTURE_ALIASES = {
     '': None,
     'base': SUB_ARCHITECTURE_BASE,
     'default': SUB_ARCHITECTURE_BASE,
+    'general': SUB_ARCHITECTURE_BASE,
     'il': SUB_ARCHITECTURE_ILLUSTRIOUS,
     'illustrious': SUB_ARCHITECTURE_ILLUSTRIOUS,
     'noob': SUB_ARCHITECTURE_NOOB,
+    'none': SUB_ARCHITECTURE_NONE,
+    'null': SUB_ARCHITECTURE_NONE,
     'pony': SUB_ARCHITECTURE_PONY,
     'sdxl': SUB_ARCHITECTURE_BASE,
     'xl': SUB_ARCHITECTURE_BASE,
@@ -77,11 +81,51 @@ def normalize_sub_architecture(value, architecture=None):
         return None
 
     normalized = str(value).strip().lower()
-    if architecture is not None and normalize_architecture(architecture) != ARCHITECTURE_SDXL:
-        return None
     if not normalized:
         return None
-    return SUB_ARCHITECTURE_ALIASES.get(normalized, normalized)
+
+    normalized_architecture = normalize_architecture(architecture) if architecture is not None else None
+    resolved = SUB_ARCHITECTURE_ALIASES.get(normalized, normalized)
+
+    if resolved == SUB_ARCHITECTURE_NONE:
+        return SUB_ARCHITECTURE_NONE
+
+    if normalized_architecture is not None and normalized_architecture != ARCHITECTURE_SDXL:
+        return SUB_ARCHITECTURE_BASE if resolved == SUB_ARCHITECTURE_BASE else None
+
+    return resolved
+
+
+def canonical_sub_architecture_for_path(root_key, architecture=None, sub_architecture=None):
+    normalized_root_key = str(root_key or '').strip().lower()
+    normalized_sub_architecture = normalize_sub_architecture(sub_architecture, architecture=architecture)
+
+    if normalized_root_key in {'vae', 'embeddings'}:
+        return SUB_ARCHITECTURE_NONE
+    if normalized_sub_architecture in {None, SUB_ARCHITECTURE_NONE}:
+        return SUB_ARCHITECTURE_BASE
+    return normalized_sub_architecture
+
+
+def build_canonical_relative_path(root_key, architecture, sub_architecture, name):
+    normalized_architecture = normalize_architecture(architecture)
+    if normalized_architecture is None:
+        raise ValueError('Cannot derive relative_path without architecture.')
+
+    normalized_name = os.path.basename(str(name or '').replace('\\', '/').strip())
+    if not normalized_name:
+        raise ValueError('Cannot derive relative_path without name.')
+
+    path_sub_architecture = canonical_sub_architecture_for_path(
+        root_key,
+        architecture=normalized_architecture,
+        sub_architecture=sub_architecture,
+    )
+    segments = [normalized_architecture]
+    if path_sub_architecture not in {None, SUB_ARCHITECTURE_NONE}:
+        segments.append(path_sub_architecture)
+    segments.append(normalized_name)
+    return '/'.join(segments)
 
 
 def normalize_resolution_set_id(value):

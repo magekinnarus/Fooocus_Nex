@@ -1,0 +1,25 @@
+{
+    "catalog_id": "user.local.models",
+    "catalog_label": "User Local Models",
+    "entries": [
+        {
+            "id": "user.local.clip.d623cea50734",
+            "name": "clip_l.safetensors",
+            "root_key": "clip",
+            "relative_path": "clip_l.safetensors",
+            "display_name": "clip l",
+            "model_type": "clip",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "locally_registered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [],
+            "thumbnail_library_relative": "",
+            "source_version_id": ""
+        }
+    ]
+}

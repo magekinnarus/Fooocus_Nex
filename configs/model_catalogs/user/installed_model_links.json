@@ -1,0 +1,158 @@
+{
+    "catalog_id": "user.installed.links",
+    "catalog_label": "Installed Model Links",
+    "links": [
+        {
+            "install_id": "e243cde68713",
+            "entry_id": "civitai.lora.sdxl.base.twbabe",
+            "root_key": "loras",
+            "installed_path": "D:/AI/Imagine/models/loras/SDXL/TWbabeXL01.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/loras",
+            "installed_relative_path": "SDXL/TWbabeXL01.safetensors"
+        },
+        {
+            "install_id": "2b95467d7231",
+            "entry_id": "civitai.lora.sdxl.illustrious.anna_rice",
+            "root_key": "loras",
+            "installed_path": "D:/AI/Imagine/models/loras/SDXL/Anna.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/loras",
+            "installed_relative_path": "SDXL/Anna.safetensors"
+        },
+        {
+            "install_id": "4200796bda3c",
+            "entry_id": "civitai.lora.sd15.base.jim_lee",
+            "root_key": "loras",
+            "installed_path": "D:/AI/Imagine/models/loras/SD15/jim_lee_offset_SD1.5.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/loras",
+            "installed_relative_path": "SD15/jim_lee_offset_SD1.5.safetensors"
+        },
+        {
+            "install_id": "df8cbee62609",
+            "entry_id": "huggingface.unet.sdxl.illustrious.beretmix10_q4_k_m",
+            "root_key": "unet",
+            "installed_path": "D:/AI/Imagine/models/unet/IL_beretMixReal_v100_Q4_K_M.gguf",
+            "installed_root_path": "D:/AI/Imagine/models/unet",
+            "installed_relative_path": "IL_beretMixReal_v100_Q4_K_M.gguf"
+        },
+        {
+            "install_id": "87caf22df81f",
+            "entry_id": "huggingface.unet.sdxl.illustrious.beretmix10_q5_k_m",
+            "root_key": "unet",
+            "installed_path": "D:/AI/Imagine/models/unet/IL_beretMixReal_v100_Q5_K_M.gguf",
+            "installed_root_path": "D:/AI/Imagine/models/unet",
+            "installed_relative_path": "IL_beretMixReal_v100_Q5_K_M.gguf"
+        },
+        {
+            "install_id": "99cd1f8081ca",
+            "entry_id": "huggingface.unet.sdxl.illustrious.dutch_v30_q4_k_m",
+            "root_key": "unet",
+            "installed_path": "D:/AI/Imagine/models/unet/IL_dutch_v30_Q4_K_M.gguf",
+            "installed_root_path": "D:/AI/Imagine/models/unet",
+            "installed_relative_path": "IL_dutch_v30_Q4_K_M.gguf"
+        },
+        {
+            "install_id": "8f88d383c091",
+            "entry_id": "huggingface.unet.sdxl.illustrious.dutch_v30_q5_k_m",
+            "root_key": "unet",
+            "installed_path": "D:/AI/Imagine/models/unet/IL_dutch_v30_Q5_K_M.gguf",
+            "installed_root_path": "D:/AI/Imagine/models/unet",
+            "installed_relative_path": "IL_dutch_v30_Q5_K_M.gguf"
+        },
+        {
+            "install_id": "ddd1b6d7c38a",
+            "entry_id": "huggingface.clip.sdxl.illustrious.beretmix10_clips",
+            "root_key": "clip",
+            "installed_path": "D:/AI/Imagine/models/clip/IL_beretMixReal_v100_clips.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/clip",
+            "installed_relative_path": "IL_beretMixReal_v100_clips.safetensors"
+        },
+        {
+            "install_id": "5a6df3162eff",
+            "entry_id": "huggingface.clip.sdxl.illustrious.dutch_v30_clips",
+            "root_key": "clip",
+            "installed_path": "D:/AI/Imagine/models/clip/IL_dutch_v30_clips.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/clip",
+            "installed_relative_path": "IL_dutch_v30_clips.safetensors"
+        },
+        {
+            "install_id": "e9a8f14ed62b",
+            "entry_id": "civitai.checkpoint.sd15.base.photon",
+            "root_key": "checkpoints",
+            "installed_path": "D:/AI/Imagine/models/checkpoints/photon_v1.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/checkpoints",
+            "installed_relative_path": "photon_v1.safetensors"
+        },
+        {
+            "install_id": "cd97ffe08ee8",
+            "entry_id": "civitai.checkpoint.sd15.base.dreamshaper",
+            "root_key": "checkpoints",
+            "installed_path": "D:/AI/Imagine/models/checkpoints/dreamShaper_8.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/checkpoints",
+            "installed_relative_path": "dreamShaper_8.safetensors"
+        },
+        {
+            "install_id": "0043e78c2a9c",
+            "entry_id": "civitai.embedding.sdxl.base.unaestheticXL_neg",
+            "root_key": "embeddings",
+            "installed_path": "D:/AI/Fooocus_Nex/models/embeddings/sdxl/unaestheticXL_cbp62_neg.safetensors",
+            "installed_root_path": "D:/AI/Fooocus_Nex/models/embeddings",
+            "installed_relative_path": "sdxl/unaestheticXL_cbp62_neg.safetensors"
+        },
+        {
+            "install_id": "e99b4dd45165",
+            "entry_id": "huggingface.vae.sdxl.base.fixfp16errorssdxllowermemoryuse_v10",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "fixFP16ErrorsSDXLLowerMemoryUse_v10.safetensors"
+        },
+        {
+            "install_id": "4d559c574493",
+            "entry_id": "civitai.vae.sdxl.base.crystalVAESDXL",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/crystalVAESDXL_vaeV3.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "crystalVAESDXL_vaeV3.safetensors"
+        },
+        {
+            "install_id": "28b1fb8dc82e",
+            "entry_id": "civitai.vae.sdxl.base.ponyStandardVAE",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/ponyStandardVAE_v10.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "ponyStandardVAE_v10.safetensors"
+        },
+        {
+            "install_id": "77d7841b04a7",
+            "entry_id": "huggingface.vae.sdxl.base.sdxl_vae",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/sdxl_vae.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "sdxl_vae.safetensors"
+        },
+        {
+            "install_id": "3945524ea354",
+            "entry_id": "huggingface.vae.sd15.base.klf8anime2vae",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/klF8Anime2VAE.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "klF8Anime2VAE.safetensors"
+        },
+        {
+            "install_id": "a5ffc7b91b04",
+            "entry_id": "huggingface.vae.sd15.base.vae_ft_mse_840000_ema_pruned",
+            "root_key": "vae",
+            "installed_path": "D:/AI/Imagine/models/vae/vae-ft-mse-840000-ema-pruned.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/vae",
+            "installed_relative_path": "vae-ft-mse-840000-ema-pruned.safetensors"
+        },
+        {
+            "install_id": "d02557679160",
+            "entry_id": "user.local.clip.d623cea50734",
+            "root_key": "clip",
+            "installed_path": "D:/AI/Imagine/models/clip/clip_l.safetensors",
+            "installed_root_path": "D:/AI/Imagine/models/clip",
+            "installed_relative_path": "clip_l.safetensors"
+        }
+    ]
+}

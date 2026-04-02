@@ -63,15 +63,31 @@ with shared.gradio_root:
     remove_mask_state = gr.State(None)
     with gr.Row():
         with gr.Column(scale=2):
-            with gr.Row():
-                with gr.Column(scale=5, min_width=420, visible=False) as preview_column:
-                    progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
-                                               height=768, type='numpy',
-                                               elem_classes=['main_view', 'preview_panel'])
-                with gr.Column(scale=6, min_width=500, visible=True) as gallery_column:
-                    gallery = gr.Gallery(label='Gallery', show_label=True, object_fit='contain', visible=True, height=768,
-                                         elem_classes=['resizable_area', 'main_view', 'final_gallery', 'image_gallery'],
-                                         elem_id='final_gallery')
+            with gr.Tabs(selected='preview_workspace'):
+                with gr.Tab(label='Preview', id='preview_workspace'):
+                    with gr.Row():
+                        with gr.Column(scale=5, min_width=420, visible=False) as preview_column:
+                            progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
+                                                       height=768, type='numpy',
+                                                       elem_classes=['main_view', 'preview_panel'])
+                        with gr.Column(scale=6, min_width=500, visible=True) as gallery_column:
+                            gallery = gr.Gallery(label='Gallery', show_label=True, object_fit='contain', visible=True, height=768,
+                                                 elem_classes=['resizable_area', 'main_view', 'final_gallery', 'image_gallery'],
+                                                 elem_id='final_gallery')
+                with gr.Tab(label='Model Browser', id='model_browser_workspace'):
+                    gr.HTML(
+                        """
+<div id="nex-model-browser-panel" class="nex-model-browser-panel">
+  <div class="nex-model-browser-panel__header">
+    <div>
+      <h3 class="nex-model-browser-panel__title">Model Browser</h3>
+      <p class="nex-model-browser-panel__subtitle">Browse installed models, register uncatalogued ones, and queue downloads from the active tab.</p>
+    </div>
+  </div>
+  <nex-model-browser id="nex-model-browser" data-refresh-button-id="refresh_files_button" data-drop-selector-id="model_browser_drop_selector_bridge" data-drop-target-id="model_browser_drop_target_bridge" data-drop-button-id="model_browser_apply_drop_button"></nex-model-browser>
+</div>
+                        """
+                    )
             progress_html = gr.HTML(value=modules.html.make_progress_html(32, 'Progress 32%'), visible=False,
                                     elem_id='progress-bar', elem_classes='progress-bar')
             with gr.Row():
@@ -445,6 +461,9 @@ with shared.gradio_root:
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
 
+                model_browser_drop_selector = models_panel_result['model_browser_drop_selector']
+                model_browser_drop_target = models_panel_result['model_browser_drop_target']
+                model_browser_apply_drop = models_panel_result['model_browser_apply_drop']
             with gr.Tab(label='Advanced'):
                 debug_panel_result = advanced_panel.build_debug_tab()
                 sharpness = debug_panel_result['sharpness']
@@ -619,6 +638,9 @@ with shared.gradio_root:
             'style_search_bar': style_search_bar,
             'refresh_files': refresh_files,
             'inpaint_engine_state': inpaint_engine_state,
+            'model_browser_drop_selector': model_browser_drop_selector,
+            'model_browser_drop_target': model_browser_drop_target,
+            'model_browser_apply_drop': model_browser_apply_drop,
             'outpaint_engine_state': outpaint_engine_state,
             'generate_button': generate_button,
             'load_parameter_button': load_parameter_button,
@@ -703,5 +725,6 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
+
 
 

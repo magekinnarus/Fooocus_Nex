@@ -9,6 +9,12 @@ __pycache__
 *.corrupted
 *.partial
 *.onnx
+*.zip
+*.gguf
+*.sft
+/models/removals/ckpt_base_cuda
+/models/insightface/models/
+/models/insightface/_archives/
 .env
 hash_cache.txt
 /input
@@ -31,7 +37,6 @@ config.txt
 /config_states/
 /auth.json
 .DS_Store
-/models/
 /venv/
 /.agent/
 /tests/

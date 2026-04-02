@@ -1,0 +1,186 @@
+{
+    "catalog_id": "user.unregistered.install",
+    "catalog_label": "Unregistered Installed Models",
+    "entries": [
+        {
+            "id": "unregistered.checkpoints.38415f36e511",
+            "name": "juggernaut_v8.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "juggernaut_v8.safetensors",
+            "display_name": "juggernaut v8",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.3c81479f2e7d",
+            "name": "waiREALMIX_v11.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "waiREALMIX_v11.safetensors",
+            "display_name": "waiREALMIX v11",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.6038409fb0ca",
+            "name": "CHEYENNE_v16.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "CHEYENNE_v16.safetensors",
+            "display_name": "CHEYENNE v16",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.aad421544f0f",
+            "name": "realcartoon3d_v14.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "realcartoon3d_v14.safetensors",
+            "display_name": "realcartoon3d v14",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.c87300a52e9a",
+            "name": "oneObsession_v20Bold.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "oneObsession_v20Bold.safetensors",
+            "display_name": "oneObsession v20Bold",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.cac4849de2ba",
+            "name": "cashmoneyAnime_v10.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "cashmoneyAnime_v10.safetensors",
+            "display_name": "cashmoneyAnime v10",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.d32a7baf977b",
+            "name": "cyberrealistic_v90Exploration.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "cyberrealistic_v90Exploration.safetensors",
+            "display_name": "cyberrealistic v90Exploration",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.checkpoints.e37ec3af9c97",
+            "name": "aamXLAnimeMix_v10.safetensors",
+            "root_key": "checkpoints",
+            "relative_path": "aamXLAnimeMix_v10.safetensors",
+            "display_name": "aamXLAnimeMix v10",
+            "model_type": "checkpoint",
+            "architecture": "sdxl",
+            "sub_architecture": "base",
+            "compatibility_family": "sdxl",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        },
+        {
+            "id": "unregistered.loras.216cf0ba2562",
+            "name": "3D_Animation_Style_Normal.safetensors",
+            "root_key": "loras",
+            "relative_path": "SD15/3D_Animation_Style_Normal.safetensors",
+            "display_name": "3D Animation Style Normal",
+            "model_type": "lora",
+            "architecture": "sd15",
+            "sub_architecture": "base",
+            "compatibility_family": "sd15",
+            "source_provider": "local",
+            "registration_state": "unregistered",
+            "visibility": "generic",
+            "preset_managed": false,
+            "token_required": false,
+            "tags": [
+                "auto_generated",
+                "unregistered"
+            ]
+        }
+    ]
+}

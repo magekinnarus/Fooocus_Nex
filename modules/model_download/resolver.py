@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
@@ -15,7 +15,7 @@ class DownloadResolver(ABC):
 
 class DirectResolver(DownloadResolver):
     def resolve(self, entry: ModelCatalogEntry, policy: ModelDownloadPolicy) -> DownloadPlan:
-        source = _first_source(entry)
+        source = _entry_source(entry)
         destination_root = policy.resolve_root_path(entry)
         destination_path = os.path.join(destination_root, entry.relative_path)
         return DownloadPlan(
@@ -33,7 +33,7 @@ class CivitAIResolver(DownloadResolver):
         self.token_env = token_env
 
     def resolve(self, entry: ModelCatalogEntry, policy: ModelDownloadPolicy) -> DownloadPlan:
-        source = _first_source(entry)
+        source = _entry_source(entry)
         token = os.getenv(self.token_env, '')
         resolved_url = source.url
         if entry.token_required and token:
@@ -56,7 +56,7 @@ class HuggingFaceResolver(DownloadResolver):
         self.token_env = token_env
 
     def resolve(self, entry: ModelCatalogEntry, policy: ModelDownloadPolicy) -> DownloadPlan:
-        source = _first_source(entry)
+        source = _entry_source(entry)
         headers = list(source.headers)
         token = os.getenv(self.token_env, '')
         if entry.token_required and token:
@@ -74,8 +74,7 @@ class HuggingFaceResolver(DownloadResolver):
         )
 
 
-def _first_source(entry: ModelCatalogEntry) -> ModelSource:
-    if not entry.sources:
-        raise ValueError(f'Catalog entry {entry.id} does not define any sources')
-    return entry.sources[0]
-
+def _entry_source(entry: ModelCatalogEntry) -> ModelSource:
+    if entry.source is None:
+        raise ValueError(f'Catalog entry {entry.id} does not define a source')
+    return entry.source

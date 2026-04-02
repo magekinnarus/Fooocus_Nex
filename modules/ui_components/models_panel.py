@@ -1,14 +1,15 @@
-import gradio as gr
+﻿import gradio as gr
 import modules.config
 import modules.flags as flags
 import modules.ui_components.styles_panel as styles_panel
 
+
 def build_models_tab():
     """
     Builds the Models tab: base model, VAE, CLIP, LoRA rows, and refresh button.
-    
+
     Returns:
-        dict: Gradio components mapping name to instance, 
+        dict: Gradio components mapping name to instance,
               includes 'lora_ctrls' list.
     """
     results = {}
@@ -16,23 +17,26 @@ def build_models_tab():
     with gr.Group():
         with gr.Row():
             results['base_model'] = gr.Dropdown(
-                label='Base Model', 
-                choices=modules.config.model_filenames, 
-                value=modules.config.default_base_model_name, 
-                show_label=True
+                label='Base Model',
+                choices=modules.config.model_filenames,
+                value=modules.config.default_base_model_name,
+                show_label=True,
+                elem_id='model_base_dropdown',
             )
             results['vae_model'] = gr.Dropdown(
-                label='VAE', 
-                choices=[flags.default_vae] + modules.config.vae_filenames, 
-                value=modules.config.default_vae, 
-                show_label=True
+                label='VAE',
+                choices=[flags.default_vae] + modules.config.vae_filenames,
+                value=modules.config.default_vae,
+                show_label=True,
+                elem_id='model_vae_dropdown',
             )
 
         results['clip_model'] = gr.Dropdown(
-            label='Force CLIP', 
-            choices=['None'] + modules.config.clip_filenames, 
-            value=modules.config.default_clip, 
-            show_label=True
+            label='Force CLIP',
+            choices=['None'] + modules.config.clip_filenames,
+            value=modules.config.default_clip,
+            show_label=True,
+            elem_id='model_clip_dropdown',
         )
 
     with gr.Accordion(label='Prompt Presets', open=False, elem_id='style_selections_accordion') as style_selections_accordion:
@@ -46,23 +50,24 @@ def build_models_tab():
             with gr.Row():
                 lora_enabled = gr.Checkbox(
                     label='Enable', value=enabled,
-                    elem_classes=['lora_enable', 'min_check'], 
+                    elem_classes=['lora_enable', 'min_check'],
                     scale=1
                 )
                 lora_model = gr.Dropdown(
                     label=f'LoRA {i + 1}',
-                    choices=['None'] + modules.config.lora_filenames, 
+                    choices=['None'] + modules.config.lora_filenames,
                     value=filename,
-                    elem_classes='lora_model', 
+                    elem_classes='lora_model',
+                    elem_id=f'lora_model_dropdown_{i + 1}',
                     scale=5
                 )
                 lora_weight = gr.Slider(
-                    label='Weight', 
+                    label='Weight',
                     minimum=modules.config.default_loras_min_weight,
-                    maximum=modules.config.default_loras_max_weight, 
-                    step=0.01, 
+                    maximum=modules.config.default_loras_max_weight,
+                    step=0.01,
                     value=weight,
-                    elem_classes='lora_weight', 
+                    elem_classes='lora_weight',
                     scale=5
                 )
                 lora_ctrls += [lora_enabled, lora_model, lora_weight]
@@ -70,9 +75,30 @@ def build_models_tab():
 
     with gr.Row():
         results['refresh_files'] = gr.Button(
-            value='\U0001f504 Refresh All Files', 
-            variant='secondary', 
-            elem_classes='refresh_button'
+            value='\U0001f504 Refresh All Files',
+            variant='secondary',
+            elem_classes='refresh_button',
+            elem_id='refresh_files_button',
         )
 
+
+    results['model_browser_drop_selector'] = gr.Textbox(
+        value='',
+        visible=False,
+        elem_id='model_browser_drop_selector_bridge',
+        show_label=False,
+        container=False,
+    )
+    results['model_browser_drop_target'] = gr.Textbox(
+        value='',
+        visible=False,
+        elem_id='model_browser_drop_target_bridge',
+        show_label=False,
+        container=False,
+    )
+    results['model_browser_apply_drop'] = gr.Button(
+        value='Apply Browser Drop',
+        visible=False,
+        elem_id='model_browser_apply_drop_button',
+    )
     return results
