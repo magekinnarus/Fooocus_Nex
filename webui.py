@@ -84,10 +84,11 @@ with shared.gradio_root:
       <p class="nex-model-browser-panel__subtitle">Browse installed models, register uncatalogued ones, and queue downloads from the active tab.</p>
     </div>
   </div>
-  <nex-model-browser id="nex-model-browser" data-refresh-button-id="refresh_files_button" data-drop-selector-id="model_browser_drop_selector_bridge" data-drop-target-id="model_browser_drop_target_bridge" data-drop-button-id="model_browser_apply_drop_button"></nex-model-browser>
+  <nex-model-browser id="nex-model-browser" data-refresh-button-id="refresh_files_button" data-apply-data-id="model_browser_apply_data_bridge"></nex-model-browser>
 </div>
                         """
                     )
+                    model_browser_apply_data = gr.Textbox(value='', visible=True, elem_id='model_browser_apply_data_bridge', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
             progress_html = gr.HTML(value=modules.html.make_progress_html(32, 'Progress 32%'), visible=False,
                                     elem_id='progress-bar', elem_classes='progress-bar')
             with gr.Row():
@@ -460,10 +461,6 @@ with shared.gradio_root:
 
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
-
-                model_browser_drop_selector = models_panel_result['model_browser_drop_selector']
-                model_browser_drop_target = models_panel_result['model_browser_drop_target']
-                model_browser_apply_drop = models_panel_result['model_browser_apply_drop']
             with gr.Tab(label='Advanced'):
                 debug_panel_result = advanced_panel.build_debug_tab()
                 sharpness = debug_panel_result['sharpness']
@@ -638,9 +635,7 @@ with shared.gradio_root:
             'style_search_bar': style_search_bar,
             'refresh_files': refresh_files,
             'inpaint_engine_state': inpaint_engine_state,
-            'model_browser_drop_selector': model_browser_drop_selector,
-            'model_browser_drop_target': model_browser_drop_target,
-            'model_browser_apply_drop': model_browser_apply_drop,
+            'model_browser_apply_data': model_browser_apply_data,
             'outpaint_engine_state': outpaint_engine_state,
             'generate_button': generate_button,
             'load_parameter_button': load_parameter_button,

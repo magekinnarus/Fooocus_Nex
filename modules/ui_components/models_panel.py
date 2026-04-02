@@ -82,23 +82,4 @@ def build_models_tab():
         )
 
 
-    results['model_browser_drop_selector'] = gr.Textbox(
-        value='',
-        visible=False,
-        elem_id='model_browser_drop_selector_bridge',
-        show_label=False,
-        container=False,
-    )
-    results['model_browser_drop_target'] = gr.Textbox(
-        value='',
-        visible=False,
-        elem_id='model_browser_drop_target_bridge',
-        show_label=False,
-        container=False,
-    )
-    results['model_browser_apply_drop'] = gr.Button(
-        value='Apply Browser Drop',
-        visible=False,
-        elem_id='model_browser_apply_drop_button',
-    )
     return results

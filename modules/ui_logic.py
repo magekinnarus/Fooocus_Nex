@@ -451,7 +451,7 @@ def _get_installed_dropdown_value(selector, expected_root_keys, available_choice
     return _resolve_dropdown_choice(candidate_value, available_choices)
 
 
-def apply_model_browser_drop(drop_selector, drop_target, current_base_model, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_ctrl_values):
+def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_model, current_clip_model, *current_lora_ctrl_values):
     base_choices = modules.config.model_filenames
     vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
     clip_choices = ['None'] + modules.config.clip_filenames
@@ -470,6 +470,24 @@ def apply_model_browser_drop(drop_selector, drop_target, current_base_model, cur
     vae_value = current_vae_model if current_vae_model in vae_choices else modules.flags.default_vae
     clip_value = current_clip_model if current_clip_model in clip_choices else 'None'
     lora_choices = get_filtered_lora_choices_for_model(base_value)
+
+    drop_selector = ''
+    drop_target = ''
+    current_aspect_ratio = ''
+    if apply_data_json:
+        try:
+            parsed = json.loads(apply_data_json)
+            if isinstance(parsed, dict):
+                drop_selector = str(parsed.get('selector', '') or '')
+                drop_target = str(parsed.get('target', '') or '')
+                current_aspect_ratio = str(parsed.get('aspect_ratio', '') or '')
+        except (json.JSONDecodeError, TypeError, ValueError):
+            drop_selector = ''
+            drop_target = ''
+            current_aspect_ratio = ''
+
+    if not current_aspect_ratio:
+        current_aspect_ratio = modules.config.get_default_aspect_ratio_label_for_model(base_value)
 
     if drop_selector and drop_target:
         if drop_target == 'base_model':
@@ -721,9 +739,9 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
                         queue=False, show_progress=False)
 
     model_browser_drop_outputs = [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_ctrls
-    model_browser_apply_drop.click(
+    model_browser_apply_data.change(
         apply_model_browser_drop,
-        inputs=[model_browser_drop_selector, model_browser_drop_target, base_model, aspect_ratios_selection, vae_model, clip_model] + lora_ctrls,
+        inputs=[model_browser_apply_data, base_model, vae_model, clip_model] + lora_ctrls,
         outputs=model_browser_drop_outputs,
         queue=False,
         show_progress=False,

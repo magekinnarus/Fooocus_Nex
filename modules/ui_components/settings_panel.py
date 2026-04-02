@@ -32,7 +32,8 @@ def build_settings_tab():
             choices=default_aspect_ratio_labels,
             value=default_aspect_ratio_label,
             info='width × height',
-            elem_classes='aspect_ratios'
+            elem_classes='aspect_ratios',
+            elem_id='aspect_ratios_selection'
         )
 
     results['image_number'] = gr.Slider(

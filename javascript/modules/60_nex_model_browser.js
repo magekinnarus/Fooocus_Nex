@@ -159,16 +159,8 @@
             return this.queryById(this.dataset.refreshButtonId);
         }
 
-        get dropSelectorField() {
-            return this.queryById(this.dataset.dropSelectorId);
-        }
-
-        get dropTargetField() {
-            return this.queryById(this.dataset.dropTargetId);
-        }
-
-        get dropApplyButton() {
-            return this.queryById(this.dataset.dropButtonId);
+        get applyDataField() {
+            return this.queryById(this.dataset.applyDataId);
         }
 
         thumbnailUrl(record) {
@@ -641,39 +633,37 @@
             return null;
         }
 
-        async waitForBridgeElements(maxAttempts = 8, delayMs = 80) {
-            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-                const selectorField = this.dropSelectorField;
-                const targetField = this.dropTargetField;
-                const applyButton = this.dropApplyButton?.matches('button') ? this.dropApplyButton : this.dropApplyButton?.querySelector('button');
-                if (selectorField && targetField && applyButton) {
-                    return { selectorField, targetField, applyButton };
-                }
-                await this.sleep(delayMs);
-            }
-            return null;
-        }
-
         async applyDropToTarget(payload, targetKey, acceptedRoots) {
             if (!payload?.selector || !payload?.rootKey) return;
             if (!acceptedRoots.includes(payload.rootKey)) {
                 this.setStatus(`This drop target only accepts ${acceptedRoots.join(' / ')} models.`, 'warning');
                 return;
             }
-            const bridge = await this.waitForBridgeElements();
-            if (!bridge) {
-                this.setStatus('Model drop bridge is not ready yet. Try reloading the UI.', 'error');
+            const field = this.applyDataField;
+            if (!field) {
+                this.setStatus('Model apply bridge is not ready yet. Try reloading the UI.', 'error');
                 return;
             }
-            const selectorReady = this.setBridgeValue(bridge.selectorField, payload.selector);
-            const targetReady = this.setBridgeValue(bridge.targetField, targetKey);
-            if (!selectorReady || !targetReady) {
-                this.setStatus('Model apply bridge could not set the target fields. Try reloading the UI.', 'error');
+            const applied = this.setBridgeValue(field, JSON.stringify({
+                selector: payload.selector,
+                target: targetKey,
+                aspect_ratio: this.currentAspectRatioValue(),
+                ts: Date.now(),
+            }));
+            if (!applied) {
+                this.setStatus('Model apply bridge could not update the apply field. Try reloading the UI.', 'error');
                 return;
             }
             this.setStatus(`Applying ${payload.rootKey} to ${targetKey.replace('_', ' ')}...`, 'info');
-            await this.sleep(80);
-            bridge.applyButton.click();
+        }
+
+        currentAspectRatioValue() {
+            const root = gradioRoot();
+            const checked = root.querySelector('#aspect_ratios_selection input[type="radio"]:checked') || root.querySelector('.aspect_ratios input[type="radio"]:checked');
+            if (checked && checked.value) return String(checked.value);
+            const checkedLabel = checked?.closest('label');
+            const text = checkedLabel?.querySelector('span')?.textContent || checkedLabel?.textContent;
+            return text ? String(text).trim() : '';
         }
 
         applyPromptDrop(payload, targetNode, label) {
