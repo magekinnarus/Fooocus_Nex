@@ -1,4 +1,6 @@
-﻿import os
+import os
+import time
+
 from modules import config, model_registry
 from modules.model_download.runtime import download_file
 
@@ -10,13 +12,46 @@ vae_approx_filenames = [
 ]
 
 
-def _ensure_internal_assets(category, progress=False):
-    for asset in sorted(model_registry.list_assets(category=category, internal_only=True), key=lambda item: item['id']):
+def _ensure_assets(label, assets, progress=False):
+    assets = list(assets or [])
+    if not assets:
+        return
+
+    start = time.perf_counter()
+    print(f'[Startup] Ensuring {label} assets ({len(assets)}) ...')
+    for asset in assets:
         model_registry.ensure_asset(asset['id'], progress=progress)
+    print(f'[Startup] Ensured {label} assets in {time.perf_counter() - start:.2f}s')
+
+
+def _ensure_internal_assets(category, progress=False):
+    _ensure_assets(
+        f'internal {category}',
+        sorted(model_registry.list_assets(category=category, internal_only=True), key=lambda item: item['id']),
+        progress=progress,
+    )
+
+
+def _ensure_guidance_assets(progress=False):
+    for channel in ('Structural', 'Contextual'):
+        _ensure_assets(
+            f'{channel.lower()} guidance',
+            sorted(model_registry.list_assets(channel=channel), key=lambda item: item['id']),
+            progress=progress,
+        )
+
+
+def _ensure_startup_support_assets(progress=False):
+    _ensure_internal_assets('upscale', progress=progress)
+    _ensure_internal_assets('inpaint', progress=progress)
+    _ensure_internal_assets('removal', progress=progress)
+    _ensure_guidance_assets(progress=progress)
 
 
 def download_models(default_model, checkpoint_downloads, embeddings_downloads, lora_downloads, vae_downloads, upscale_downloads):
     from modules.util import get_file_from_folder_list
+
+    overall_start = time.perf_counter()
 
     for file_name, url in vae_approx_filenames:
         download_file(url=url, model_dir=config.path_vae_approx, file_name=file_name)
@@ -56,12 +91,12 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
     for file_name, url in vae_downloads.items():
         download_file(url=url, model_dir=config.get_preferred_asset_root_path('vae', file_name=file_name), file_name=file_name)
 
-    # Internal upscalers now come from the centralized manifest system.
-    _ensure_internal_assets('upscale', progress=False)
+    # Front-load all support-model assets so the UI does not need to trigger them later.
+    _ensure_startup_support_assets(progress=False)
 
     # Keep preset/config-defined entries as additive custom downloads rather than the source of truth.
     for file_name, url in upscale_downloads.items():
         download_file(url=url, model_dir=config.get_preferred_asset_root_path('upscale_models', file_name=file_name), file_name=file_name)
 
+    print(f'[Startup] download_models work completed in {time.perf_counter() - overall_start:.2f}s')
     return default_model, checkpoint_downloads
-

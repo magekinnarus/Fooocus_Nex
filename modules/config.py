@@ -1,7 +1,8 @@
-﻿import os
+import os
 import json
 import math
 import numbers
+import time
 
 import args_manager
 import tempfile
@@ -1055,13 +1056,39 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
 
 def update_files():
     global model_filenames, clip_filenames, lora_filenames, vae_filenames, available_presets
-    model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
-    clip_filenames = sorted(list(set(get_model_filenames(paths_clips))))
-    lora_filenames = sorted(list(set(get_model_filenames(paths_lora_discovery))))
-    vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
-    available_presets = get_presets()
-    return
 
+    start = time.perf_counter()
+
+    model_start = time.perf_counter()
+    model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
+    model_elapsed = time.perf_counter() - model_start
+
+    clip_start = time.perf_counter()
+    clip_filenames = sorted(list(set(get_model_filenames(paths_clips))))
+    clip_elapsed = time.perf_counter() - clip_start
+
+    lora_start = time.perf_counter()
+    lora_filenames = sorted(list(set(get_model_filenames(paths_lora_discovery))))
+    lora_elapsed = time.perf_counter() - lora_start
+
+    vae_start = time.perf_counter()
+    vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
+    vae_elapsed = time.perf_counter() - vae_start
+
+    preset_start = time.perf_counter()
+    available_presets = get_presets()
+    preset_elapsed = time.perf_counter() - preset_start
+
+    print(
+        '[Startup] update_files summary: '
+        f'models={len(model_filenames)} ({model_elapsed:.2f}s), '
+        f'clips={len(clip_filenames)} ({clip_elapsed:.2f}s), '
+        f'loras={len(lora_filenames)} ({lora_elapsed:.2f}s), '
+        f'vaes={len(vae_filenames)} ({vae_elapsed:.2f}s), '
+        f'presets={len(available_presets)} ({preset_elapsed:.2f}s), '
+        f'total={time.perf_counter() - start:.2f}s'
+    )
+    return
 
 def downloading_inpaint_models(v):
     assert v in modules.flags.inpaint_engine_versions
@@ -1154,6 +1181,8 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
+
+
 
 
 

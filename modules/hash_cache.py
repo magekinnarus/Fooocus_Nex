@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import cpu_count
 
@@ -59,14 +60,23 @@ def save_cache_to_file(filename=None, hash_value=None):
 
 
 def init_cache(model_filenames, paths_checkpoints, lora_filenames, paths_loras):
+    start = time.perf_counter()
+
+    load_start = time.perf_counter()
     load_cache_from_file()
+    print(f'[Startup] Hash cache load completed in {time.perf_counter() - load_start:.2f}s ({len(hash_cache)} entries)')
 
     if args_manager.args.rebuild_hash_cache:
         max_workers = args_manager.args.rebuild_hash_cache if args_manager.args.rebuild_hash_cache > 0 else cpu_count()
+        rebuild_start = time.perf_counter()
         rebuild_cache(lora_filenames, model_filenames, paths_checkpoints, paths_loras, max_workers)
+        print(f'[Startup] Hash cache rebuild completed in {time.perf_counter() - rebuild_start:.2f}s')
 
+    save_start = time.perf_counter()
     # write cache to file again for sorting and cleanup of invalid cache entries
     save_cache_to_file()
+    print(f'[Startup] Hash cache save completed in {time.perf_counter() - save_start:.2f}s')
+    print(f'[Startup] init_cache completed in {time.perf_counter() - start:.2f}s')
 
 
 def rebuild_cache(lora_filenames, model_filenames, paths_checkpoints, paths_loras, max_workers=cpu_count()):

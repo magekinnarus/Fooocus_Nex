@@ -1,6 +1,7 @@
-﻿import os
+import os
 import ssl
 import sys
+import time
 
 # Aliasing __main__ as launch to prevent double loading
 if __name__ == "__main__":
@@ -24,8 +25,9 @@ import platform
 import fooocus_version
 
 from build_launcher import build_launcher
-from modules.launch_util import delete_folder_content # Keep this for cleanup
+from modules.launch_util import delete_folder_content  # Keep this for cleanup
 from modules.model_loader import load_file_from_url
+
 
 def prepare_environment():
     print(f"Python {sys.version}")
@@ -33,12 +35,18 @@ def prepare_environment():
     print("Dependency management is handled manually in Colab cells.")
     return
 
+
 def ini_args():
     from args_manager import args
     return args
 
 
+def _log_startup_phase(label, start_time):
+    print(f'[Startup] {label} completed in {time.perf_counter() - start_time:.2f}s')
+
+
 if __name__ == "__main__":
+    startup_start = time.perf_counter()
     print('[System ARGV] ' + str(sys.argv))
 
     prepare_environment()
@@ -78,7 +86,7 @@ if __name__ == "__main__":
             print("[Cleanup] Cleanup successful")
         else:
             print(f"[Cleanup] Failed to delete content of temp dir.")
-            
+
         staging_dir = os.path.join(config.path_outputs, "staging")
         if os.path.exists(staging_dir):
             print(f'[Cleanup] Attempting to delete content of staging dir {staging_dir}')
@@ -106,12 +114,22 @@ if __name__ == "__main__":
             else:
                 print(f"[Cleanup] Failed to delete content of workspaces dir.")
 
+    phase_start = time.perf_counter()
     config.default_base_model_name, config.checkpoint_downloads = download_models(
         config.default_base_model_name, config.checkpoint_downloads,
         config.embeddings_downloads, config.lora_downloads, config.vae_downloads, config.upscale_downloads)
+    _log_startup_phase('download_models', phase_start)
 
+    phase_start = time.perf_counter()
     config.update_files()
+    _log_startup_phase('config.update_files', phase_start)
+
+    phase_start = time.perf_counter()
     init_cache(config.model_filenames, config.paths_checkpoints, config.lora_filenames, config.paths_lora_lookup)
+    _log_startup_phase('init_cache', phase_start)
 
+    print('[Startup] Importing webui ...')
+    phase_start = time.perf_counter()
     from webui import *
-
+    _log_startup_phase('webui import/bootstrap', phase_start)
+    print(f'[Startup] Total startup time before interactive UI: {time.perf_counter() - startup_start:.2f}s')
