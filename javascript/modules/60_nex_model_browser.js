@@ -1033,14 +1033,10 @@
                         <div class="nmb-top-tabs">${this.renderTopTabs()}</div>
                         <div class="nmb-sub-tabs">${this.renderSubTabs()}</div>
                         <div class="nmb-toolbar">
-                            <div>
-                                <div class="nmb-toolbar__title">${escapeHtml(TAB_DEFS[this.state.activeTab].label)} / ${escapeHtml(this.activeSubTabDef().label)}</div>
-                                <div class="nmb-toolbar__subtitle">Selections can stay staged across subtabs, but download and clear actions only affect the current subtab.</div>
-                            </div>
                             <div class="nmb-toolbar__actions">
-                                <button type="button" class="nmb-secondary" data-action="clear-selection">Clear This Subtab</button>
-                                <button type="button" class="nmb-secondary" data-action="refresh-browser">Reload Browser</button>
-                                <button type="button" class="nmb-primary" data-action="download-active" ${selectedCount ? '' : 'disabled'}>Download Selected in This Subtab${selectedCount ? ` (${selectedCount})` : ''}</button>
+                                <button type="button" class="nmb-action-btn" data-action="clear-selection" data-type="clear">Clear</button>
+                                <button type="button" class="nmb-action-btn" data-action="refresh-browser" data-type="reload">Reload</button>
+                                <button type="button" class="nmb-action-btn nmb-primary-action" data-action="download-active" data-type="download" ${selectedCount ? '' : 'disabled'}>Download Selected${selectedCount ? ` (${selectedCount})` : ''}</button>
                             </div>
                         </div>
                         ${this.state.status ? `<div class="nmb-status nmb-status--${escapeHtml(this.state.statusTone)}">${escapeHtml(this.state.status)}</div>` : ''}

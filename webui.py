@@ -78,12 +78,6 @@ with shared.gradio_root:
                     gr.HTML(
                         """
 <div id="nex-model-browser-panel" class="nex-model-browser-panel">
-  <div class="nex-model-browser-panel__header">
-    <div>
-      <h3 class="nex-model-browser-panel__title">Model Browser</h3>
-      <p class="nex-model-browser-panel__subtitle">Browse installed models, register uncatalogued ones, and queue downloads from the active tab.</p>
-    </div>
-  </div>
   <nex-model-browser id="nex-model-browser" data-refresh-button-id="refresh_files_button" data-apply-data-id="model_browser_apply_data_bridge"></nex-model-browser>
 </div>
                         """
