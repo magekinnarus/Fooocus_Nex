@@ -1,9 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Sequence
 
 from .spec import ModelCatalogEntry
+
+import modules.config as config
 
 
 @dataclass
@@ -18,6 +20,16 @@ class ModelDownloadPolicy:
         root_key = self.resolve_root_key(entry)
         if root_key not in self.root_map:
             raise KeyError(f'Unknown model root key: {root_key}')
+
+        try:
+            return config.get_preferred_asset_root_path(
+                root_key,
+                file_name=entry.name,
+                relative_path=entry.relative_path,
+            )
+        except KeyError:
+            pass
+
         root_value = self.root_map[root_key]
         if isinstance(root_value, str):
             return root_value
@@ -34,3 +46,4 @@ class ModelDownloadPolicy:
             and entry.registration_state != 'unregistered'
             and not entry.preset_managed
         )
+

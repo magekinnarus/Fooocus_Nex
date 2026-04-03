@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import zipfile
 from functools import lru_cache
@@ -90,7 +90,11 @@ def resolve_asset_root(asset):
     destination = asset.get("destination")
     if not destination:
         raise ValueError(f"Asset {asset.get('id')} is missing destination")
-    return config.get_asset_root_path(destination)
+    return config.get_preferred_asset_root_path(
+        destination,
+        file_name=asset.get("archive_name") or os.path.basename(str(asset.get("relative_path") or "")).strip(),
+        relative_path=asset.get("relative_path"),
+    )
 
 
 def resolve_asset_path(asset_id):
@@ -245,3 +249,4 @@ def _flatten_first_subdir(directory):
         os.rmdir(nested_dir)
     except OSError:
         pass
+

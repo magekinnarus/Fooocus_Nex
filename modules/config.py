@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import math
 import numbers
@@ -343,7 +343,7 @@ paths_checkpoints = get_dir_or_set_default('path_checkpoints', ['../models/check
 paths_loras = get_dir_or_set_default('path_loras', ['../models/loras/'], True, True)
 path_embeddings = get_dir_or_set_default('path_embeddings', '../models/embeddings/', make_directory=True)
 path_vae_approx = get_dir_or_set_default('path_vae_approx', '../models/vae_approx/', make_directory=True)
-path_vae = get_dir_or_set_default('path_vae', '../models/vae/', make_directory=True)
+path_vae = get_dir_or_set_default('path_vae', '../models/vae/', True, True)
 path_unet = get_dir_or_set_default('path_unet', '../models/unet/', True, True)
 path_clip = get_dir_or_set_default('path_clip', '../models/clip/', True, True)
 path_upscale_models = get_dir_or_set_default('path_upscale_models', '../models/upscale_models/', True, True)
@@ -431,7 +431,7 @@ asset_root_paths = {
     'faceid_loras': path_faceid_loras,
     'embeddings': path_embeddings,
     'vae_approx': path_vae_approx,
-    'vae': path_vae,
+    'vae': path_vae[0] if isinstance(path_vae, list) else path_vae,
     'unet': path_unet[0] if isinstance(path_unet, list) else path_unet,
     'clip': paths_clips[0],
     'upscale_models': path_upscale_models[0] if isinstance(path_upscale_models, list) else path_upscale_models,
@@ -445,11 +445,67 @@ asset_root_paths = {
     'outputs': path_outputs,
 }
 
+asset_root_path_groups = {
+    'checkpoints': list(paths_checkpoints),
+    'loras': list(paths_loras),
+    'loras_lcm': [path_loras_lcm],
+    'loras_lightning': [path_loras_lightning],
+    'faceid_loras': [path_faceid_loras],
+    'embeddings': [path_embeddings],
+    'vae_approx': [path_vae_approx],
+    'vae': list(path_vae) if isinstance(path_vae, list) else [path_vae],
+    'unet': list(path_unet) if isinstance(path_unet, list) else [path_unet],
+    'clip': list(paths_clips),
+    'upscale_models': list(path_upscale_models) if isinstance(path_upscale_models, list) else [path_upscale_models],
+    'inpaint': [path_inpaint],
+    'controlnet_models': list(path_controlnet),
+    'clip_vision': [path_clip_vision],
+    'vision_support': [path_vision_support],
+    'preprocessors': [path_preprocessors],
+    'insightface': [path_insightface],
+    'removals': [path_removals],
+    'outputs': [path_outputs],
+}
+
+_persistent_asset_filenames = {
+    'upscale_models': {
+        '2xnomosuni_span_multijpg_ldl.pth',
+        '4xnomos2_otf_esrgan.pth',
+    },
+    'vae': {
+        'sdxl_vae.safetensors',
+        'fixfp16errorssdxllowermemoryuse_v10.safetensors',
+        'vae-ft-mse-840000-ema-pruned.safetensors',
+    },
+}
+
 
 def get_asset_root_path(key):
     if key not in asset_root_paths:
         raise KeyError(f'Unknown asset root path key: {key}')
     return asset_root_paths[key]
+
+
+def get_asset_root_paths(key):
+    if key not in asset_root_path_groups:
+        raise KeyError(f'Unknown asset root path key: {key}')
+    return list(asset_root_path_groups[key])
+
+
+def get_preferred_asset_root_path(key, *, file_name=None, relative_path=None):
+    roots = get_asset_root_paths(key)
+    if not roots:
+        raise KeyError(f'No configured filesystem path for asset root key: {key}')
+    if len(roots) == 1:
+        return roots[0]
+
+    candidate_name = file_name or os.path.basename(str(relative_path or '')).strip()
+    normalized_name = str(candidate_name or '').strip().lower()
+    persistent_names = _persistent_asset_filenames.get(key, set())
+    if normalized_name and normalized_name in persistent_names:
+        return roots[0]
+
+    return roots[1]
 
 
 def get_download_manifest_root():
@@ -865,7 +921,7 @@ example_inpaint_prompts = get_config_item_or_set_default(
 )
 default_save_metadata_to_images = get_config_item_or_set_default(
     key='default_save_metadata_to_images',
-    default_value=False,
+    default_value=True,
     validator=lambda x: isinstance(x, bool),
     expected_type=bool
 )
@@ -1098,6 +1154,8 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
+
+
 
 
 

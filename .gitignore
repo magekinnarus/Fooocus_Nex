@@ -1,4 +1,4 @@
-__pycache__
+﻿__pycache__
 *.ckpt
 *.safetensors
 *.pth
@@ -40,3 +40,5 @@ config.txt
 /venv/
 /.agent/
 /tests/
+configs/model_catalogs/user/*.json
+

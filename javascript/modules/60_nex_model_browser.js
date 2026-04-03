@@ -54,6 +54,11 @@
     const ARCHITECTURE_OPTIONS = ['unknown', 'sd15', 'sdxl'];
     const SUB_ARCHITECTURE_OPTIONS = ['general', 'none', 'base', 'pony', 'illustrious', 'noob'];
     const SOURCE_PROVIDER_OPTIONS = ['local', 'civitai', 'huggingface'];
+    const NON_EDITABLE_ADD_MODEL_CATALOG_IDS = new Set([
+        'user.local.models',
+        'user.civitai.main',
+        'user.huggingface.main',
+    ]);
     const DRAG_ROOTS = new Set(['checkpoints', 'unet', 'vae', 'clip', 'loras', 'embeddings']);
     const DROP_TARGETS = [
         { selector: '#model_base_dropdown', target: 'base_model', roots: ['checkpoints', 'unet'] },
@@ -106,6 +111,7 @@
                 selectedByRoot: {},
                 drawer: null,
                 jobs: {},
+                pendingActivations: {},
                 status: '',
                 statusTone: 'info',
                 thumbnailRevision: 0,
@@ -192,6 +198,31 @@
 
         resolveTextField(wrapper) {
             return wrapper?.matches('input, textarea') ? wrapper : wrapper?.querySelector('input, textarea');
+        }
+
+        captureFieldFocus(input) {
+            if (!input?.dataset?.field || !input.matches('input, textarea')) return null;
+            return {
+                field: input.dataset.field,
+                start: typeof input.selectionStart === 'number' ? input.selectionStart : null,
+                end: typeof input.selectionEnd === 'number' ? input.selectionEnd : null,
+            };
+        }
+
+        restoreFieldFocus(focusState) {
+            if (!focusState?.field) return;
+            window.requestAnimationFrame(() => {
+                const target = Array.from(this.querySelectorAll('.nmb-drawer [data-field]'))
+                    .find((node) => node.dataset.field === focusState.field && node.matches('input, textarea'));
+                if (!target) return;
+                target.focus();
+                if (typeof focusState.start === 'number' && typeof focusState.end === 'number' && typeof target.setSelectionRange === 'function') {
+                    const valueLength = String(target.value || '').length;
+                    const start = Math.max(0, Math.min(focusState.start, valueLength));
+                    const end = Math.max(start, Math.min(focusState.end, valueLength));
+                    target.setSelectionRange(start, end);
+                }
+            });
         }
 
         setStatus(message, tone = 'info') {
@@ -359,7 +390,10 @@
                         const job = failed[0];
                         this.setStatus(job.message || job.error || `Download failed for ${job.entry_id}.`, 'error');
                     }
-                    if (completed) await this.refreshAllData();
+                    if (completed) {
+                        await this.refreshAllData();
+                        await this.finalizePendingActivations();
+                    }
                 } catch (error) {
                     this.setStatus(error.message || 'Download polling failed.', 'error');
                 }
@@ -369,32 +403,305 @@
             this.pollHandle = window.setTimeout(poll, 1200);
         }
 
+        rootKeyForModelType(modelType) {
+            return {
+                checkpoint: 'checkpoints',
+                lora: 'loras',
+                unet: 'unet',
+                clip: 'clip',
+                vae: 'vae',
+                embedding: 'embeddings',
+            }[String(modelType || '').trim().toLowerCase()] || '';
+        }
+
+        drawerRootKey(drawer = this.state.drawer) {
+            return drawer?.entry?.root_key || this.rootKeyForModelType(drawer?.form?.model_type || '');
+        }
+
+        defaultDrawerForm(overrides = {}) {
+            return {
+                display_name: '',
+                name: '',
+                installed_relative_path: '',
+                relative_path: '',
+                model_type: 'checkpoint',
+                architecture: 'unknown',
+                sub_architecture: 'general',
+                thumbnail_library_relative: '',
+                thumbnail_source_name: '',
+                source_provider: 'local',
+                source_version_id: '',
+                source_url: '',
+                source_input: '',
+                alias: '',
+                target_catalog_id: '',
+                new_catalog_name: '',
+                asset_group_key: '',
+                catalog_id: '',
+                catalog_label: '',
+                filename: '',
+                notes: '',
+                companion_clip_selector: '',
+                companion_clip_relative_path: '',
+                ...overrides,
+            };
+        }
+
+        activePanelDefaults() {
+            const subKey = this.activeSubTabDef()?.key || '';
+            let rootKey = this.activeRootKeys()[0] || 'checkpoints';
+            if (this.state.activeTab === 'others') {
+                if (subKey === 'clip') rootKey = 'clip';
+                else if (subKey.includes('vae')) rootKey = 'vae';
+                else rootKey = 'embeddings';
+            }
+            const modelType = {
+                checkpoints: 'checkpoint',
+                loras: 'lora',
+                unet: 'unet',
+                clip: 'clip',
+                vae: 'vae',
+                embeddings: 'embedding',
+            }[rootKey] || 'checkpoint';
+            const architecture = subKey.startsWith('sd15') ? 'sd15' : (subKey === 'clip' ? 'sdxl' : 'sdxl');
+            let subArchitecture = 'base';
+            if (['pony', 'illustrious', 'noob'].includes(subKey)) subArchitecture = subKey;
+            else if (rootKey === 'vae' || rootKey === 'embeddings') subArchitecture = 'none';
+            return { root_key: rootKey, model_type: modelType, architecture, sub_architecture: subArchitecture };
+        }
+
+        catalogOptionsForProvider(provider = '') {
+            const normalizedProvider = String(provider || '').trim().toLowerCase();
+            return (this.state.drawer?.personalCatalogs || []).filter((catalog) => {
+                if (catalog.is_system_catalog) return false;
+                if (!normalizedProvider) return true;
+                return catalog.source_provider === normalizedProvider || catalog.source_provider === 'local';
+            });
+        }
+
+        defaultLocalCatalogId(catalogs = this.state.drawer?.personalCatalogs || []) {
+            return catalogs.find((catalog) => catalog.is_default_local_catalog)?.catalog_id || '';
+        }
+
+        defaultDisplayName(value = '') {
+            const stem = String(value || '').replace(/\.[^.]+$/, '').trim();
+            return stem.replace(/[_-]+/g, ' ').trim();
+        }
+
+        slugifyIdentifier(value = '', fallback = 'entry') {
+            const normalized = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+            return normalized || fallback;
+        }
+
+        deriveFilenameFromAddSource(sourceProvider = '', sourceInput = '') {
+            if (String(sourceProvider || '').trim().toLowerCase() !== 'huggingface') return '';
+            try {
+                const parsed = new URL(String(sourceInput || '').trim());
+                const candidate = decodeURIComponent((parsed.pathname || '').split('/').pop() || '').trim();
+                return candidate || '';
+            } catch (error) {
+                return '';
+            }
+        }
+
+        defaultAddModelCatalogLabel() {
+            return 'Default personal download catalog';
+        }
+
+        addModelCatalogOptions() {
+            return (this.state.drawer?.personalCatalogs || []).filter((catalog) => {
+                return !catalog.is_system_catalog
+                    && !catalog.is_default_local_catalog
+                    && !NON_EDITABLE_ADD_MODEL_CATALOG_IDS.has(String(catalog.catalog_id || '').trim());
+            });
+        }
+
+        renderProviderToggle(selectedProvider = 'huggingface', disabled = false) {
+            const providers = [
+                ['huggingface', 'HuggingFace'],
+                ['civitai', 'CivitAI'],
+            ];
+            return `
+                <div class="nmb-provider-toggle" role="group" aria-label="Source Provider">
+                    ${providers.map(([value, label]) => `
+                        <button type="button" class="nmb-provider-toggle__button ${selectedProvider === value ? 'is-active' : ''}" data-action="set-source-provider" data-provider="${escapeHtml(value)}" ${disabled ? 'disabled' : ''}>${escapeHtml(label)}</button>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        renderAddModelCatalogSelect(provider, value = '', disabled = false) {
+            void provider;
+            const options = [`<option value="">${escapeHtml(this.defaultAddModelCatalogLabel())}</option>`];
+            this.addModelCatalogOptions().forEach((catalog) => {
+                const selected = catalog.catalog_id === value ? 'selected' : '';
+                options.push(`<option value="${escapeHtml(catalog.catalog_id)}" ${selected}>${escapeHtml(catalog.catalog_label)} [${escapeHtml(catalog.source_provider)}]</option>`);
+            });
+            return `<select data-field="target_catalog_id" ${disabled ? 'disabled' : ''}>${options.join('')}</select>`;
+        }
+
+        buildPersonalCatalogDraft(name, provider) {
+            const label = String(name || '').trim();
+            const slug = this.slugifyIdentifier(label, 'catalog');
+            return {
+                catalog_id: `user.personal.${slug}`,
+                catalog_label: label,
+                filename: slug,
+                source_provider: 'local',
+            };
+        }
+
+        syncAddModelDerivedFields(previousForm = {}) {
+            if (this.state.drawer?.mode !== 'add_model') return;
+            const form = this.state.drawer.form || {};
+            const previous = previousForm || {};
+            const previousDerivedName = previous.name || this.deriveFilenameFromAddSource(previous.source_provider, previous.source_input);
+            const currentDerivedName = form.name || this.deriveFilenameFromAddSource(form.source_provider, form.source_input);
+            if (!form.name && currentDerivedName) {
+                form.name = currentDerivedName;
+            }
+
+            const previousAutoDisplay = previousDerivedName ? this.defaultDisplayName(previousDerivedName) : '';
+            const currentAutoDisplay = form.name ? this.defaultDisplayName(form.name) : '';
+            const canUpdateDisplay = !previous.display_name || previous.display_name === previousAutoDisplay;
+            if (currentAutoDisplay && canUpdateDisplay) {
+                form.display_name = currentAutoDisplay;
+            }
+
+            const previousAutoAlias = this.slugifyIdentifier(previous.display_name || previousAutoDisplay, this.slugifyIdentifier(previousDerivedName, 'model'));
+            const currentAutoAlias = this.slugifyIdentifier(form.display_name || currentAutoDisplay, this.slugifyIdentifier(form.name, 'model'));
+            const canUpdateAlias = !previous.alias || previous.alias === previousAutoAlias;
+            if (currentAutoAlias && canUpdateAlias) {
+                form.alias = currentAutoAlias;
+            }
+
+            if (form.source_provider !== previous.source_provider) {
+                const validCatalogIds = new Set(this.addModelCatalogOptions().map((catalog) => catalog.catalog_id));
+                if (form.target_catalog_id && !validCatalogIds.has(form.target_catalog_id)) {
+                    form.target_catalog_id = '';
+                }
+            }
+            this.state.drawer.form = form;
+        }
+
+        resolveActivationConfig(rootKey, promptTarget = '') {
+            if (rootKey === 'embeddings') {
+                if (promptTarget === 'positive') {
+                    return { promptTarget: '#positive_prompt', label: 'positive prompt' };
+                }
+                if (promptTarget === 'negative') {
+                    return { promptTarget: '#negative_prompt', label: 'negative prompt' };
+                }
+                return null;
+            }
+            if (rootKey === 'checkpoints' || rootKey === 'unet') {
+                return { targetKey: 'base_model', acceptedRoots: ['checkpoints', 'unet'] };
+            }
+            if (rootKey === 'vae') return { targetKey: 'vae_model', acceptedRoots: ['vae'] };
+            if (rootKey === 'clip') return { targetKey: 'clip_model', acceptedRoots: ['clip'] };
+            if (rootKey === 'loras') return { targetKey: this.resolvePreferredLoraTarget(), acceptedRoots: ['loras'] };
+            return null;
+        }
+
+        async finalizePendingActivations() {
+            const pendingEntries = Object.entries(this.state.pendingActivations || {});
+            for (const [key, activation] of pendingEntries) {
+                const jobStates = (activation.jobIds || []).map((jobId) => this.state.jobs[jobId]?.status).filter(Boolean);
+                if (!jobStates.length) continue;
+                if (jobStates.some((status) => status === 'failed')) {
+                    delete this.state.pendingActivations[key];
+                    continue;
+                }
+                if (!jobStates.every((status) => status === 'succeeded')) continue;
+
+                if (activation.promptTarget) {
+                    this.insertEmbeddingIntoTarget(activation.token, activation.promptTarget, activation.label);
+                } else {
+                    await this.applyDropToTarget({ selector: activation.selector, rootKey: activation.rootKey, token: '' }, activation.targetKey, activation.acceptedRoots);
+                }
+                delete this.state.pendingActivations[key];
+            }
+        }
+
+        async activateAvailableSelector(selector, rootKey, promptTarget = '') {
+            if (!selector || !rootKey) return;
+            const activation = this.resolveActivationConfig(rootKey, promptTarget);
+            if (!activation) {
+                this.setStatus(rootKey === 'embeddings'
+                    ? 'Choose whether to insert the embedding into the positive or negative prompt.'
+                    : `Activate is not supported for ${rootKey}.`, 'warning');
+                return;
+            }
+            this.setStatus('Queueing download and activation...', 'info');
+            try {
+                const payload = await fetchJson('/api/models/download', {
+                    method: 'POST',
+                    body: JSON.stringify({ selector }),
+                });
+                const jobs = payload.jobs || [];
+                jobs.forEach((job) => { this.state.jobs[job.job_id] = job; });
+                if (!jobs.length) {
+                    await this.refreshAllData();
+                    if (activation.promptTarget) {
+                        this.insertEmbeddingIntoTarget(this.embeddingToken(selector), activation.promptTarget, activation.label);
+                    } else {
+                        await this.applyDropToTarget({ selector, rootKey, token: '' }, activation.targetKey, activation.acceptedRoots);
+                    }
+                    return;
+                }
+                this.state.pendingActivations[selector] = {
+                    selector,
+                    rootKey,
+                    token: this.embeddingToken((this.getRecordById(selector)?.name) || selector),
+                    ...activation,
+                    jobIds: jobs.map((job) => job.job_id),
+                };
+                this.setStatus(`Queued ${jobs.length} download${jobs.length === 1 ? '' : 's'} and will activate when ready.`, 'success');
+                this.startPollingJobs();
+                this.render();
+            } catch (error) {
+                this.setStatus(error.message || 'Failed to queue activation download.', 'error');
+            }
+        }
+
+        getRecordById(selector) {
+            for (const rootPayloads of Object.values(this.state.tabData || {})) {
+                for (const payload of Object.values(rootPayloads || {})) {
+                    for (const sectionKey of SECTION_KEYS) {
+                        const match = (payload?.[sectionKey] || []).find((record) => record.id === selector);
+                        if (match) return match;
+                    }
+                }
+            }
+            return null;
+        }
+
+        async loadPersonalCatalogs() {
+            try {
+                const payload = await fetchJson('/api/models/personal-catalogs');
+                return payload.catalogs || [];
+            } catch (error) {
+                this.setStatus(error.message || 'Failed to load personal catalogs.', 'error');
+                return [];
+            }
+        }
+
         async openDrawer(selector, sourceProvider = '', sourceVersionId = '', matchedSelector = '') {
             this.state.drawer = {
                 loading: true,
                 selector,
                 matchedSelector: matchedSelector || '',
                 mode: 'registration',
-                form: {
-                    display_name: '',
-                    name: '',
-                    installed_relative_path: '',
-                    relative_path: '',
-                    model_type: 'checkpoint',
-                    architecture: 'unknown',
-                    sub_architecture: 'general',
-                    thumbnail_library_relative: '',
+                form: this.defaultDrawerForm({
                     source_provider: sourceProvider || 'local',
                     source_version_id: sourceVersionId || '',
-                    source_url: '',
-                    companion_clip_selector: '',
-                    companion_clip_relative_path: '',
-                },
+                }),
                 suggestions: [],
                 companionClip: null,
                 error: '',
                 installedLink: null,
                 canEditCatalogFields: true,
+                personalCatalogs: [],
             };
             this.render();
             try {
@@ -404,6 +711,7 @@
                 if (matchedSelector) params.set('matched_selector', matchedSelector);
                 const payload = await fetchJson(`/api/models/registration?${params.toString()}`);
                 const companionClip = payload.companion_clip || null;
+                const personalCatalogs = payload.personal_catalogs || [];
                 this.state.drawer = {
                     ...this.state.drawer,
                     loading: false,
@@ -411,7 +719,8 @@
                     matchedSelector: matchedSelector || this.state.drawer.matchedSelector,
                     entry: payload.entry,
                     companionClip,
-                    form: this.normalizeDrawerForm({
+                    personalCatalogs,
+                    form: this.normalizeDrawerForm(this.defaultDrawerForm({
                         display_name: payload.entry.display_name || '',
                         name: payload.entry.name || '',
                         installed_relative_path: payload.entry.installed_relative_path || payload.entry.relative_path || '',
@@ -423,9 +732,10 @@
                         source_provider: sourceProvider || payload.entry.source_provider || 'local',
                         source_version_id: sourceVersionId || payload.entry.source_version_id || '',
                         source_url: payload.entry.source?.url || '',
+                        target_catalog_id: this.defaultLocalCatalogId(personalCatalogs),
                         companion_clip_selector: companionClip?.recommended_selector || '',
                         companion_clip_relative_path: '',
-                    }, payload.entry.root_key || ''),
+                    }), payload.entry.root_key || ''),
                     suggestions: payload.suggestions || [],
                 };
             } catch (error) {
@@ -435,54 +745,60 @@
         }
 
         async openInstalledDrawer(selector) {
+            const loadedRecord = this.getRecordById(selector) || {};
             this.state.drawer = {
                 loading: true,
                 selector,
                 matchedSelector: '',
                 mode: 'installed_link',
-                form: {
-                    display_name: '',
-                    name: '',
-                    installed_relative_path: '',
-                    relative_path: '',
-                    model_type: 'checkpoint',
-                    architecture: 'unknown',
-                    sub_architecture: 'general',
-                    thumbnail_library_relative: '',
-                    source_provider: 'local',
-                    source_version_id: '',
-                    source_url: '',
-                },
+                entry: loadedRecord,
+                form: this.normalizeDrawerForm(this.defaultDrawerForm({
+                    display_name: loadedRecord.display_name || '',
+                    name: loadedRecord.name || '',
+                    installed_relative_path: loadedRecord.installed_relative_path || '',
+                    relative_path: loadedRecord.relative_path || '',
+                    model_type: loadedRecord.model_type || 'checkpoint',
+                    architecture: loadedRecord.architecture || 'unknown',
+                    sub_architecture: loadedRecord.sub_architecture || 'general',
+                    thumbnail_library_relative: loadedRecord.thumbnail_library_relative || '',
+                    source_provider: loadedRecord.source_provider || 'local',
+                    source_version_id: loadedRecord.source_version_id || '',
+                    target_catalog_id: '',
+                }), loadedRecord.root_key || ''),
                 suggestions: [],
                 error: '',
                 installedLink: null,
                 canEditCatalogFields: false,
+                personalCatalogs: [],
             };
             this.render();
             try {
                 const params = new URLSearchParams({ selector, suggest_limit: '3' });
                 const payload = await fetchJson(`/api/models/installed-link?${params.toString()}`);
+                const mergedEntry = { ...loadedRecord, ...(payload.entry || {}) };
                 this.state.drawer = {
                     ...this.state.drawer,
                     loading: false,
                     mode: 'installed_link',
-                    entry: payload.entry,
+                    entry: mergedEntry,
                     installedLink: payload.installed_link || null,
                     suggestions: payload.suggestions || [],
                     canEditCatalogFields: Boolean(payload.can_edit_catalog_fields),
-                    form: this.normalizeDrawerForm({
-                        display_name: payload.entry.display_name || '',
-                        name: payload.entry.name || '',
-                        installed_relative_path: payload.installed_link?.installed_relative_path || payload.entry.installed_relative_path || '',
-                        relative_path: payload.entry.relative_path || '',
-                        model_type: payload.entry.model_type || 'checkpoint',
-                        architecture: payload.entry.architecture || 'unknown',
-                        sub_architecture: payload.entry.sub_architecture || 'general',
-                        thumbnail_library_relative: payload.entry.thumbnail_library_relative || payload.thumbnail?.relative_path || '',
-                        source_provider: payload.entry.source_provider || 'local',
-                        source_version_id: payload.entry.source_version_id || '',
-                        source_url: payload.entry.source?.url || '',
-                    }, payload.entry.root_key || ''),
+                    personalCatalogs: payload.personal_catalogs || [],
+                    form: this.normalizeDrawerForm(this.defaultDrawerForm({
+                        display_name: mergedEntry.display_name || '',
+                        name: mergedEntry.name || '',
+                        installed_relative_path: payload.installed_link?.installed_relative_path || mergedEntry.installed_relative_path || '',
+                        relative_path: mergedEntry.relative_path || '',
+                        model_type: mergedEntry.model_type || 'checkpoint',
+                        architecture: mergedEntry.architecture || 'unknown',
+                        sub_architecture: mergedEntry.sub_architecture || 'general',
+                        thumbnail_library_relative: mergedEntry.thumbnail_library_relative || payload.thumbnail?.relative_path || '',
+                        source_provider: mergedEntry.source_provider || 'local',
+                        source_version_id: mergedEntry.source_version_id || '',
+                        source_url: mergedEntry.source?.url || payload.entry?.source?.url || '',
+                        target_catalog_id: '',
+                    }), mergedEntry.root_key || ''),
                 };
             } catch (error) {
                 this.state.drawer = { ...this.state.drawer, loading: false, error: error.message || 'Failed to load installed model details.' };
@@ -490,6 +806,73 @@
             this.render();
         }
 
+        async openAddDrawer() {
+            const defaults = this.activePanelDefaults();
+            const personalCatalogs = await this.loadPersonalCatalogs();
+            this.state.drawer = {
+                loading: false,
+                selector: '',
+                matchedSelector: '',
+                mode: 'add_model',
+                form: this.normalizeDrawerForm(this.defaultDrawerForm({
+                    source_provider: 'huggingface',
+                    source_input: '',
+                    model_type: defaults.model_type,
+                    architecture: defaults.architecture,
+                    sub_architecture: defaults.sub_architecture,
+                    target_catalog_id: '',
+                    new_catalog_name: '',
+                    thumbnail_source_name: '',
+                }), defaults.root_key),
+                pendingThumbnailFile: null,
+                suggestions: [],
+                companionClip: null,
+                error: '',
+                installedLink: null,
+                canEditCatalogFields: true,
+                personalCatalogs,
+            };
+            this.syncAddModelDerivedFields();
+            this.render();
+        }
+
+        openCreateCatalogDrawer() {
+            this.state.drawer = {
+                loading: false,
+                selector: '',
+                matchedSelector: '',
+                mode: 'create_catalog',
+                form: this.defaultDrawerForm({
+                    source_provider: 'local',
+                    catalog_id: '',
+                    catalog_label: '',
+                    filename: '',
+                    notes: '',
+                }),
+                suggestions: [],
+                companionClip: null,
+                error: '',
+                installedLink: null,
+                canEditCatalogFields: true,
+                personalCatalogs: [],
+            };
+            this.render();
+        }
+
+        openImportCatalogDrawer() {
+            this.state.drawer = {
+                loading: false,
+                selector: '',
+                matchedSelector: '',
+                mode: 'import_catalog',
+                form: this.defaultDrawerForm({ filename: '' }),
+                importCatalog: null,
+                importPreview: null,
+                error: '',
+                personalCatalogs: [],
+            };
+            this.render();
+        }
 
         closeDrawer() {
             this.state.drawer = null;
@@ -503,7 +886,9 @@
                 await this.openInstalledDrawer(selector);
                 return;
             }
-            await this.openDrawer(selector, form.source_provider, form.source_version_id, matchedSelector);
+            if (mode === 'registration') {
+                await this.openDrawer(selector, form.source_provider, form.source_version_id, matchedSelector);
+            }
         }
 
         chooseSuggestion(selector) {
@@ -523,32 +908,58 @@
                 source_provider: suggestion.entry.source_provider || this.state.drawer.form.source_provider,
                 source_version_id: suggestion.entry.source_version_id || this.state.drawer.form.source_version_id,
                 source_url: suggestion.entry.source?.url || this.state.drawer.form.source_url,
-            }, this.state.drawer.entry?.root_key || '');
+            }, this.drawerRootKey());
             this.render();
         }
 
-        async uploadDrawerThumbnail(file) {
+        async loadImportCatalogFile(file) {
             if (!this.state.drawer || !file) return;
-            const { selector } = this.state.drawer;
+            try {
+                const raw = await file.text();
+                const catalog = JSON.parse(raw);
+                this.state.drawer.form.filename = file.name;
+                this.state.drawer.importCatalog = catalog;
+                this.state.drawer.importPreview = {
+                    catalog_id: catalog.catalog_id || '',
+                    catalog_label: catalog.catalog_label || '',
+                    source_provider: catalog.source_provider || '',
+                    entry_count: Array.isArray(catalog.entries) ? catalog.entries.length : 0,
+                };
+                this.setStatus(`Loaded ${file.name} for import.`, 'success');
+                this.render();
+            } catch (error) {
+                this.state.drawer.error = error.message || 'Failed to read catalog JSON.';
+                this.render();
+            }
+        }
+
+        async uploadThumbnailFile(selector, file) {
+            if (!selector || !file) return null;
             this.setStatus(`Uploading thumbnail ${file.name}...`, 'info');
             const formData = new FormData();
             formData.append('selector', selector);
             formData.append('file', file, file.name);
+            const response = await fetch('/api/models/thumbnail/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload?.detail || response.statusText || 'Thumbnail upload failed');
+            }
+            this.state.thumbnailRevision += 1;
+            return payload;
+        }
+
+        async uploadDrawerThumbnail(file) {
+            if (!this.state.drawer || !file || !this.state.drawer.selector) return;
             try {
-                const response = await fetch('/api/models/thumbnail/upload', {
-                    method: 'POST',
-                    body: formData,
-                });
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(payload?.detail || response.statusText || 'Thumbnail upload failed');
-                }
-                this.state.thumbnailRevision += 1;
+                const payload = await this.uploadThumbnailFile(this.state.drawer.selector, file);
                 this.state.drawer.entry = payload.entry || this.state.drawer.entry;
                 this.state.drawer.form = this.normalizeDrawerForm({
                     ...this.state.drawer.form,
                     thumbnail_library_relative: payload.entry?.thumbnail_library_relative || payload.thumbnail?.relative_path || this.state.drawer.form.thumbnail_library_relative,
-                }, this.state.drawer.entry?.root_key || '');
+                }, this.drawerRootKey());
                 this.setStatus(`Updated thumbnail for ${payload.entry?.display_name || payload.entry?.name || 'model'}.`, 'success');
                 this.render();
             } catch (error) {
@@ -556,40 +967,110 @@
             }
         }
 
-        async saveRegistration() {
+        async saveDrawer() {
             if (!this.state.drawer) return;
             const { selector, matchedSelector, form, mode } = this.state.drawer;
             this.state.drawer.loading = true;
             this.state.drawer.error = '';
             this.render();
             try {
-                const endpoint = mode === 'installed_link' ? '/api/models/installed-link' : '/api/models/registration';
-                await fetchJson(endpoint, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        selector,
-                        matched_selector: matchedSelector || undefined,
-                        updates: {
-                            display_name: form.display_name,
-                            name: form.name,
-                            installed_relative_path: form.installed_relative_path,
-                            relative_path: form.relative_path,
+                if (mode === 'registration' || mode === 'installed_link') {
+                    const endpoint = mode === 'installed_link' ? '/api/models/installed-link' : '/api/models/registration';
+                    await fetchJson(endpoint, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            selector,
+                            matched_selector: matchedSelector || undefined,
+                            target_catalog_id: form.target_catalog_id || undefined,
+                            updates: {
+                                display_name: form.display_name,
+                                name: form.name,
+                                installed_relative_path: form.installed_relative_path,
+                                relative_path: form.relative_path,
+                                model_type: form.model_type,
+                                architecture: form.architecture,
+                                sub_architecture: form.sub_architecture,
+                                source_provider: form.source_provider,
+                                source_version_id: form.source_version_id,
+                                source_url: form.source_url,
+                                thumbnail_library_relative: form.thumbnail_library_relative,
+                            },
+                        }),
+                    });
+                    await this.refreshAllData();
+                    this.setStatus(mode === 'installed_link' ? 'Installed model link saved.' : 'Model registration saved.', 'success');
+                    this.closeDrawer();
+                    return;
+                }
+
+                if (mode === 'add_model') {
+                    let targetCatalogId = form.target_catalog_id || undefined;
+                    if (String(form.new_catalog_name || '').trim()) {
+                        const catalogDraft = this.buildPersonalCatalogDraft(form.new_catalog_name, form.source_provider);
+                        await fetchJson('/api/models/personal-catalogs', {
+                            method: 'POST',
+                            body: JSON.stringify(catalogDraft),
+                        });
+                        targetCatalogId = catalogDraft.catalog_id;
+                    }
+                    const added = await fetchJson('/api/models/add', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            source_provider: form.source_provider,
+                            source_input: form.source_input,
+                            target_catalog_id: targetCatalogId,
                             model_type: form.model_type,
                             architecture: form.architecture,
                             sub_architecture: form.sub_architecture,
+                            name: form.name || undefined,
+                            display_name: form.display_name || undefined,
+                            alias: form.alias || undefined,
+                        }),
+                    });
+                    if (this.state.drawer.pendingThumbnailFile && added?.entry?.id) {
+                        await this.uploadThumbnailFile(added.entry.id, this.state.drawer.pendingThumbnailFile);
+                    }
+                    await this.refreshAllData();
+                    this.setStatus('Added model to personal catalog.', 'success');
+                    this.closeDrawer();
+                    return;
+                }
+
+                if (mode === 'create_catalog') {
+                    await fetchJson('/api/models/personal-catalogs', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            catalog_id: form.catalog_id,
+                            catalog_label: form.catalog_label,
                             source_provider: form.source_provider,
-                            source_version_id: form.source_version_id,
-                            source_url: form.source_url,
-                            thumbnail_library_relative: form.thumbnail_library_relative,
-                        },
-                    }),
-                });
-                await this.refreshAllData();
-                this.setStatus(mode === 'installed_link' ? 'Installed model link saved.' : 'Model registration saved.', 'success');
-                this.closeDrawer();
+                            filename: form.filename || undefined,
+                            notes: String(form.notes || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+                        }),
+                    });
+                    await this.refreshAllData();
+                    this.setStatus('Created personal catalog.', 'success');
+                    this.closeDrawer();
+                    return;
+                }
+
+                if (mode === 'import_catalog') {
+                    if (!this.state.drawer.importCatalog) {
+                        throw new Error('Choose a catalog JSON file first.');
+                    }
+                    await fetchJson('/api/models/personal-catalogs/import', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            filename: form.filename || undefined,
+                            catalog: this.state.drawer.importCatalog,
+                        }),
+                    });
+                    await this.refreshAllData();
+                    this.setStatus('Imported personal catalog.', 'success');
+                    this.closeDrawer();
+                }
             } catch (error) {
                 this.state.drawer.loading = false;
-                this.state.drawer.error = error.message || (mode === 'installed_link' ? 'Failed to save installed model link.' : 'Failed to save registration.');
+                this.state.drawer.error = error.message || 'Failed to save model panel changes.';
                 this.render();
             }
         }
@@ -814,7 +1295,7 @@
             const selectable = sectionKey === 'available_registered';
             const unregistered = sectionKey === 'installed_unregistered';
             const installedRegistered = sectionKey === 'installed_registered';
-            const draggable = installedRegistered && record.root_key === 'embeddings';
+            const draggable = installedRegistered && DRAG_ROOTS.has(record.root_key);
             const selected = this.state.selectedByRoot[record.root_key]?.has(record.id);
             const surfaceAction = unregistered
                 ? 'open-drawer'
@@ -823,7 +1304,7 @@
                 ? 'Registration Required'
                 : (installedRegistered
                     ? 'Installed'
-                    : (selectable ? (selected ? 'Selected for Download' : 'Click to Select') : 'Installed'));
+                    : (selectable ? (selected ? 'Selected for Download' : 'Available for Download') : 'Installed'));
 
             let actions = '';
             if (installedRegistered) {
@@ -849,6 +1330,21 @@
                         <button type="button" class="nmb-primary nmb-card__action" data-action="open-drawer" data-selector="${escapeHtml(record.id)}">Register</button>
                     </div>
                 `;
+            } else if (selectable) {
+                if (record.root_key === 'embeddings') {
+                    actions = `
+                        <div class="nmb-card__actions">
+                            <button type="button" class="nmb-primary nmb-card__action" data-action="activate-available-positive" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Positive</button>
+                            <button type="button" class="nmb-secondary nmb-card__action" data-action="activate-available-negative" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Negative</button>
+                        </div>
+                    `;
+                } else {
+                    actions = `
+                        <div class="nmb-card__actions">
+                            <button type="button" class="nmb-primary nmb-card__action" data-action="activate-available" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Apply</button>
+                        </div>
+                    `;
+                }
             }
 
             return `
@@ -861,7 +1357,7 @@
                         <div class="nmb-card__content">
                             <div class="nmb-card__title">${escapeHtml(record.display_name || record.name)}</div>
                             <div class="nmb-card__filename">${escapeHtml(record.name)}</div>
-                            <div class="nmb-card__meta">${escapeHtml(record.root_key)}${record.source_version_id ? ` | ${escapeHtml(record.source_version_id)}` : ''}</div>
+                            <div class="nmb-card__meta">${escapeHtml(record.root_key)}${record.source_provider ? ` | ${escapeHtml(record.source_provider)}` : ''}${record.source_version_id ? ` | ${escapeHtml(record.source_version_id)}` : ''}</div>
                             <div class="nmb-card__state">${escapeHtml(stateLabel)}</div>
                         </div>
                     </button>
@@ -900,9 +1396,19 @@
             return `<select data-field="${escapeHtml(field)}" ${disabled ? 'disabled' : ''}>${options.map((option) => `<option value="${escapeHtml(option)}" ${option === resolved ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select>`;
         }
 
-        renderDrawer() {
-            const drawer = this.state.drawer;
-            if (!drawer) return '';
+        renderCatalogSelect(field, provider, value = '', disabled = false, includeAutomatic = true) {
+            const options = [];
+            if (includeAutomatic) {
+                options.push(`<option value="">Default personal catalog</option>`);
+            }
+            this.catalogOptionsForProvider(provider).forEach((catalog) => {
+                const selected = catalog.catalog_id === value ? 'selected' : '';
+                options.push(`<option value="${escapeHtml(catalog.catalog_id)}" ${selected}>${escapeHtml(catalog.catalog_label)} [${escapeHtml(catalog.source_provider)}]</option>`);
+            });
+            return `<select data-field="${escapeHtml(field)}" ${disabled ? 'disabled' : ''}>${options.join('')}</select>`;
+        }
+
+        renderRegistrationDrawer(drawer) {
             const form = drawer.form || {};
             const entry = drawer.entry || {};
             const installedLink = drawer.installedLink || {};
@@ -910,8 +1416,8 @@
             const canEditCatalogFields = !installedLinkMode || drawer.canEditCatalogFields;
             const drawerTitle = installedLinkMode ? 'Edit Installed Model' : 'Register Model';
             const drawerSubtitle = installedLinkMode
-                ? 'Review the linked installed path and relink this installed file if the current catalog match is wrong.'
-                : 'Review this unregistered model and optionally apply a suggested match.';
+                ? 'Review the linked installed path and retarget the catalog entry if needed.'
+                : 'Review this unregistered model and store it in a managed personal catalog.';
             const currentInstalledPath = form.installed_relative_path || installedLink.installed_relative_path || entry.installed_relative_path || entry.relative_path || '';
             const currentCatalogPath = entry.relative_path || form.relative_path || '';
             const saveLabel = installedLinkMode ? 'Save Installed Link' : 'Save Registration';
@@ -942,6 +1448,7 @@
                     </div>
                     ${drawer.error ? `<div class="nmb-status nmb-status--error">${escapeHtml(drawer.error)}</div>` : ''}
                     <div class="nmb-form-grid">
+                        <label class="nmb-field--wide"><span>Target Catalog</span>${this.renderCatalogSelect('target_catalog_id', form.source_provider, form.target_catalog_id || '', drawer.loading, true)}</label>
                         <label class="nmb-field--wide"><span>Installed Relative Path</span><input data-field="installed_relative_path" value="${escapeHtml(form.installed_relative_path || '')}" placeholder="Path under the configured model root"></label>
                         <label><span>Display Name</span><input data-field="display_name" value="${escapeHtml(form.display_name || '')}" ${canEditCatalogFields ? '' : 'readonly'}></label>
                         <label><span>Canonical Name</span><input data-field="name" value="${escapeHtml(form.name || '')}" ${canEditCatalogFields ? '' : 'readonly'}></label>
@@ -966,7 +1473,7 @@
                     </div>
                     <div class="nmb-drawer__actions">
                         <button type="button" class="nmb-secondary" data-action="refresh-suggestions">Refresh Suggestions</button>
-                        <button type="button" class="nmb-primary" data-action="save-registration">${escapeHtml(saveLabel)}</button>
+                        <button type="button" class="nmb-primary" data-action="save-drawer">${escapeHtml(saveLabel)}</button>
                     </div>
                     <div class="nmb-drawer__suggestions">
                         <h4>Possible Matches</h4>
@@ -976,7 +1483,132 @@
                 </aside>
             `;
         }
+
+        renderCreateCatalogDrawer(drawer) {
+            const form = drawer.form || {};
+            return `
+                <aside class="nmb-drawer ${drawer.loading ? 'is-loading' : ''}">
+                    <div class="nmb-drawer__header">
+                        <div>
+                            <h3>Create Personal Catalog</h3>
+                            <p>Create a managed JSON catalog in the app-owned catalog folder.</p>
+                        </div>
+                        <button type="button" class="nmb-secondary" data-action="close-drawer">Close</button>
+                    </div>
+                    ${drawer.error ? `<div class="nmb-status nmb-status--error">${escapeHtml(drawer.error)}</div>` : ''}
+                    <div class="nmb-form-grid">
+                        <label><span>Catalog ID</span><input data-field="catalog_id" value="${escapeHtml(form.catalog_id || '')}" placeholder="user.local.my_catalog"></label>
+                        <label><span>Catalog Label</span><input data-field="catalog_label" value="${escapeHtml(form.catalog_label || '')}" placeholder="My Personal Catalog"></label>
+                        <label><span>Source Provider</span>${this.renderSelect('source_provider', SOURCE_PROVIDER_OPTIONS, form.source_provider || 'local', drawer.loading)}</label>
+                        <label><span>Filename</span><input data-field="filename" value="${escapeHtml(form.filename || '')}" placeholder="optional_catalog_name"></label>
+                        <label class="nmb-field--wide"><span>Notes</span><textarea data-field="notes" rows="4" placeholder="Optional notes, one per line">${escapeHtml(form.notes || '')}</textarea></label>
+                    </div>
+                    <div class="nmb-drawer__actions">
+                        <button type="button" class="nmb-primary" data-action="save-drawer">Create Catalog</button>
+                    </div>
+                </aside>
+            `;
+        }
+
+        renderImportCatalogDrawer(drawer) {
+            const form = drawer.form || {};
+            const preview = drawer.importPreview;
+            return `
+                <aside class="nmb-drawer ${drawer.loading ? 'is-loading' : ''}">
+                    <div class="nmb-drawer__header">
+                        <div>
+                            <h3>Import Personal Catalog</h3>
+                            <p>Import a user-provided catalog JSON into the managed catalog area.</p>
+                        </div>
+                        <button type="button" class="nmb-secondary" data-action="close-drawer">Close</button>
+                    </div>
+                    ${drawer.error ? `<div class="nmb-status nmb-status--error">${escapeHtml(drawer.error)}</div>` : ''}
+                    <div class="nmb-form-grid">
+                        <label class="nmb-field--wide nmb-field--picker">
+                            <span>Catalog JSON File</span>
+                            <div class="nmb-field__picker">
+                                <input data-field="filename" value="${escapeHtml(form.filename || '')}" placeholder="Choose a .json file" readonly>
+                                <button type="button" class="nmb-secondary nmb-field__picker-button" data-action="pick-import-file">Browse...</button>
+                            </div>
+                        </label>
+                    </div>
+                    ${preview ? `
+                        <div class="nmb-drawer__current">
+                            <div class="nmb-drawer__current-label">Import Preview</div>
+                            <div class="nmb-drawer__current-name">${escapeHtml(preview.catalog_label || preview.catalog_id || form.filename || 'Catalog')}</div>
+                            <div class="nmb-drawer__current-path">Catalog ID: ${escapeHtml(preview.catalog_id || 'unknown')}</div>
+                            <div class="nmb-drawer__current-meta">${escapeHtml(preview.source_provider || 'unknown')} | ${escapeHtml(preview.entry_count)} entries</div>
+                        </div>
+                    ` : '<div class="nmb-empty">Choose a catalog JSON file to preview and import it.</div>'}
+                    <div class="nmb-drawer__actions">
+                        <input type="file" accept="application/json,.json" data-import-upload hidden>
+                        <button type="button" class="nmb-primary" data-action="save-drawer" ${drawer.importCatalog ? '' : 'disabled'}>Import Catalog</button>
+                    </div>
+                </aside>
+            `;
+        }
+
+        renderAddModelDrawer(drawer) {
+            const form = drawer.form || {};
+            const provider = form.source_provider || 'huggingface';
+            const sourceLabel = provider === 'civitai' ? 'Version ID' : 'Download URL';
+            const sourcePlaceholder = provider === 'civitai'
+                ? 'CivitAI model version id'
+                : 'https://huggingface.co/.../resolve/.../model.safetensors';
+            return `
+                <aside class="nmb-drawer ${drawer.loading ? 'is-loading' : ''}">
+                    <div class="nmb-drawer__header">
+                        <div>
+                            <h3>Add Downloadable Model</h3>
+                            <p>Add a Hugging Face download URL or a CivitAI version id into a managed personal catalog.</p>
+                        </div>
+                        <button type="button" class="nmb-secondary" data-action="close-drawer">Close</button>
+                    </div>
+                    ${drawer.error ? `<div class="nmb-status nmb-status--error">${escapeHtml(drawer.error)}</div>` : ''}
+                    <div class="nmb-form-grid">
+                        <label class="nmb-field--wide"><span>Source Provider</span>${this.renderProviderToggle(provider, drawer.loading)}</label>
+                        <label class="nmb-field--wide"><span>${escapeHtml(sourceLabel)}</span><input data-field="source_input" value="${escapeHtml(form.source_input || '')}" placeholder="${escapeHtml(sourcePlaceholder)}"></label>
+                        <label class="nmb-field--wide"><span>Select a catalog to add</span>${this.renderAddModelCatalogSelect(provider, form.target_catalog_id || '', drawer.loading)}</label>
+                        <label class="nmb-field--wide"><span>Create a new catalog to add</span><input data-field="new_catalog_name" value="${escapeHtml(form.new_catalog_name || '')}"></label>
+                        <label><span>Model Type</span>${this.renderSelect('model_type', MODEL_TYPE_OPTIONS, form.model_type, drawer.loading)}</label>
+                        <label><span>Architecture</span>${this.renderSelect('architecture', ARCHITECTURE_OPTIONS.filter((option) => option !== 'unknown'), form.architecture || 'sdxl', drawer.loading)}</label>
+                        <label><span>Sub-Architecture</span>${this.renderSelect('sub_architecture', SUB_ARCHITECTURE_OPTIONS, form.sub_architecture, drawer.loading)}</label>
+                        <label><span>Filename</span><input data-field="name" value="${escapeHtml(form.name || '')}" placeholder=""></label>
+                        <label><span>Display Name</span><input data-field="display_name" value="${escapeHtml(form.display_name || '')}" placeholder=""></label>
+                        <label><span>Alias</span><input data-field="alias" value="${escapeHtml(form.alias || '')}" placeholder=""></label>
+                        <label class="nmb-field--wide nmb-field--picker">
+                            <span>Thumbnail Source Image</span>
+                            <div class="nmb-field__picker">
+                                <input data-field="thumbnail_source_name" value="${escapeHtml(form.thumbnail_source_name || '')}" placeholder="Optional local image for thumbnail generation" readonly>
+                                <button type="button" class="nmb-secondary nmb-field__picker-button" data-action="pick-thumbnail-file">Browse...</button>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="nmb-drawer__thumbnail-actions">
+                        <input type="file" accept="image/*" data-thumbnail-upload hidden>
+                    </div>
+                    <div class="nmb-drawer__actions">
+                        <button type="button" class="nmb-primary" data-action="save-drawer">Add Model</button>
+                    </div>
+                </aside>
+            `;
+        }
+
+        renderDrawer() {
+            const drawer = this.state.drawer;
+            if (!drawer) return '';
+            let content = '';
+            if (drawer.mode === 'create_catalog') content = this.renderCreateCatalogDrawer(drawer);
+            else if (drawer.mode === 'import_catalog') content = this.renderImportCatalogDrawer(drawer);
+            else if (drawer.mode === 'add_model') content = this.renderAddModelDrawer(drawer);
+            else content = this.renderRegistrationDrawer(drawer);
+            return `<div class="nmb-overlay">${content}</div>`;
+        }
         handleClick(event) {
+            if (event.target === this.querySelector('.nmb-overlay')) {
+                this.closeDrawer();
+                return;
+            }
             const actionNode = event.target.closest('[data-action]');
             if (!actionNode) return;
             const { action } = actionNode.dataset;
@@ -985,10 +1617,25 @@
             if (action === 'toggle-selection') return this.toggleSelection(actionNode.dataset.rootKey, actionNode.dataset.selector);
             if (action === 'open-drawer') return this.openDrawer(actionNode.dataset.selector);
             if (action === 'open-installed-drawer') return this.openInstalledDrawer(actionNode.dataset.selector);
+            if (action === 'open-add-drawer') return this.openAddDrawer();
+            if (action === 'set-source-provider') {
+                if (this.state.drawer?.mode !== 'add_model') return;
+                const previousForm = { ...this.state.drawer.form };
+                this.state.drawer.form.source_provider = actionNode.dataset.provider || 'huggingface';
+                this.state.drawer.form = this.normalizeDrawerForm(this.state.drawer.form, this.drawerRootKey());
+                this.syncAddModelDerivedFields(previousForm);
+                this.render();
+                return;
+            }
+            if (action === 'open-create-catalog') return this.openCreateCatalogDrawer();
+            if (action === 'open-import-catalog') return this.openImportCatalogDrawer();
             if (action === 'close-drawer') return this.closeDrawer();
             if (action === 'refresh-suggestions') return this.refreshSuggestions();
             if (action === 'choose-suggestion') return this.chooseSuggestion(actionNode.dataset.selector);
             if (action === 'apply-installed-default') return this.applyInstalledSelector(actionNode.dataset.selector, actionNode.dataset.rootKey);
+            if (action === 'activate-available') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey);
+            if (action === 'activate-available-positive') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey, 'positive');
+            if (action === 'activate-available-negative') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey, 'negative');
             if (action === 'insert-embedding-positive') return this.insertEmbeddingIntoTarget(actionNode.dataset.token, '#positive_prompt', 'positive prompt');
             if (action === 'insert-embedding-negative') return this.insertEmbeddingIntoTarget(actionNode.dataset.token, '#negative_prompt', 'negative prompt');
             if (action === 'pick-thumbnail-file') {
@@ -996,7 +1643,12 @@
                 if (uploadInput && !uploadInput.disabled) uploadInput.click();
                 return;
             }
-            if (action === 'save-registration') return this.saveRegistration();
+            if (action === 'pick-import-file') {
+                const uploadInput = this.querySelector('[data-import-upload]');
+                if (uploadInput) uploadInput.click();
+                return;
+            }
+            if (action === 'save-drawer') return this.saveDrawer();
             if (action === 'download-active') return this.queueActiveDownloads();
             if (action === 'clear-selection') return this.clearActiveSelection();
             if (action === 'refresh-browser') return this.refreshAllData();
@@ -1006,15 +1658,48 @@
             if (!this.state.drawer) return;
             const input = event.target.closest('[data-field]');
             if (!input) return;
+            const previousForm = { ...this.state.drawer.form };
+            const focusState = this.captureFieldFocus(input);
             this.state.drawer.form[input.dataset.field] = input.value;
-            this.state.drawer.form = this.normalizeDrawerForm(this.state.drawer.form, this.state.drawer.entry?.root_key || '');
+            this.state.drawer.form = this.normalizeDrawerForm(this.state.drawer.form, this.drawerRootKey());
+            if (this.state.drawer.mode === 'add_model') {
+                this.syncAddModelDerivedFields(previousForm);
+                const rerenderFields = new Set(['source_input', 'name', 'display_name']);
+                if (input.matches('select') || rerenderFields.has(input.dataset.field)) {
+                    this.render();
+                    this.restoreFieldFocus(focusState);
+                }
+                return;
+            }
+            if (input.matches('select')) {
+                if (input.dataset.field === 'source_provider') {
+                    const catalogIds = new Set(this.catalogOptionsForProvider(this.state.drawer.form.source_provider).map((catalog) => catalog.catalog_id));
+                    if (this.state.drawer.form.target_catalog_id && !catalogIds.has(this.state.drawer.form.target_catalog_id)) {
+                        this.state.drawer.form.target_catalog_id = '';
+                    }
+                }
+                this.render();
+            }
         }
 
         handleChange(event) {
+            const importInput = event.target.closest('[data-import-upload]');
+            if (importInput?.files?.length) {
+                const [file] = importInput.files;
+                importInput.value = '';
+                this.loadImportCatalogFile(file);
+                return;
+            }
             const uploadInput = event.target.closest('[data-thumbnail-upload]');
             if (uploadInput?.files?.length) {
                 const [file] = uploadInput.files;
                 uploadInput.value = '';
+                if (this.state.drawer?.mode === 'add_model') {
+                    this.state.drawer.pendingThumbnailFile = file;
+                    this.state.drawer.form.thumbnail_source_name = file.name;
+                    this.render();
+                    return;
+                }
                 this.uploadDrawerThumbnail(file);
                 return;
             }
@@ -1034,6 +1719,8 @@
                         <div class="nmb-sub-tabs">${this.renderSubTabs()}</div>
                         <div class="nmb-toolbar">
                             <div class="nmb-toolbar__actions">
+                                <button type="button" class="nmb-action-btn" data-action="open-add-drawer" data-type="manage">Add Model</button>
+                                <button type="button" class="nmb-action-btn" data-action="open-import-catalog" data-type="manage">Import Catalog</button>
                                 <button type="button" class="nmb-action-btn" data-action="clear-selection" data-type="clear">Clear</button>
                                 <button type="button" class="nmb-action-btn" data-action="refresh-browser" data-type="reload">Reload</button>
                                 <button type="button" class="nmb-action-btn nmb-primary-action" data-action="download-active" data-type="download" ${selectedCount ? '' : 'disabled'}>Download Selected${selectedCount ? ` (${selectedCount})` : ''}</button>
@@ -1054,6 +1741,8 @@
         customElements.define('nex-model-browser', NexModelBrowser);
     }
 })();
+
+
 
 
 

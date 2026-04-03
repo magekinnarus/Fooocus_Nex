@@ -118,7 +118,7 @@ def _registration_updates_from_payload(payload: dict[str, Any]) -> dict[str, Any
     if isinstance(payload.get('updates'), dict):
         return dict(payload['updates'])
 
-    ignored = {'selector', 'matched_selector'}
+    ignored = {'selector', 'matched_selector', 'target_catalog_id'}
     return {key: value for key, value in payload.items() if key not in ignored}
 
 
@@ -164,6 +164,94 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             ),
             'sources': _catalog_sources_payload(manager),
             'count': len(records),
+        })
+
+
+    @router.get('/api/models/personal-catalogs')
+    def list_personal_catalogs(include_system: bool = Query(default=False)):
+        catalogs = manager.list_personal_catalogs(include_system=include_system)
+        return JSONResponse(content={
+            'catalogs': catalogs,
+            'count': len(catalogs),
+        })
+
+    @router.post('/api/models/personal-catalogs')
+    def create_personal_catalog(payload: dict = Body(...)):
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='Missing catalog payload')
+        try:
+            catalog = manager.create_personal_catalog(
+                catalog_id=str(payload.get('catalog_id') or ''),
+                catalog_label=str(payload.get('catalog_label') or ''),
+                source_provider=str(payload.get('source_provider') or 'local'),
+                filename=str(payload.get('filename') or '') or None,
+                notes=payload.get('notes') if isinstance(payload.get('notes'), list) else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content={
+            'status': 'success',
+            'catalog': catalog,
+        })
+
+    @router.post('/api/models/personal-catalogs/import')
+    def import_personal_catalog(payload: dict = Body(...)):
+        catalog_payload = payload.get('catalog') if isinstance(payload, dict) else None
+        filename = payload.get('filename') if isinstance(payload, dict) else None
+        if not isinstance(catalog_payload, dict):
+            raise HTTPException(status_code=400, detail='Missing catalog')
+        try:
+            catalog = manager.import_personal_catalog(
+                catalog_payload,
+                filename=str(filename) if filename else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content={
+            'status': 'success',
+            'catalog': catalog,
+        })
+
+    @router.post('/api/models/add')
+    def add_model(payload: dict = Body(...)):
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail='Missing add-model payload')
+        try:
+            result = manager.add_sourced_model_entry(
+                source_provider=str(payload.get('source_provider') or ''),
+                source_input=str(payload.get('source_input') or payload.get('source') or ''),
+                model_type=str(payload.get('model_type') or ''),
+                architecture=str(payload.get('architecture') or ''),
+                sub_architecture=str(payload.get('sub_architecture')) if payload.get('sub_architecture') is not None else None,
+                name=str(payload.get('name')) if payload.get('name') is not None else None,
+                display_name=str(payload.get('display_name')) if payload.get('display_name') is not None else None,
+                alias=str(payload.get('alias')) if payload.get('alias') is not None else None,
+                relative_path=str(payload.get('relative_path')) if payload.get('relative_path') is not None else None,
+                thumbnail_library_relative=str(payload.get('thumbnail_library_relative')) if payload.get('thumbnail_library_relative') is not None else None,
+                asset_group_key=str(payload.get('asset_group_key')) if payload.get('asset_group_key') is not None else None,
+                target_catalog_id=str(payload.get('target_catalog_id')) if payload.get('target_catalog_id') else None,
+                token_required=payload.get('token_required') if isinstance(payload.get('token_required'), bool) else None,
+                token_env=str(payload.get('token_env')) if payload.get('token_env') is not None else None,
+                source_version_id=str(payload.get('source_version_id')) if payload.get('source_version_id') is not None else None,
+                entry_id=str(payload.get('id')) if payload.get('id') is not None else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return JSONResponse(content={
+            'status': 'success',
+            'entry': manager.inventory_record(result['entry']).to_dict(),
+            'catalog': result['catalog'],
         })
 
     @router.get('/api/models/installed')
@@ -394,6 +482,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
     def register_model(payload: dict = Body(...)):
         selector = payload.get('selector') if isinstance(payload, dict) else None
         matched_selector = payload.get('matched_selector') if isinstance(payload, dict) else None
+        target_catalog_id = payload.get('target_catalog_id') if isinstance(payload, dict) else None
         if not selector:
             raise HTTPException(status_code=400, detail='Missing selector')
 
@@ -402,6 +491,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 str(selector),
                 matched_selector=str(matched_selector) if matched_selector else None,
                 updates=_registration_updates_from_payload(payload),
+                target_catalog_id=str(target_catalog_id) if target_catalog_id else None,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -444,6 +534,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
     def update_installed_link(payload: dict = Body(...)):
         selector = payload.get('selector') if isinstance(payload, dict) else None
         matched_selector = payload.get('matched_selector') if isinstance(payload, dict) else None
+        target_catalog_id = payload.get('target_catalog_id') if isinstance(payload, dict) else None
         if not selector:
             raise HTTPException(status_code=400, detail='Missing selector')
 
@@ -452,6 +543,7 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
                 str(selector),
                 matched_selector=str(matched_selector) if matched_selector else None,
                 updates=_registration_updates_from_payload(payload),
+                target_catalog_id=str(target_catalog_id) if target_catalog_id else None,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

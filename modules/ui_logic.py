@@ -1,4 +1,4 @@
-﻿import gradio as gr
+import gradio as gr
 import os
 
 gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
@@ -378,18 +378,31 @@ def get_synced_clip_update_for_base_model(base_model_name, current_clip_model):
     return gr.update(choices=clip_choices, value=clip_value)
 
 
-def update_model_dependent_choices(base_model_name, current_aspect_ratio, current_clip_model, *current_lora_models):
+def _base_model_requires_default_vae(base_model_name):
+    base_entry = default_model_manager.get_entry(base_model_name)
+    return getattr(base_entry, 'root_key', None) == 'checkpoints'
+
+
+def _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_choices):
+    if _base_model_requires_default_vae(base_model_name):
+        return modules.flags.default_vae
+    return current_vae_model if current_vae_model in vae_choices else modules.flags.default_vae
+
+
+def update_model_dependent_choices(base_model_name, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
     aspect_ratio_update = update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio)
+    vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
+    vae_value = _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_choices)
     clip_update = get_synced_clip_update_for_base_model(base_model_name, current_clip_model)
     lora_choices = get_filtered_lora_choices_for_model(base_model_name)
     lora_updates = []
     for current_lora_model in current_lora_models:
         value = current_lora_model if current_lora_model in lora_choices else 'None'
         lora_updates.append(gr.update(choices=lora_choices, value=value))
-    return [aspect_ratio_update, clip_update] + lora_updates
+    return [aspect_ratio_update, gr.update(choices=vae_choices, value=vae_value), clip_update] + lora_updates
 
 
-def refresh_files_clicked(current_base_model, current_aspect_ratio, current_clip_model, *current_lora_models):
+def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
     modules.config.update_files()
     try:
         default_model_manager.refresh_installed_index()
@@ -401,16 +414,17 @@ def refresh_files_clicked(current_base_model, current_aspect_ratio, current_clip
     if base_model_choices and base_model_value not in base_model_choices:
         base_model_value = base_model_choices[0]
 
-    aspect_ratio_update, clip_update, *lora_model_updates = update_model_dependent_choices(
+    aspect_ratio_update, vae_update, clip_update, *lora_model_updates = update_model_dependent_choices(
         base_model_value,
         current_aspect_ratio,
+        current_vae_model,
         current_clip_model,
         *current_lora_models,
     )
 
     results = [gr.update(choices=base_model_choices, value=base_model_value)]
     results += [aspect_ratio_update]
-    results += [gr.update(choices=[modules.flags.default_vae] + modules.config.vae_filenames)]
+    results += [vae_update]
     results += [clip_update]
     if not args_manager.args.disable_preset_selection:
         results += [gr.update(choices=modules.config.available_presets)]
@@ -451,6 +465,19 @@ def _get_installed_dropdown_value(selector, expected_root_keys, available_choice
     return _resolve_dropdown_choice(candidate_value, available_choices)
 
 
+def _selector_matches_base_architecture(selector, base_model_name):
+    candidate_entry = default_model_manager.get_entry(selector)
+    if candidate_entry is None:
+        return False
+
+    base_entry = default_model_manager.get_entry(base_model_name)
+    candidate_architecture = getattr(candidate_entry, 'architecture', None)
+    base_architecture = getattr(base_entry, 'architecture', None) if base_entry is not None else None
+    if candidate_architecture and base_architecture and candidate_architecture != base_architecture:
+        return False
+    return True
+
+
 def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_model, current_clip_model, *current_lora_ctrl_values):
     base_choices = modules.config.model_filenames
     vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
@@ -467,7 +494,7 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
         current_lora_weights.append(current_lora_ctrl_values[offset + 2] if offset + 2 < len(current_lora_ctrl_values) else 1.0)
 
     base_value = current_base_model if current_base_model in base_choices else (base_choices[0] if base_choices else modules.config.default_base_model_name)
-    vae_value = current_vae_model if current_vae_model in vae_choices else modules.flags.default_vae
+    vae_value = _resolve_vae_value_for_base_model(base_value, current_vae_model, vae_choices)
     clip_value = current_clip_model if current_clip_model in clip_choices else 'None'
     lora_choices = get_filtered_lora_choices_for_model(base_value)
 
@@ -494,27 +521,32 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
             candidate = _get_installed_dropdown_value(drop_selector, {'checkpoints', 'unet'}, base_choices)
             if candidate and candidate in base_choices:
                 base_value = candidate
-                aspect_ratio_update, clip_update, *lora_model_updates = update_model_dependent_choices(
+                aspect_ratio_update, vae_update, clip_update, *lora_model_updates = update_model_dependent_choices(
                     base_value,
                     current_aspect_ratio,
+                    current_vae_model,
                     current_clip_model,
                     *current_lora_models,
                 )
+                vae_value = vae_update['value']
                 lora_choices = get_filtered_lora_choices_for_model(base_value)
             else:
                 aspect_ratio_update = gr.update(choices=modules.config.get_aspect_ratio_labels_for_model(base_value) or modules.config.available_aspect_ratios_labels, value=current_aspect_ratio)
                 clip_update = gr.update(choices=clip_choices, value=clip_value)
                 lora_model_updates = [gr.update(choices=lora_choices, value=(model if model in lora_choices else 'None')) for model in current_lora_models]
         elif drop_target == 'vae_model':
-            candidate = _get_installed_dropdown_value(drop_selector, {'vae'}, vae_choices)
-            if candidate and candidate in vae_choices:
-                vae_value = candidate
+            if not _base_model_requires_default_vae(base_value):
+                candidate = _get_installed_dropdown_value(drop_selector, {'vae'}, vae_choices)
+                if candidate and candidate in vae_choices and _selector_matches_base_architecture(drop_selector, base_value):
+                    vae_value = candidate
+            else:
+                vae_value = modules.flags.default_vae
             aspect_ratio_update = gr.update(choices=modules.config.get_aspect_ratio_labels_for_model(base_value) or modules.config.available_aspect_ratios_labels, value=current_aspect_ratio)
             clip_update = gr.update(choices=clip_choices, value=clip_value)
             lora_model_updates = [gr.update(choices=lora_choices, value=(model if model in lora_choices else 'None')) for model in current_lora_models]
         elif drop_target == 'clip_model':
             candidate = _get_installed_dropdown_value(drop_selector, {'clip'}, clip_choices)
-            if candidate and candidate in clip_choices:
+            if candidate and candidate in clip_choices and _selector_matches_base_architecture(drop_selector, base_value):
                 clip_value = candidate
             aspect_ratio_update = gr.update(choices=modules.config.get_aspect_ratio_labels_for_model(base_value) or modules.config.available_aspect_ratios_labels, value=current_aspect_ratio)
             clip_update = gr.update(choices=clip_choices, value=clip_value)
@@ -700,8 +732,8 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     shared.gradio_root.load(refresh_upscale_models, outputs=upscale_model, queue=False, show_progress=False)
 
     lora_model_ctrls = [lora_ctrls[i * 3 + 1] for i in range(modules.config.default_max_lora_number)]
-    model_choice_inputs = [base_model, aspect_ratios_selection, clip_model] + lora_model_ctrls
-    model_choice_outputs = [aspect_ratios_selection, clip_model] + lora_model_ctrls
+    model_choice_inputs = [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_model_ctrls
+    model_choice_outputs = [aspect_ratios_selection, vae_model, clip_model] + lora_model_ctrls
 
     base_model.change(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
     shared.gradio_root.load(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
@@ -735,7 +767,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     refresh_files_output = [base_model, aspect_ratios_selection, vae_model, clip_model]
     if not args_manager.args.disable_preset_selection:
         refresh_files_output += [preset_selection]
-    refresh_files.click(refresh_files_clicked, [base_model, aspect_ratios_selection, clip_model] + lora_model_ctrls, refresh_files_output + lora_ctrls,
+    refresh_files.click(refresh_files_clicked, [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_model_ctrls, refresh_files_output + lora_ctrls,
                         queue=False, show_progress=False)
 
     model_browser_drop_outputs = [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_ctrls

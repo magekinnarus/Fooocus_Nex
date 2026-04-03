@@ -8,16 +8,14 @@ The app-facing goal is:
 - normalize different provider formats into one runtime view
 - keep thumbnails repo-owned and stable across Colab sessions
 
-## Preset References
+## Preset Catalogs and References
 
-- `civitai_catalog.template.json`
-- `huggingface_catalog.template.json`
+- `civitai_main_catalog.json` - committed preset CivitAI catalog
+- `huggingface_main_catalog.json` - committed preset HuggingFace catalog
 
-## Current Runtime Seed
+These main preset JSON files are also the reference examples for committed catalog structure in this folder.
 
-- `m06_runtime_seed.catalog.json`
-
-These remain reference copies. Active authoritative catalogs may live in the user catalog folder when the Director wants to manage them there directly.
+Committed preset/source catalogs live in this root folder. Runtime-generated writable catalogs live in `configs/model_catalogs/user/`, alongside installed-link state and personal catalogs.
 
 ## Source Catalogs vs Runtime Catalogs
 
@@ -87,16 +85,16 @@ The `loras/sdxl/noob/` example from earlier drafts should be considered obsolete
 
 ## Recommended Multi-Catalog Layout
 
-Preset/example catalogs can live in this repo folder.
+Preset catalogs that should ship with the repo live in this root folder.
 
-User/private catalogs should live in a writable catalog folder and be loaded alongside preset catalogs.
+Runtime-generated user/private catalogs should live in the writable `configs/model_catalogs/user/` folder and be loaded alongside the preset catalogs.
 
 Recommended runtime naming:
 - active catalogs: `*.catalog.json`
 - compatible user/runtime catalogs: `*_catalog.json`
-- starter references: `*.template.json`, `*.example.json`
+- optional examples: `*.example.json`
 
-The runtime loader ingests `*.catalog.json` and `*_catalog.json` files so user-maintained catalogs can keep a more descriptive filename style. Template and example files remain excluded.
+The runtime loader ingests `*.catalog.json` and `*_catalog.json` files so user-maintained catalogs can keep a more descriptive filename style. Example files remain excluded.
 
 
 Conceptually, the runtime view is built from:
@@ -231,6 +229,10 @@ Common runtime fields include:
 - `modules/model_download/transport.py`
 - `modules/model_download/orchestrator.py`
 - future M06 runtime index / manager modules
+
+
+
+
 
 
 

@@ -1,7 +1,6 @@
 """
 gr.Image() component hijack for Gradio 5.
 This file is a bridge to allow Fooocus_Nex to launch on Gradio 5.
-Reference for migration is available in gradio_hijack_old.py.
 """
 
 from __future__ import annotations

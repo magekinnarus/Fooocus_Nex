@@ -1,4 +1,4 @@
-import os
+﻿import os
 from modules import config, model_registry
 from modules.model_download.runtime import download_file
 
@@ -54,13 +54,14 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
             continue
         download_file(url=url, model_dir=preferred_root, file_name=file_name)
     for file_name, url in vae_downloads.items():
-        download_file(url=url, model_dir=config.path_vae, file_name=file_name)
+        download_file(url=url, model_dir=config.get_preferred_asset_root_path('vae', file_name=file_name), file_name=file_name)
 
     # Internal upscalers now come from the centralized manifest system.
     _ensure_internal_assets('upscale', progress=False)
 
     # Keep preset/config-defined entries as additive custom downloads rather than the source of truth.
     for file_name, url in upscale_downloads.items():
-        download_file(url=url, model_dir=config.path_upscale_models[0], file_name=file_name)
+        download_file(url=url, model_dir=config.get_preferred_asset_root_path('upscale_models', file_name=file_name), file_name=file_name)
 
     return default_model, checkpoint_downloads
+

@@ -1,11 +1,14 @@
 # User Catalogs
 
-Place runtime user or private catalogs here using either the `*.catalog.json` or `*_catalog.json` naming convention.
+This folder is for writable runtime state and personal catalogs.
 
-Examples:
-- `private_models.catalog.json`
-- `team_shared.catalog.json`
-- `civitai_main_catalog.json`
-- `huggingface_main_catalog.json`
+Typical files here include:
+- `user_local_models.catalog.json`
+- `unregistered_install_catalog.catalog.json`
+- personal catalogs such as `my_catalog.catalog.json`
+- `installed_model_links.json`
 
-Template and example files should stay in the parent `configs/model_catalogs` folder.
+These files are runtime/user state and should not be treated as committed preset catalogs.
+
+Committed preset catalogs and reference catalogs belong in the parent `configs/model_catalogs` folder.
+

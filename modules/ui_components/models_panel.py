@@ -57,6 +57,7 @@ def build_models_tab():
                     label=f'LoRA {i + 1}',
                     choices=['None'] + modules.config.lora_filenames,
                     value=filename,
+                    allow_custom_value=True,
                     elem_classes='lora_model',
                     elem_id=f'lora_model_dropdown_{i + 1}',
                     scale=5

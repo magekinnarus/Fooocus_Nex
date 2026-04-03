@@ -210,21 +210,21 @@ nex-model-browser {
 .nmb-toolbar {
     display: flex;
     justify-content: flex-end;
-    padding: 12px 32px;
+    padding: 12px 20px;
     margin-top: 8px;
 }
 
 .nmb-toolbar__actions {
     display: flex;
-    gap: 60px;
+    gap: 12px;
 }
 
 .nmb-action-btn {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 48px !important;
-    font-size: 1rem;
+    gap: 10px;
+    padding: 8px 18px !important;
+    font-size: 0.95rem;
     font-weight: 700;
     background: var(--button-secondary-background-fill);
     border: 1px solid var(--button-secondary-border-color);
@@ -534,6 +534,33 @@ nex-model-browser {
   min-width: 92px;
 }
 
+.nmb-provider-toggle {
+  display: inline-flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.nmb-provider-toggle__button {
+  padding: 9px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(16, 23, 38, 0.96);
+  color: #f4f7ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nmb-provider-toggle__button.is-active {
+  border-color: rgba(236, 175, 92, 0.55);
+  background: linear-gradient(135deg, rgba(217, 138, 52, 0.22), rgba(180, 78, 36, 0.18));
+  color: #fff0db;
+}
+
+.nmb-provider-toggle__button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .nmb-drawer__current {
   margin-top: 16px;
   padding: 14px;
@@ -637,5 +664,82 @@ nex-model-browser {
 
   .nmb-card-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+.nmb-shell.has-drawer {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.nmb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background: rgba(4, 8, 18, 0.68);
+  backdrop-filter: blur(6px);
+}
+
+.nmb-drawer {
+  position: relative;
+  top: auto;
+  width: min(920px, calc(100vw - 40px));
+  max-height: calc(100vh - 56px);
+  overflow: auto;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.nmb-toolbar {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nmb-toolbar__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.nmb-form-grid textarea {
+  width: 100%;
+  min-height: 112px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(16, 23, 38, 0.96);
+  color: #f4f7ff;
+  resize: vertical;
+}
+
+.nmb-drawer.is-loading {
+  opacity: 0.82;
+}
+
+@media (max-width: 900px) {
+  .nmb-overlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .nmb-drawer {
+    width: 100%;
+    max-height: none;
+  }
+
+  .nmb-toolbar__actions {
+    justify-content: stretch;
+  }
+
+  .nmb-action-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .nmb-card__actions {
+    flex-wrap: wrap;
   }
 }
