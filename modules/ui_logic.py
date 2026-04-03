@@ -378,6 +378,20 @@ def get_synced_clip_update_for_base_model(base_model_name, current_clip_model):
     return gr.update(choices=clip_choices, value=clip_value)
 
 
+def _get_base_model_dropdown_state(current_base_model=None):
+    base_choices = list(modules.config.model_filenames or [])
+    if not base_choices:
+        return ['None'], 'None'
+
+    if current_base_model in base_choices:
+        return base_choices, current_base_model
+
+    if modules.config.default_base_model_name in base_choices:
+        return base_choices, modules.config.default_base_model_name
+
+    return base_choices, base_choices[0]
+
+
 def _base_model_requires_default_vae(base_model_name):
     base_entry = default_model_manager.get_entry(base_model_name)
     return getattr(base_entry, 'root_key', None) == 'checkpoints'
@@ -409,10 +423,7 @@ def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_
     except Exception as exc:
         print(f'Failed to refresh installed model index: {exc}')
 
-    base_model_choices = modules.config.model_filenames
-    base_model_value = current_base_model if current_base_model in base_model_choices else modules.config.default_base_model_name
-    if base_model_choices and base_model_value not in base_model_choices:
-        base_model_value = base_model_choices[0]
+    base_model_choices, base_model_value = _get_base_model_dropdown_state(current_base_model)
 
     aspect_ratio_update, vae_update, clip_update, *lora_model_updates = update_model_dependent_choices(
         base_model_value,
@@ -479,7 +490,7 @@ def _selector_matches_base_architecture(selector, base_model_name):
 
 
 def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_model, current_clip_model, *current_lora_ctrl_values):
-    base_choices = modules.config.model_filenames
+    base_choices, base_value = _get_base_model_dropdown_state(current_base_model)
     vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
     clip_choices = ['None'] + modules.config.clip_filenames
     lora_slot_count = modules.config.default_max_lora_number
@@ -493,7 +504,6 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
         current_lora_models.append(current_lora_ctrl_values[offset + 1] if offset + 1 < len(current_lora_ctrl_values) else 'None')
         current_lora_weights.append(current_lora_ctrl_values[offset + 2] if offset + 2 < len(current_lora_ctrl_values) else 1.0)
 
-    base_value = current_base_model if current_base_model in base_choices else (base_choices[0] if base_choices else modules.config.default_base_model_name)
     vae_value = _resolve_vae_value_for_base_model(base_value, current_vae_model, vae_choices)
     clip_value = current_clip_model if current_clip_model in clip_choices else 'None'
     lora_choices = get_filtered_lora_choices_for_model(base_value)
@@ -906,3 +916,5 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
     metadata_input_image_path.change(trigger_metadata_preview, inputs=metadata_input_image_path, outputs=metadata_json, queue=False, show_progress=True)
     outpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, outpaint_mask_image], outputs=[outpaint_mask_image], queue=False, show_progress=False)
+
+

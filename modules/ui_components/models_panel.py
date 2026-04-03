@@ -1,4 +1,4 @@
-﻿import gradio as gr
+import gradio as gr
 import modules.config
 import modules.flags as flags
 import modules.ui_components.styles_panel as styles_panel
@@ -14,12 +14,17 @@ def build_models_tab():
     """
     results = {}
 
+    base_model_choices = list(modules.config.model_filenames or [])
+    if not base_model_choices:
+        base_model_choices = ['None']
+    base_model_value = modules.config.default_base_model_name if modules.config.default_base_model_name in base_model_choices else base_model_choices[0]
+
     with gr.Group():
         with gr.Row():
             results['base_model'] = gr.Dropdown(
                 label='Base Model',
-                choices=modules.config.model_filenames,
-                value=modules.config.default_base_model_name,
+                choices=base_model_choices,
+                value=base_model_value,
                 show_label=True,
                 elem_id='model_base_dropdown',
             )
@@ -84,3 +89,5 @@ def build_models_tab():
 
 
     return results
+
+
