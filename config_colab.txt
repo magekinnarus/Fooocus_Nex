@@ -1,4 +1,4 @@
-﻿{
+{
     "path_checkpoints": "/content/models/checkpoints/",
     "path_loras": "/content/models/loras/",
     "path_embeddings": "/content/drive/MyDrive/Fooocus_Nex/models/embeddings/",
