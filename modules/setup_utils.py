@@ -43,7 +43,6 @@ def _ensure_guidance_assets(progress=False):
 
 def _ensure_startup_support_assets(progress=False):
     _ensure_internal_assets('upscale', progress=progress)
-    _ensure_internal_assets('inpaint', progress=progress)
     _ensure_internal_assets('removal', progress=progress)
     _ensure_guidance_assets(progress=progress)
 
@@ -100,3 +99,4 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
 
     print(f'[Startup] download_models work completed in {time.perf_counter() - overall_start:.2f}s')
     return default_model, checkpoint_downloads
+
