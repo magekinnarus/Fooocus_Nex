@@ -109,6 +109,7 @@ class DownloadJobState:
 class DownloadJobRegistry:
     def __init__(self):
         self._jobs: dict[str, DownloadJobState] = {}
+        self._active_job_ids_by_entry: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def create_job(self, selector: str, entry: ModelCatalogEntry) -> DownloadJobState:
@@ -145,6 +146,8 @@ class DownloadJobRegistry:
                     job.started_at = time.time()
                 if status in {'succeeded', 'failed'}:
                     job.finished_at = time.time()
+                    if self._active_job_ids_by_entry.get(job.entry_id) == job_id:
+                        self._active_job_ids_by_entry.pop(job.entry_id, None)
             if progress is not None:
                 job.progress = max(0.0, min(1.0, float(progress)))
             if message is not None:
@@ -162,7 +165,17 @@ class DownloadJobRegistry:
         entry: ModelCatalogEntry,
         worker: Callable[[ModelCatalogEntry, Callable[[float | None, str | None], None]], Any],
     ) -> DownloadJobState:
-        job = self.create_job(selector, entry)
+        with self._lock:
+            active_job_id = self._active_job_ids_by_entry.get(entry.id)
+            if active_job_id is not None:
+                active_job = self._jobs.get(active_job_id)
+                if active_job is not None and active_job.status in {'queued', 'running'}:
+                    return active_job
+                self._active_job_ids_by_entry.pop(entry.id, None)
+
+            job = DownloadJobState(job_id=uuid.uuid4().hex, selector=str(selector), entry_id=entry.id)
+            self._jobs[job.job_id] = job
+            self._active_job_ids_by_entry[entry.id] = job.job_id
 
         def report_progress(progress: float | None = None, message: str | None = None) -> None:
             self.update(job.job_id, status='running', progress=progress, message=message)
@@ -197,6 +210,3 @@ class DownloadJobRegistry:
             if deadline is not None and time.time() >= deadline:
                 return job
             time.sleep(0.01)
-
-
-

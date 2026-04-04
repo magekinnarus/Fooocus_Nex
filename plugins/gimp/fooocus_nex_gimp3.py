@@ -20,6 +20,11 @@ import tempfile
 import json
 import ssl
 
+def _urlopen(req):
+    if req.full_url.lower().startswith('https://'):
+        return urllib.request.urlopen(req, context=ssl._create_unverified_context())
+    return urllib.request.urlopen(req)
+
 class FooocusNexStaging(Gimp.PlugIn):
     ## Parameters ##
     __gproperties__ = {
@@ -94,7 +99,7 @@ class FooocusNexStaging(Gimp.PlugIn):
             req.add_header('Content-Type', content_type)
             req.add_header('User-Agent', 'GIMP3-Fooocus-Plugin')
             
-            with urllib.request.urlopen(req) as response:
+            with _urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
             Gimp.Progress.update(0.9)
             
@@ -119,7 +124,7 @@ class FooocusNexStaging(Gimp.PlugIn):
             req = urllib.request.Request(url)
             req.add_header('User-Agent', 'GIMP3-Fooocus-Plugin')
             
-            with urllib.request.urlopen(req) as response:
+            with _urlopen(req) as response:
                 img_data = response.read()
             Gimp.Progress.update(0.5)
                 

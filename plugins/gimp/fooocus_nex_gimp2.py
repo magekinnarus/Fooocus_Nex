@@ -7,6 +7,7 @@ import os
 import tempfile
 import mimetypes
 import json
+import ssl
 
 def encode_multipart_formdata(fields, files):
     boundary = '----------ThIs_Is_tHe_bouNdaRY_$'
@@ -32,6 +33,11 @@ def encode_multipart_formdata(fields, files):
 def get_content_type(filename):
     return mimetypes.guess_type(filename)[0] or 'application/octet-stream'
 
+def _urlopen(req):
+    if req.get_full_url().lower().startswith('https://'):
+        return urllib2.urlopen(req, context=ssl._create_unverified_context())
+    return urllib2.urlopen(req)
+
 def send_to_staging(image, layer, base_url):
     gimp.progress_init("Sending to Fooocus Staging...")
     try:
@@ -54,7 +60,7 @@ def send_to_staging(image, layer, base_url):
         req.add_header('Content-Type', content_type)
         req.add_header('User-Agent', 'GIMP-Fooocus-Plugin')
         
-        response = urllib2.urlopen(req)
+        response = _urlopen(req)
         res_data = json.load(response)
         gimp.progress_update(0.9)
         
@@ -82,7 +88,7 @@ def receive_from_staging(image, layer, base_url):
         req = urllib2.Request(url)
         req.add_header('User-Agent', 'GIMP-Fooocus-Plugin')
         
-        response = urllib2.urlopen(req)
+        response = _urlopen(req)
         img_data = response.read()
         gimp.progress_update(0.5)
         
