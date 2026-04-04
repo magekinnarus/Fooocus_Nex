@@ -1,5 +1,6 @@
 import os
 import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from modules import config, model_registry
 from modules.model_download.runtime import download_file
@@ -47,6 +48,33 @@ def _ensure_startup_support_assets(progress=False):
     _ensure_guidance_assets(progress=progress)
 
 
+def _resolve_startup_download_url(url: str) -> str:
+    parsed = urlparse(str(url or '').strip())
+    host = (parsed.netloc or '').lower()
+    if not host.endswith('civitai.com'):
+        return url
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if query.get('token'):
+        return url
+
+    token = os.getenv('CIVITAI_TOKEN', '').strip()
+    if not token:
+        return url
+
+    query['token'] = token
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _download_checkpoint_targets(checkpoint_downloads):
+    for file_name, url in checkpoint_downloads.items():
+        download_file(
+            url=_resolve_startup_download_url(url),
+            model_dir=config.get_preferred_asset_root_path('checkpoints', file_name=file_name),
+            file_name=file_name,
+        )
+
+
 def download_models(default_model, checkpoint_downloads, embeddings_downloads, lora_downloads, vae_downloads, upscale_downloads):
     from modules.util import get_file_from_folder_list
 
@@ -54,6 +82,11 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
 
     for file_name, url in vae_approx_filenames:
         download_file(url=url, model_dir=config.path_vae_approx, file_name=file_name)
+
+    if checkpoint_downloads:
+        checkpoint_start = time.perf_counter()
+        _download_checkpoint_targets(checkpoint_downloads)
+        print(f'[Startup] Checkpoint downloads completed in {time.perf_counter() - checkpoint_start:.2f}s')
 
     # Check if any model exists in checkpoints
     model_found = False
@@ -99,4 +132,3 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
 
     print(f'[Startup] download_models work completed in {time.perf_counter() - overall_start:.2f}s')
     return default_model, checkpoint_downloads
-

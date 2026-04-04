@@ -23,6 +23,10 @@
     "path_model_catalogs_preset": "/content/drive/MyDrive/Fooocus_Nex/configs/model_catalogs/",
     "path_model_catalogs_user": "/content/drive/MyDrive/Fooocus_Nex/configs/model_catalogs/user/",
     "path_model_thumbnails": "/content/drive/MyDrive/Fooocus_Nex/thumbnails/",
+    "Selected_model": "beretMixReal_v100.safetensors",
+    "checkpoint_downloads": {
+        "beretMixReal_v100.safetensors": "https://civitai.com/api/download/models/2304915"
+    },
     "default_styles": [
         "Dj Illustrious",
         "Dj Hyperrealism"
