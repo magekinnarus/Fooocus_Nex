@@ -339,8 +339,9 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
         vae_filename_abs = get_file_from_folder_list(vae_filename, modules.config.path_vae)
         if os.path.exists(vae_filename_abs):
             try:
-                vae = loader.load_vae(vae_filename_abs)
-                print(f'[Nex] External VAE loaded: {vae_filename}')
+                vae_format = ldm_patched.modules.latent_formats.SDXL() if is_sdxl_base else ldm_patched.modules.latent_formats.SD15()
+                vae = loader.load_vae(vae_filename_abs, latent_format=vae_format)
+                print(f'[Nex] External VAE loaded: {vae_filename} (format: {"SDXL" if is_sdxl_base else "SD1.5"})')
             except Exception as e:
                 print(f'[Nex Error] Failed to load VAE [{vae_filename}]: {e}')
 

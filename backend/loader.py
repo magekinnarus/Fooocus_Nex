@@ -114,7 +114,10 @@ class VAE:
     def __init__(self, first_stage_model, load_device, offload_device, latent_format=None):
         self.first_stage_model = first_stage_model
         # Use SD15 as default if not specified (backward compatibility)
-        self.latent_format = latent_format or latent_formats.SD15()
+        if latent_format is None:
+            logging.debug("VAE: No latent_format provided, defaulting to SD15.")
+            latent_format = latent_formats.SD15()
+        self.latent_format = latent_format
         self.patcher = patching.NexModelPatcher(
             self.first_stage_model,
             load_device=load_device,
@@ -280,6 +283,17 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
     load_device = load_device or resources.get_torch_device()
     offload_device = offload_device or resources.vae_offload_device()
     
+    # Try to infer latent format from filename if not provided
+    if latent_format is None and isinstance(source, str):
+        from modules import model_taxonomy
+        arch = model_taxonomy.infer_architecture_from_filename(source)
+        if arch == model_taxonomy.ARCHITECTURE_SDXL:
+            latent_format = latent_formats.SDXL()
+            logging.info(f"VAE: Inferred SDXL latent format from {source}")
+        elif arch == model_taxonomy.ARCHITECTURE_SD15:
+            latent_format = latent_formats.SD15()
+            logging.info(f"VAE: Inferred SD15 latent format from {source}")
+
     sd = resolve_source(source)
     
     # Generic VAE config (works for both SD1.5 and SDXL usually)
