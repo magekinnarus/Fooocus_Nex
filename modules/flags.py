@@ -117,6 +117,15 @@ def get_cn_channel(value):
     return cn_type_to_channel.get(normalize_cn_type(value))
 
 
+def get_default_cn_type_for_channel(channel):
+    choices = cn_structural_types if channel == cn_structural else cn_contextual_types
+    return choices[0]
+
+
+def get_default_cn_parameters_for_type(cn_type):
+    normalized_type = resolve_cn_type(cn_type)
+    return default_parameters.get(normalized_type, default_parameters[default_ip])
+
 output_formats = ['png', 'jpeg', 'webp']
 
 inpaint_mask_models = ['u2net', 'u2netp', 'u2net_human_seg', 'u2net_cloth_seg', 'silueta', 'isnet-general-use', 'isnet-anime']

@@ -1,4 +1,4 @@
-﻿import gradio as gr
+import gradio as gr
 import os
 
 gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
@@ -174,8 +174,15 @@ with shared.gradio_root:
                             return choices[0]
 
                         def update_guidance_type_choices(channel):
-                            choices = guidance_choices_by_channel.get(channel, flags.cn_contextual_types)
-                            return gr.update(choices=choices, value=choices[0])
+                            normalized_channel = channel if channel in guidance_choices_by_channel else flags.cn_contextual
+                            choices = guidance_choices_by_channel.get(normalized_channel, flags.cn_contextual_types)
+                            default_type = flags.get_default_cn_type_for_channel(normalized_channel)
+                            default_stop, default_weight = flags.get_default_cn_parameters_for_type(default_type)
+                            return (
+                                gr.update(choices=choices, value=default_type),
+                                gr.update(value=float(default_stop)),
+                                gr.update(value=float(default_weight)),
+                            )
 
                         def create_ip_slot(image_count):
                             default_channel = resolve_channel_default(image_count)
@@ -233,13 +240,6 @@ with shared.gradio_root:
                                             scale=1,
                                             elem_id=f'cn_{image_count - 1}_type'
                                         )
-                                        ip_channel.change(
-                                            fn=update_guidance_type_choices,
-                                            inputs=ip_channel,
-                                            outputs=ip_type,
-                                            queue=False,
-                                            show_progress=False
-                                        )
                                         ip_types.append(ip_type)
 
                                     with gr.Row():
@@ -260,6 +260,14 @@ with shared.gradio_root:
                                             value=modules.config.default_ip_weights[image_count]
                                         )
                                         ip_weights.append(ip_weight)
+
+                                        ip_channel.change(
+                                            fn=update_guidance_type_choices,
+                                            inputs=ip_channel,
+                                            outputs=[ip_type, ip_stop, ip_weight],
+                                            queue=False,
+                                            show_progress=False
+                                        )
 
                                 ip_ad_cols.append(ad_col)
 
@@ -304,6 +312,7 @@ with shared.gradio_root:
                                 outpaint_engine = outpaint_panel_result['outpaint_engine']
                                 outpaint_strength = outpaint_panel_result['outpaint_strength']
                                 inpaint_outpaint_expansion_size = outpaint_panel_result['inpaint_outpaint_expansion_size']
+                                outpaint_additional_prompt = gr.Textbox(placeholder="Describe what you want to outpaint.", elem_id='outpaint_additional_prompt', label='Outpaint Additional Prompt', visible=True)
 
                                 gr.HTML('* Powered by Fooocus Inpaint Engine <a href="https://github.com/lllyasviel/Fooocus/discussions/414" target="_blank">\U0001F4D4 Documentation</a>')
 
@@ -531,6 +540,7 @@ with shared.gradio_root:
             'outpaint_selections': outpaint_selections,
             'outpaint_input_image': outpaint_input_image_path,
             'outpaint_mask_image': outpaint_mask_image_path,
+            'outpaint_additional_prompt': outpaint_additional_prompt,
             'inpaint_input_image': inpaint_input_image_path,
             'inpaint_context_mask_image': inpaint_context_mask_image_path,
             'inpaint_additional_prompt': inpaint_additional_prompt,

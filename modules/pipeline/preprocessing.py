@@ -74,13 +74,19 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     prompt = prompts[0]
     negative_prompt = negative_prompts[0]
     
-    # Inpaint Additional Prompt handling
+    # Masked-edit additional prompt handling
+    edit_additional_prompt = ''
     if 'inpaint' in task_state.goals and task_state.inpaint_additional_prompt != '':
+        edit_additional_prompt = task_state.inpaint_additional_prompt
+    elif 'outpaint' in task_state.goals and getattr(task_state, 'outpaint_additional_prompt', '') != '':
+        edit_additional_prompt = task_state.outpaint_additional_prompt
+
+    if edit_additional_prompt != '':
         if prompt == '':
-            prompt = task_state.inpaint_additional_prompt
+            prompt = edit_additional_prompt
         else:
             # Concatenate to the beginning so it's prioritized by CLIP
-            prompt = task_state.inpaint_additional_prompt + '\n' + prompt
+            prompt = edit_additional_prompt + '\n' + prompt
     
     if prompt == '':
         use_expansion = False

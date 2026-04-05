@@ -36,6 +36,7 @@ class TaskState:
     outpaint_bb_image: Optional[np.ndarray] = None
     outpaint_bb_mask_data: str = ""
     outpaint_mask_image: Optional[np.ndarray] = None
+    outpaint_additional_prompt: str = ""
     inpaint_input_image: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None
     inpaint_context_mask_image: Optional[np.ndarray] = None
     inpaint_additional_prompt: str = ""
