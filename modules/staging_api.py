@@ -1,17 +1,30 @@
 import os
 import io
+import json
+import zipfile
 import urllib.request
 import urllib.parse
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 import modules.config
 import modules.util
 from PIL import Image
 
 staging_router = APIRouter()
 
+
+def get_staging_dir():
+    staging_dir = os.path.join(modules.config.path_outputs, "staging")
+    os.makedirs(staging_dir, exist_ok=True)
+    return staging_dir
+
+
 def _gimp_target_file():
     return os.path.join(get_staging_dir(), ".gimp_target.txt")
+
+
+def _gimp_queue_file():
+    return os.path.join(get_staging_dir(), ".gimp_queue.json")
 
 
 def _read_gimp_target_name():
@@ -26,35 +39,74 @@ def _read_gimp_target_name():
         return None
 
 
-def get_staging_dir():
-    staging_dir = os.path.join(modules.config.path_outputs, "staging")
-    os.makedirs(staging_dir, exist_ok=True)
-    return staging_dir
+def _read_gimp_queue_names():
+    queue_file = _gimp_queue_file()
+    names = []
+
+    if os.path.exists(queue_file):
+        try:
+            with open(queue_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for name in data:
+                    if not isinstance(name, str):
+                        continue
+                    clean = name.strip()
+                    if clean and clean not in names:
+                        names.append(clean)
+        except Exception:
+            names = []
+
+    if names:
+        return names
+
+    legacy_target = _read_gimp_target_name()
+    return [legacy_target] if legacy_target else []
+
+
+def _write_gimp_queue_names(names):
+    queue_file = _gimp_queue_file()
+    cleaned = []
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        clean = name.strip()
+        if clean and clean not in cleaned:
+            cleaned.append(clean)
+
+    if cleaned:
+        with open(queue_file, "w", encoding="utf-8") as f:
+            json.dump(cleaned, f)
+    elif os.path.exists(queue_file):
+        os.remove(queue_file)
+
+    legacy_target = _gimp_target_file()
+    if os.path.exists(legacy_target):
+        os.remove(legacy_target)
+
 
 @staging_router.get("/staging_api/images")
 async def list_staging_images():
     """Returns a list of image URLs currently in the staging directory."""
     staging_dir = get_staging_dir()
     files = []
-    
-    # Sort files by modification time (newest first)
+
     try:
         entries = sorted(
-            [e for e in os.scandir(staging_dir) if e.is_file() and e.name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))],
+            [e for e in os.scandir(staging_dir) if e.is_file() and e.name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))],
             key=lambda e: e.stat().st_mtime,
-            reverse=True
+            reverse=True,
         )
         for entry in entries:
-            # We return URLs structured for our dedicated API endpoint
-            # This is more reliable than Gradio's internal /file= route
             files.append({
                 "name": entry.name,
-                "url": f"/staging_api/image/{entry.name}"
+                "url": f"/staging_api/image/{entry.name}",
             })
     except Exception as e:
         print(f"Error reading staging dir: {e}")
-        
-    return JSONResponse(content={"images": files, "gimp_target": _read_gimp_target_name()})
+
+    return JSONResponse(content={"images": files, "gimp_queue": _read_gimp_queue_names()})
+
 
 @staging_router.post("/staging_api/upload")
 async def upload_staging_image(
@@ -63,51 +115,44 @@ async def upload_staging_image(
 ):
     """Accepts either a File upload or an existing URL/Base64 to save to staging."""
     staging_dir = get_staging_dir()
-    
+
     try:
         img = None
         if file is not None:
-             # Handle direct file upload
             contents = await file.read()
             img = Image.open(io.BytesIO(contents)).convert("RGBA")
-            
+
         elif url is not None:
-             # Handle drag-and-drop URL copy
-             if url.startswith("data:image"):
-                 # Handle base64
-                 header, encoded = url.split(",", 1)
-                 import base64
-                 data = base64.b64decode(encoded)
-                 img = Image.open(io.BytesIO(data)).convert("RGBA")
-             elif "/file=" in url:
-                 # Handle Gradio Local URL
-                 filepath = url.split("/file=", 1)[1].split("?")[0]
-                 filepath = urllib.parse.unquote(filepath)
-                 if os.path.exists(filepath):
-                     img = Image.open(filepath).convert("RGBA")
-                 else:
-                     raise HTTPException(status_code=400, detail="Local file not found")
-             elif url.startswith("file://"):
-                 # Handle local file URL
-                 filepath = url.replace("file:///", "").replace("file://", "")
-                 filepath = urllib.parse.unquote(filepath)
-                 if os.path.exists(filepath):
-                     img = Image.open(filepath).convert("RGBA")
-                 else:
-                     raise HTTPException(status_code=400, detail="Local file not found")
-             elif url.startswith("http"):
-                 # Download remote URL
-                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                 with urllib.request.urlopen(req) as response:
-                     data = response.read()
-                     img = Image.open(io.BytesIO(data)).convert("RGBA")
-             else:
-                 raise HTTPException(status_code=400, detail="Invalid URL format")
+            if url.startswith("data:image"):
+                header, encoded = url.split(",", 1)
+                import base64
+                data = base64.b64decode(encoded)
+                img = Image.open(io.BytesIO(data)).convert("RGBA")
+            elif "/file=" in url:
+                filepath = url.split("/file=", 1)[1].split("?")[0]
+                filepath = urllib.parse.unquote(filepath)
+                if os.path.exists(filepath):
+                    img = Image.open(filepath).convert("RGBA")
+                else:
+                    raise HTTPException(status_code=400, detail="Local file not found")
+            elif url.startswith("file://"):
+                filepath = url.replace("file:///", "").replace("file://", "")
+                filepath = urllib.parse.unquote(filepath)
+                if os.path.exists(filepath):
+                    img = Image.open(filepath).convert("RGBA")
+                else:
+                    raise HTTPException(status_code=400, detail="Local file not found")
+            elif url.startswith("http"):
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req) as response:
+                    data = response.read()
+                    img = Image.open(io.BytesIO(data)).convert("RGBA")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid URL format")
         else:
-             raise HTTPException(status_code=400, detail="Must provide file or url")
-             
+            raise HTTPException(status_code=400, detail="Must provide file or url")
+
         if img:
-            # Save image to staging dir
             import datetime
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S_%f")
             filename = f"staged_{time_str}.png"
@@ -119,9 +164,9 @@ async def upload_staging_image(
                 "filepath": filepath,
                 "url": f"/staging_api/image/{filename}",
             })
-        
+
         return JSONResponse(content={"status": "error", "message": "Failed to process image"})
-        
+
     except Exception as e:
         print(f"Staging upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -132,17 +177,17 @@ async def delete_staging_image(name: str):
     """Deletes a specific image from the staging directory."""
     staging_dir = get_staging_dir()
     filepath = os.path.join(staging_dir, name)
-    
-    # Security check: ensure the file is actually inside the staging dir
+
     if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
         raise HTTPException(status_code=403, detail="Forbidden")
-        
+
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
+            remaining_queue = [queued for queued in _read_gimp_queue_names() if queued != name]
+            _write_gimp_queue_names(remaining_queue)
             return JSONResponse(content={"status": "success"})
-        else:
-            raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found")
     except Exception as e:
         print(f"Staging delete error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -154,7 +199,6 @@ async def clear_staging_images():
     staging_dir = get_staging_dir()
     try:
         import shutil
-        # We don't want to delete the dir itself, just the contents
         for filename in os.listdir(staging_dir):
             file_path = os.path.join(staging_dir, filename)
             try:
@@ -163,63 +207,76 @@ async def clear_staging_images():
                 elif os.path.isdir(file_path):
                     shutil.rmtree(file_path)
             except Exception as e:
-                print(f'Failed to delete {file_path}. Reason: {e}')
+                print(f"Failed to delete {file_path}. Reason: {e}")
         return JSONResponse(content={"status": "success"})
     except Exception as e:
         print(f"Staging clear error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @staging_router.post("/staging_api/gimp_target")
 async def set_gimp_target(name: str):
-    """Toggles a specific image as the current target for GIMP retrieval."""
+    """Toggles an image in the queued GIMP import set."""
     staging_dir = get_staging_dir()
     filepath = os.path.join(staging_dir, name)
-    
-    # Security check
+
     if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
         raise HTTPException(status_code=403, detail="Forbidden")
-        
+
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found")
-        
-    try:
-        target_file = _gimp_target_file()
-        current_target = _read_gimp_target_name()
-        if current_target == name:
-            if os.path.exists(target_file):
-                os.remove(target_file)
-            return JSONResponse(content={"status": "success", "target": None, "cleared": True})
 
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write(name)
-        return JSONResponse(content={"status": "success", "target": name, "cleared": False})
+    try:
+        queue = _read_gimp_queue_names()
+        if name in queue:
+            queue = [queued for queued in queue if queued != name]
+            queued = False
+        else:
+            queue.append(name)
+            queued = True
+
+        _write_gimp_queue_names(queue)
+        return JSONResponse(content={"status": "success", "queue": queue, "queued": queued})
     except Exception as e:
-        print(f"Staging GIMP target error: {e}")
+        print(f"Staging GIMP queue error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @staging_router.get("/staging_api/gimp_target")
 async def get_gimp_target():
-    """Returns the current GIMP target image file."""
+    """Returns all queued GIMP images as a ZIP bundle and clears the queue."""
     staging_dir = get_staging_dir()
-    target_file = _gimp_target_file()
-    
-    if not os.path.exists(target_file):
-        raise HTTPException(status_code=404, detail="No GIMP target set")
-        
+    queue = _read_gimp_queue_names()
+    if not queue:
+        raise HTTPException(status_code=404, detail="No queued GIMP images")
+
+    bundle = io.BytesIO()
+    included_names = []
+
     try:
-        with open(target_file, "r", encoding="utf-8") as f:
-            name = f.read().strip()
-            
-        filepath = os.path.join(staging_dir, name)
-        
-        # Security check
-        if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
-            raise HTTPException(status_code=403, detail="Forbidden")
-            
-        if os.path.exists(filepath):
-            return FileResponse(filepath)
-            
-        raise HTTPException(status_code=404, detail="Targeted image no longer exists")
+        with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            for index, name in enumerate(queue, start=1):
+                filepath = os.path.join(staging_dir, name)
+                if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
+                    continue
+                if not os.path.exists(filepath):
+                    continue
+
+                arcname = f"{index:02d}_{os.path.basename(name)}"
+                zip_file.write(filepath, arcname=arcname)
+                included_names.append(name)
+
+        if not included_names:
+            raise HTTPException(status_code=404, detail="Queued GIMP images no longer exist")
+
+        _write_gimp_queue_names([])
+        headers = {
+            "Content-Disposition": 'attachment; filename="fooocus_nex_gimp_queue.zip"',
+            "X-Fooocus-Queue-Count": str(len(included_names)),
+        }
+        return Response(content=bundle.getvalue(), media_type="application/zip", headers=headers)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Staging GIMP retrieval error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -284,7 +341,7 @@ async def compose_face_grid(payload: dict = Body(...)):
         canvas.paste(tile, (x, y))
 
     import datetime
-    time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S_%f")
+    time_str = datetime.datetime.now().strftime('%Y%m%d-%H%M%S_%f')
     filename = f'face_grid_{grid_size}x{grid_size}_{time_str}.png'
     staging_dir = get_staging_dir()
     filepath = os.path.join(staging_dir, filename)
@@ -305,13 +362,11 @@ async def get_staging_image(name: str):
     """Serves a specific image from the staging directory."""
     staging_dir = get_staging_dir()
     filepath = os.path.join(staging_dir, name)
-    
-    # Security check
+
     if not os.path.abspath(filepath).startswith(os.path.abspath(staging_dir)):
         raise HTTPException(status_code=403, detail="Forbidden")
-        
+
     if os.path.exists(filepath):
-        from fastapi.responses import FileResponse
         return FileResponse(filepath)
-    
+
     raise HTTPException(status_code=404, detail="Image not found")

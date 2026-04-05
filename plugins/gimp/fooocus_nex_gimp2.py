@@ -8,6 +8,8 @@ import tempfile
 import mimetypes
 import json
 import ssl
+import io
+import zipfile
 
 def encode_multipart_formdata(fields, files):
     boundary = '----------ThIs_Is_tHe_bouNdaRY_$'
@@ -79,41 +81,56 @@ def send_to_staging(image, layer, base_url):
 
 def receive_from_staging(image, layer, base_url):
     gimp.progress_init("Receiving from Fooocus Staging...")
+    temp_dir = tempfile.mkdtemp(prefix="fooocus_nex_gimp2_")
+    undo_started = False
     try:
         pdb.gimp_image_undo_group_start(image)
+        undo_started = True
         
-        # 1. Fetch targeted image from Fooocus
         url = base_url.rstrip('/') + "/staging_api/gimp_target"
-        
         req = urllib2.Request(url)
         req.add_header('User-Agent', 'GIMP-Fooocus-Plugin')
         
         response = _urlopen(req)
-        img_data = response.read()
-        gimp.progress_update(0.5)
+        bundle_data = response.read()
+        gimp.progress_update(0.25)
         
-        # 2. Save to temp and load as layer
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, "fooocus_to_gimp.png")
-        
-        with open(temp_path, "wb") as f:
-            f.write(img_data)
-            
-        new_layer = pdb.gimp_file_load_layer(image, temp_path)
-        pdb.gimp_image_insert_layer(image, new_layer, None, 0)
-        
-        gimp.message("Successfully received image from Fooocus Staging")
-        os.remove(temp_path)
+        added_count = 0
+        bundle = zipfile.ZipFile(io.BytesIO(bundle_data), 'r')
+        member_names = [name for name in bundle.namelist() if not name.endswith('/')]
+        if not member_names:
+            raise RuntimeError("No queued images were returned from Fooocus Staging")
+
+        for index, member_name in enumerate(reversed(member_names), start=1):
+            temp_path = os.path.join(temp_dir, os.path.basename(member_name))
+            with open(temp_path, "wb") as f:
+                f.write(bundle.read(member_name))
+
+            new_layer = pdb.gimp_file_load_layer(image, temp_path)
+            pdb.gimp_image_insert_layer(image, new_layer, None, 0)
+            os.remove(temp_path)
+            added_count += 1
+            gimp.progress_update(0.25 + 0.7 * (float(index) / float(len(member_names))))
+
+        bundle.close()
+        gimp.message("Successfully received %d queued image(s) from Fooocus Staging" % added_count)
         
         pdb.gimp_image_undo_group_end(image)
+        undo_started = False
         gimp.displays_flush()
         gimp.progress_update(1.0)
         
     except Exception as e:
-        if image:
+        if undo_started and image:
             pdb.gimp_image_undo_group_end(image)
         gimp.message("Plugin error: " + str(e))
     finally:
+        try:
+            for name in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, name))
+            os.rmdir(temp_dir)
+        except Exception:
+            pass
         gimp.progress_update(1.0)
 
 register(
@@ -136,7 +153,7 @@ register(
 register(
     "python-fu-fooocus-nex-receive",
     "Receive image from Fooocus Staging",
-    "Receives the currently targeted image from Fooocus_Nex staging area as a new layer.",
+    "Receives all queued images from Fooocus_Nex staging area as new layers.",
     "Antigravity", "Antigravity", "2026",
     "Receive from Staging...",
     "RGB*, GRAY*",

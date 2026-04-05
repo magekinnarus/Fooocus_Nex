@@ -19,6 +19,8 @@ import os
 import tempfile
 import json
 import ssl
+import io
+import zipfile
 
 def _urlopen(req):
     if req.full_url.lower().startswith('https://'):
@@ -41,7 +43,7 @@ class FooocusNexStaging(Gimp.PlugIn):
             procedure.set_documentation("Send to Staging", "Sends the current active layer as a PNG to the Fooocus_Nex staging area.", name)
             procedure.set_menu_label("Send to Staging...")
         else:
-            procedure.set_documentation("Receive from Staging", "Receives the currently targeted image from Fooocus_Nex staging area as a new layer.", name)
+            procedure.set_documentation("Receive from Staging", "Receives all queued images from Fooocus_Nex staging area as new layers.", name)
             procedure.set_menu_label("Receive from Staging...")
             
         procedure.add_menu_path("<Image>/Filters/Fooocus_Nex")
@@ -116,38 +118,56 @@ class FooocusNexStaging(Gimp.PlugIn):
 
     def receive_from_staging(self, image, drawable, base_url):
         Gimp.Progress.init("Receiving from Fooocus Staging...")
+        temp_dir = tempfile.mkdtemp(prefix="fooocus_nex_gimp3_")
+        undo_started = False
         try:
             image.undo_group_start()
-            
-            # 1. Fetch
+            undo_started = True
+
             url = base_url.rstrip('/') + "/staging_api/gimp_target"
             req = urllib.request.Request(url)
             req.add_header('User-Agent', 'GIMP3-Fooocus-Plugin')
-            
+
             with _urlopen(req) as response:
-                img_data = response.read()
-            Gimp.Progress.update(0.5)
-                
-            # 2. Save and load
-            temp_dir = tempfile.gettempdir()
-            temp_path = os.path.join(temp_dir, "fooocus_to_gimp3.png")
-            with open(temp_path, "wb") as f:
-                f.write(img_data)
-                
-            new_layer = Gimp.file_load_layer(Gimp.RunMode.NONINTERACTIVE, image, Gio.File.new_for_path(temp_path))
-            image.insert_layer(new_layer, None, 0)
-            
-            os.remove(temp_path)
+                bundle_data = response.read()
+            Gimp.Progress.update(0.25)
+
+            added_count = 0
+            with zipfile.ZipFile(io.BytesIO(bundle_data), 'r') as bundle:
+                member_names = [name for name in bundle.namelist() if not name.endswith('/')]
+                if not member_names:
+                    raise RuntimeError("No queued images were returned from Fooocus Staging")
+
+                for index, member_name in enumerate(reversed(member_names), start=1):
+                    temp_path = os.path.join(temp_dir, os.path.basename(member_name))
+                    with open(temp_path, "wb") as f:
+                        f.write(bundle.read(member_name))
+
+                    new_layer = Gimp.file_load_layer(Gimp.RunMode.NONINTERACTIVE, image, Gio.File.new_for_path(temp_path))
+                    image.insert_layer(new_layer, None, 0)
+                    os.remove(temp_path)
+                    added_count += 1
+                    Gimp.Progress.update(0.25 + 0.7 * (float(index) / float(len(member_names))))
+
             image.undo_group_end()
+            undo_started = False
             Gimp.displays_flush()
             Gimp.Progress.update(1.0)
-            
+            print(f"Successfully received {added_count} queued image(s) from Fooocus Staging")
+
             return self.procedure.new_return_values(Gimp.PDBStatusType.SUCCESS, None)
         except Exception as e:
-            if image:
+            if undo_started and image:
                 image.undo_group_end()
             print("Plugin error:", str(e))
             Gimp.Progress.update(1.0)
             return self.procedure.new_return_values(Gimp.PDBStatusType.EXECUTION_ERROR, None)
+        finally:
+            try:
+                for name in os.listdir(temp_dir):
+                    os.remove(os.path.join(temp_dir, name))
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
 
 Gimp.main(FooocusNexStaging.__gtype__, [])

@@ -5,7 +5,7 @@
     let isDragging = false;
     let dragOffset = { x: 0, y: 0 };
     let pollInterval = null;
-    let currentGimpTarget = null;
+    let currentGimpQueue = [];
     let selectedImage = null;
 
     function createPanel() {
@@ -170,8 +170,8 @@
         try {
             const res = await fetch('/staging_api/images');
             const data = await res.json();
-            currentGimpTarget = data.gimp_target || null;
-            const json = JSON.stringify({ images: data.images, gimp_target: currentGimpTarget });
+            currentGimpQueue = Array.isArray(data.gimp_queue) ? data.gimp_queue : [];
+            const json = JSON.stringify({ images: data.images, gimp_queue: currentGimpQueue });
             if (json === lastImagesJson) return; // No change
             lastImagesJson = json;
 
@@ -191,7 +191,8 @@
         images.forEach(img => {
             const item = document.createElement('div');
             item.className = 'staging-item';
-            if (img.name === currentGimpTarget) {
+            item.dataset.imageName = img.name;
+            if (currentGimpQueue.includes(img.name)) {
                 item.classList.add('gimp-targeted');
             }
 
@@ -221,7 +222,7 @@
             const gimpBtn = document.createElement('button');
             gimpBtn.className = 'item-action-btn btn-gimp';
             gimpBtn.innerHTML = 'G';
-            gimpBtn.title = 'Send to GIMP';
+            gimpBtn.title = 'Queue for GIMP import';
             gimpBtn.onclick = async (e) => {
                 e.stopPropagation();
                 try {
@@ -230,15 +231,15 @@
                     });
                     const result = await res.json();
                     if (result.status === 'success') {
-                        currentGimpTarget = result.target || null;
+                        currentGimpQueue = Array.isArray(result.queue) ? result.queue : [];
                         panel.querySelectorAll('.staging-item').forEach(el => {
-                            el.classList.remove('gimp-targeted');
+                            const isQueued = currentGimpQueue.includes(el.dataset.imageName);
+                            el.classList.toggle('gimp-targeted', isQueued);
                         });
-                        if (currentGimpTarget === img.name) {
-                            console.log('[Staging] GIMP Target set:', img.name);
-                            item.classList.add('gimp-targeted');
+                        if (result.queued) {
+                            console.log('[Staging] GIMP queued:', img.name);
                         } else {
-                            console.log('[Staging] GIMP Target cleared:', img.name);
+                            console.log('[Staging] GIMP dequeued:', img.name);
                         }
                     }
                 } catch (err) {
