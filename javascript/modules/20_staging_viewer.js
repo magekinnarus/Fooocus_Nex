@@ -18,10 +18,10 @@
             <div class="panel-header" id="staging-panel-header">
                 <span class="panel-title">Staging Area</span>
                 <div class="panel-controls">
-                    <button id="staging-panel-refresh" title="Refresh Now">?”„</button>
-                    <button id="staging-panel-clear" title="Clear All Staging" style="color: #ff4d4d;">?—‘ï¸?/button>
-                    <button id="staging-panel-toggle" title="Minimize">ï¼?/button>
-                    <button id="staging-panel-close" title="Close Palette">Ã—</button>
+                    <button id="staging-panel-refresh" title="Refresh Now">Refresh</button>
+                    <button id="staging-panel-clear" title="Clear All Staging" style="color: #ff4d4d;">Clear</button>
+                    <button id="staging-panel-toggle" title="Minimize">-</button>
+                    <button id="staging-panel-close" title="Close Palette">x</button>
                 </div>
             </div>
             <div class="panel-content">
@@ -170,8 +170,8 @@
         try {
             const res = await fetch('/staging_api/images');
             const data = await res.json();
-            const json = JSON.stringify({ images: data.images, gimp_target: currentGimpTarget });
             currentGimpTarget = data.gimp_target || null;
+            const json = JSON.stringify({ images: data.images, gimp_target: currentGimpTarget });
             if (json === lastImagesJson) return; // No change
             lastImagesJson = json;
 
@@ -250,7 +250,7 @@
             // Delete button
             const delBtn = document.createElement('button');
             delBtn.className = 'item-action-btn btn-delete';
-            delBtn.innerHTML = 'Ã—';
+            delBtn.innerHTML = 'X';
             delBtn.title = 'Remove from staging';
             delBtn.onclick = (e) => {
                 e.stopPropagation();
