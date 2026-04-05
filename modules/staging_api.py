@@ -3,12 +3,28 @@ import io
 import urllib.request
 import urllib.parse
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import modules.config
 import modules.util
 from PIL import Image
 
 staging_router = APIRouter()
+
+def _gimp_target_file():
+    return os.path.join(get_staging_dir(), ".gimp_target.txt")
+
+
+def _read_gimp_target_name():
+    target_file = _gimp_target_file()
+    if not os.path.exists(target_file):
+        return None
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            name = f.read().strip()
+        return name or None
+    except Exception:
+        return None
+
 
 def get_staging_dir():
     staging_dir = os.path.join(modules.config.path_outputs, "staging")
@@ -38,7 +54,7 @@ async def list_staging_images():
     except Exception as e:
         print(f"Error reading staging dir: {e}")
         
-    return JSONResponse(content={"images": files})
+    return JSONResponse(content={"images": files, "gimp_target": _read_gimp_target_name()})
 
 @staging_router.post("/staging_api/upload")
 async def upload_staging_image(
@@ -155,7 +171,7 @@ async def clear_staging_images():
 
 @staging_router.post("/staging_api/gimp_target")
 async def set_gimp_target(name: str):
-    """Sets a specific image as the current target for GIMP retrieval."""
+    """Toggles a specific image as the current target for GIMP retrieval."""
     staging_dir = get_staging_dir()
     filepath = os.path.join(staging_dir, name)
     
@@ -167,20 +183,25 @@ async def set_gimp_target(name: str):
         raise HTTPException(status_code=404, detail="File not found")
         
     try:
-        target_file = os.path.join(staging_dir, ".gimp_target.txt")
+        target_file = _gimp_target_file()
+        current_target = _read_gimp_target_name()
+        if current_target == name:
+            if os.path.exists(target_file):
+                os.remove(target_file)
+            return JSONResponse(content={"status": "success", "target": None, "cleared": True})
+
         with open(target_file, "w", encoding="utf-8") as f:
             f.write(name)
-        return JSONResponse(content={"status": "success", "target": name})
+        return JSONResponse(content={"status": "success", "target": name, "cleared": False})
     except Exception as e:
         print(f"Staging GIMP target error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @staging_router.get("/staging_api/gimp_target")
 async def get_gimp_target():
     """Returns the current GIMP target image file."""
     staging_dir = get_staging_dir()
-    target_file = os.path.join(staging_dir, ".gimp_target.txt")
+    target_file = _gimp_target_file()
     
     if not os.path.exists(target_file):
         raise HTTPException(status_code=404, detail="No GIMP target set")
@@ -196,7 +217,6 @@ async def get_gimp_target():
             raise HTTPException(status_code=403, detail="Forbidden")
             
         if os.path.exists(filepath):
-            from fastapi.responses import FileResponse
             return FileResponse(filepath)
             
         raise HTTPException(status_code=404, detail="Targeted image no longer exists")

@@ -518,9 +518,9 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
 
     def save_structural_preprocessor_output(cn_img, cn_type, slot_index):
         prefix = f"{cn_type.lower().replace(' ', '_')}_slot{slot_index}"
-        saved_path = mask_proc.save_to_staging_png(cn_img, prefix=prefix)
+        saved_path = mask_proc.save_to_temp_png(cn_img)
         if saved_path is not None:
-            print(f'[ControlNet] Saved {cn_type} preprocessor output to staging: {saved_path}')
+            print(f'[ControlNet] Saved {cn_type} preprocessor output to temp: {saved_path}')
 
     def preprocess_structural_tasks(cn_type, tasks, processor=None):
         valid_tasks = []
@@ -621,6 +621,7 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
     pulid_tasks = list(task_state.cn_tasks[flags.cn_pulid])
     if len(pulid_tasks) > 0:
         pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
+
 
 
 

@@ -88,15 +88,15 @@ ip_list = cn_all_types + list(cn_type_aliases.keys())
 default_ip = cn_ip
 
 default_parameters = {
-    cn_ip: (0.5, 0.6),
-    cn_faceid: (0.9, 0.75),
-    cn_pulid: (0.9, 1.0),
-    cn_ip_face: (0.9, 0.75),
-    cn_canny: (0.5, 1.0),
-    cn_mistoline: (0.5, 1.0),
-    cn_depth: (0.5, 1.0),
-    cn_cpds: (0.5, 1.0),
-    cn_mlsd: (0.5, 1.0),
+    cn_ip: (0.9, 0.9),
+    cn_faceid: (0.9, 0.9),
+    cn_pulid: (0.9, 0.9),
+    cn_ip_face: (0.9, 0.9),
+    cn_canny: (0.5, 0.9),
+    cn_mistoline: (0.5, 0.9),
+    cn_depth: (0.5, 0.9),
+    cn_cpds: (0.5, 0.9),
+    cn_mlsd: (0.5, 0.9),
 }  # stop, weight
 
 
@@ -172,4 +172,5 @@ class OutputFormat(Enum):
     @classmethod
     def list(cls) -> list:
         return list(map(lambda c: c.value, cls))
+
 
