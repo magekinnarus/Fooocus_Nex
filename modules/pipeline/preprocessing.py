@@ -1,5 +1,6 @@
 import math
 import random
+import backend.resources as resources
 import modules.config as config
 import modules.constants as constants
 import modules.core as core
@@ -101,11 +102,21 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     loras, prompt = parse_lora_references_from_prompt(prompt, task_state.loras,
                                                       config.default_max_lora_number)
 
-    pipeline.refresh_everything(base_model_name=task_state.base_model_name,
-                                loras=loras, base_model_additional_loras=base_model_additional_loras,
-                                vae_name=task_state.vae_name,
-                                clip_name=task_state.clip_model_name)
-    pipeline.set_clip_skip(task_state.clip_skip)
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.MODEL_REFRESH,
+        task=task_state,
+        notes={
+            'base_model': task_state.base_model_name,
+            'vae': task_state.vae_name,
+            'clip': task_state.clip_model_name,
+        },
+        end_notes={'completed': True},
+    ):
+        pipeline.refresh_everything(base_model_name=task_state.base_model_name,
+                                    loras=loras, base_model_additional_loras=base_model_additional_loras,
+                                    vae_name=task_state.vae_name,
+                                    clip_name=task_state.clip_model_name)
+        pipeline.set_clip_skip(task_state.clip_skip)
 
     if progressbar_callback:
         task_state.current_progress += 1
@@ -167,24 +178,29 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
             styles=task_styles
         ))
 
-    if progressbar_callback:
-        task_state.current_progress += 1
-        for i, t in enumerate(tasks):
-            progressbar_callback(task_state, task_state.current_progress, f'Encoding positive #{i + 1} ...')
-            t['c'] = pipeline.clip_encode(texts=t['positive'], pool_top_k=t['positive_top_k'])
-        
-        task_state.current_progress += 1
-        for i, t in enumerate(tasks):
-            if abs(float(task_state.cfg_scale) - 1.0) < 1e-4:
-                t['uc'] = pipeline.clone_cond(t['c'])
-            else:
-                progressbar_callback(task_state, task_state.current_progress, f'Encoding negative #{i + 1} ...')
-                t['uc'] = pipeline.clip_encode(texts=t['negative'], pool_top_k=t['negative_top_k'])
-    
-    # Offload CLIP after encoding is finished for all tasks
-    if pipeline.final_clip is not None:
-        import backend.resources as resources
-        resources.eject_model(pipeline.final_clip.patcher)
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.PROMPT_ENCODE,
+        task=task_state,
+        notes={'image_number': image_number, 'cfg_scale': float(task_state.cfg_scale)},
+        end_notes={'tasks_encoded': len(tasks)},
+    ):
+        if progressbar_callback:
+            task_state.current_progress += 1
+            for i, t in enumerate(tasks):
+                progressbar_callback(task_state, task_state.current_progress, f'Encoding positive #{i + 1} ...')
+                t['c'] = pipeline.clip_encode(texts=t['positive'], pool_top_k=t['positive_top_k'])
+            
+            task_state.current_progress += 1
+            for i, t in enumerate(tasks):
+                if abs(float(task_state.cfg_scale) - 1.0) < 1e-4:
+                    t['uc'] = pipeline.clone_cond(t['c'])
+                else:
+                    progressbar_callback(task_state, task_state.current_progress, f'Encoding negative #{i + 1} ...')
+                    t['uc'] = pipeline.clip_encode(texts=t['negative'], pool_top_k=t['negative_top_k'])
+
+        # Offload CLIP after encoding is finished for all tasks
+        if pipeline.final_clip is not None:
+            resources.eject_model(pipeline.final_clip.patcher)
 
     task_state.use_expansion = use_expansion
     task_state.loras_processed = loras # Storing back to state if needed

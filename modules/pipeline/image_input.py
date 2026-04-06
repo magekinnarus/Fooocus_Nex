@@ -7,6 +7,7 @@ import extras.preprocessors as preprocessors
 import backend.ip_adapter as contextual_ip_adapter
 import backend.preprocessors as structural_preprocessors
 import backend.pulid_runtime as pulid_runtime
+import backend.resources as resources
 from modules.util import (HWC3, resize_image, get_image_shape_ceil, set_image_shape_ceil, 
                           get_shape_ceil, resample_image, erode_or_dilate)
 from modules.upscaler import perform_upscale
@@ -85,12 +86,17 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
     ctx.blend_mask = outpaint._morphological_open(full_mask)
 
     
-    candidate_vae, _ = pipeline.get_candidate_vae(
-        steps=task_state.steps,
-        denoise=denoising_strength
-    )
-    
-    latent_dict = outpaint.encode(ctx, candidate_vae)
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.VAE_ENCODE,
+        task=task_state,
+        notes={'route': 'outpaint', 'denoise': float(denoising_strength)},
+        end_notes={'completed': True},
+    ):
+        candidate_vae, _ = pipeline.get_candidate_vae(
+            steps=task_state.steps,
+            denoise=denoising_strength
+        )
+        latent_dict = outpaint.encode(ctx, candidate_vae)
     
     task_state.inpaint_context = ctx
     task_state.width = ctx.target_w
@@ -196,12 +202,18 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
             yield_result_callback(task_state, [ctx.bb_image, ctx.bb_mask], 100, do_not_show_finished_images=True)
         raise EarlyReturnException
 
-    candidate_vae, _ = pipeline.get_candidate_vae(
-        steps=task_state.steps,
-        denoise=denoising_strength
-    )
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.VAE_ENCODE,
+        task=task_state,
+        notes={'route': 'inpaint', 'denoise': float(denoising_strength)},
+        end_notes={'completed': True},
+    ):
+        candidate_vae, _ = pipeline.get_candidate_vae(
+            steps=task_state.steps,
+            denoise=denoising_strength
+        )
 
-    latent_dict = inpaint.encode(ctx, candidate_vae)
+        latent_dict = inpaint.encode(ctx, candidate_vae)
     task_state.inpaint_context = ctx
     task_state.width = ctx.target_w
     task_state.height = ctx.target_h
@@ -580,47 +592,69 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
             valid_tasks.append(task)
         task_state.set_cn_tasks(cn_type, valid_tasks)
 
-    preprocess_structural_tasks(
-        flags.cn_canny,
-        structural_tasks.get(flags.cn_canny, []),
-        lambda _cn_type, cn_img, _model_path: preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
-    )
-    preprocess_structural_tasks(
-        flags.cn_cpds,
-        structural_tasks.get(flags.cn_cpds, []),
-        lambda _cn_type, cn_img, _model_path: preprocessors.cpds(cn_img)
-    )
-    preprocess_structural_tasks(
-        flags.cn_depth,
-        structural_tasks.get(flags.cn_depth, []),
-        structural_preprocessors.run_structural_preprocessor
-    )
-    preprocess_structural_tasks(
-        flags.cn_mistoline,
-        structural_tasks.get(flags.cn_mistoline, []),
-        structural_preprocessors.run_structural_preprocessor
-    )
-    preprocess_structural_tasks(
-        flags.cn_mlsd,
-        structural_tasks.get(flags.cn_mlsd, []),
-        structural_preprocessors.run_structural_preprocessor
-    )
-    structural_preprocessors.offload_cached_preprocessors()
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.STRUCTURAL_PREPROCESS,
+        task=task_state,
+        notes={'task_count': sum(len(tasks) for tasks in structural_tasks.values())},
+        end_notes={'completed': True},
+    ):
+        preprocess_structural_tasks(
+            flags.cn_canny,
+            structural_tasks.get(flags.cn_canny, []),
+            lambda _cn_type, cn_img, _model_path: preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
+        )
+        preprocess_structural_tasks(
+            flags.cn_cpds,
+            structural_tasks.get(flags.cn_cpds, []),
+            lambda _cn_type, cn_img, _model_path: preprocessors.cpds(cn_img)
+        )
+        preprocess_structural_tasks(
+            flags.cn_depth,
+            structural_tasks.get(flags.cn_depth, []),
+            structural_preprocessors.run_structural_preprocessor
+        )
+        preprocess_structural_tasks(
+            flags.cn_mistoline,
+            structural_tasks.get(flags.cn_mistoline, []),
+            structural_preprocessors.run_structural_preprocessor
+        )
+        preprocess_structural_tasks(
+            flags.cn_mlsd,
+            structural_tasks.get(flags.cn_mlsd, []),
+            structural_preprocessors.run_structural_preprocessor
+        )
+        structural_preprocessors.offload_cached_preprocessors()
 
-    preprocess_contextual_tasks(flags.cn_ip, contextual_tasks.get(flags.cn_ip, []), resize_to=224)
-    preprocess_contextual_tasks(flags.cn_faceid, contextual_tasks.get(flags.cn_faceid, []))
-    preprocess_contextual_tasks(flags.cn_pulid, contextual_tasks.get(flags.cn_pulid, []))
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.CONTEXTUAL_PREPROCESS,
+        task=task_state,
+        notes={'task_count': sum(len(tasks) for tasks in contextual_tasks.values())},
+        end_notes={'completed': True},
+    ):
+        preprocess_contextual_tasks(flags.cn_ip, contextual_tasks.get(flags.cn_ip, []), resize_to=224)
+        preprocess_contextual_tasks(flags.cn_faceid, contextual_tasks.get(flags.cn_faceid, []))
+        preprocess_contextual_tasks(flags.cn_pulid, contextual_tasks.get(flags.cn_pulid, []))
 
     all_contextual_tasks = []
     for cn_type in [flags.cn_ip, flags.cn_faceid]:
         all_contextual_tasks.extend(list(task_state.cn_tasks[cn_type]))
 
-    if len(all_contextual_tasks) > 0:
-        pipeline.final_unet = contextual_ip_adapter.patch_model(pipeline.final_unet, all_contextual_tasks)
-
     pulid_tasks = list(task_state.cn_tasks[flags.cn_pulid])
-    if len(pulid_tasks) > 0:
-        pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
+
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.CONTROL_APPLY,
+        task=task_state,
+        notes={
+            'contextual_patch_tasks': len(all_contextual_tasks),
+            'pulid_patch_tasks': len(pulid_tasks),
+        },
+        end_notes={'completed': True},
+    ):
+        if len(all_contextual_tasks) > 0:
+            pipeline.final_unet = contextual_ip_adapter.patch_model(pipeline.final_unet, all_contextual_tasks)
+
+        if len(pulid_tasks) > 0:
+            pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
 
 
 

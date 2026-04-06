@@ -116,9 +116,15 @@ def refine_tile(tile_image: np.ndarray, task_state, denoise_strength: float) -> 
     h, w = tile_image.shape[:2]
     
     pixels = core.numpy_to_pytorch(tile_image)
-    candidate_vae, _ = pipeline.get_candidate_vae(steps=task_state.steps, denoise=denoise_strength)
-    resources.load_models_gpu([candidate_vae.patcher])
-    latent_dict = core.encode_vae(vae=candidate_vae, pixels=pixels)
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.VAE_ENCODE,
+        task=task_state,
+        notes={'route': 'tiled_refine', 'tile_size': [w, h], 'denoise': float(denoise_strength)},
+        end_notes={'completed': True},
+    ):
+        candidate_vae, _ = pipeline.get_candidate_vae(steps=task_state.steps, denoise=denoise_strength)
+        resources.load_models_gpu([candidate_vae.patcher])
+        latent_dict = core.encode_vae(vae=candidate_vae, pixels=pixels)
     
     import modules.pipeline.preprocessing as preprocessing
     final_scheduler_name = preprocessing.patch_samplers(task_state)
@@ -142,47 +148,52 @@ def refine_tile(tile_image: np.ndarray, task_state, denoise_strength: float) -> 
     )
     
     return refined_images[0]
-
 def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, progressbar_callback=None):
     import gc
     from backend import resources
     
-    # Pre-flight cleanup: Clear everything to maximize tile headroom
-    resources.unload_all_models()
-    gc.collect()
-    resources.soft_empty_cache()
-    
     H, W, C = upscaled_image.shape
-    
-    min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
-    bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
-    bucket_w, bucket_h = bucket
-    
-    denoise = getattr(task_state, 'upscale_refinement_denoise', 0.382)
-    tiles = split_into_tiles(upscaled_image, bucket_w, bucket_h, nx, ny, overlap_w, overlap_h)
-    
-    print(f'[Tiled Refinement] Processing {len(tiles)} tiles...')
-    
-    refined_tiles = []
-    for i, t in enumerate(tiles):
-        if progressbar_callback:
-            progressbar_callback(task_state, int(task_state.current_progress + (i/len(tiles))*10), f'Refining tile {i+1}/{len(tiles)} ...')
-        
-        refined_img = refine_tile(t.tile_image, task_state, denoise)
-        refined_tiles.append(t._replace(tile_image=refined_img))
-        
-        # Post-tile cleanup
+
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.TILED_REFINE,
+        task=task_state,
+        notes={'image_size': [W, H]},
+        end_notes={'completed': True},
+    ):
+        # Pre-flight cleanup: Clear everything to maximize tile headroom
+        resources.unload_all_models()
         gc.collect()
         resources.soft_empty_cache()
-    
-    if progressbar_callback:
-        progressbar_callback(task_state, task_state.current_progress + 10, 'Stitching tiles ...')
         
-    result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
-    
-    # Final sweep: Leave the GPU clean
-    resources.unload_all_models()
-    gc.collect()
-    resources.soft_empty_cache()
-    
-    return result
+        min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
+        bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
+        bucket_w, bucket_h = bucket
+        
+        denoise = getattr(task_state, 'upscale_refinement_denoise', 0.382)
+        tiles = split_into_tiles(upscaled_image, bucket_w, bucket_h, nx, ny, overlap_w, overlap_h)
+        
+        print(f'[Tiled Refinement] Processing {len(tiles)} tiles...')
+        
+        refined_tiles = []
+        for i, t in enumerate(tiles):
+            if progressbar_callback:
+                progressbar_callback(task_state, int(task_state.current_progress + (i/len(tiles))*10), f'Refining tile {i+1}/{len(tiles)} ...')
+            
+            refined_img = refine_tile(t.tile_image, task_state, denoise)
+            refined_tiles.append(t._replace(tile_image=refined_img))
+            
+            # Post-tile cleanup
+            gc.collect()
+            resources.soft_empty_cache()
+        
+        if progressbar_callback:
+            progressbar_callback(task_state, task_state.current_progress + 10, 'Stitching tiles ...')
+            
+        result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
+        
+        # Final sweep: Leave the GPU clean
+        resources.unload_all_models()
+        gc.collect()
+        resources.soft_empty_cache()
+        
+        return result

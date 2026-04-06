@@ -9,6 +9,7 @@ telemetry can live so the rest of the app stops making ad hoc memory decisions.
 from __future__ import annotations
 
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
@@ -21,14 +22,30 @@ import psutil
 
 class MemoryPhase(str, Enum):
     IDLE = 'idle'
-    PREPARE = 'prepare'
-    IMAGE_INPUT = 'image_input'
-    CONTROL = 'control'
+    TASK = 'task'
+    ROUTE_SELECT = 'route_select'
+    MODEL_REFRESH = 'model_refresh'
+    PROMPT_ENCODE = 'prompt_encode'
+    IMAGE_INPUT_PREPARE = 'image_input_prepare'
+    VAE_ENCODE = 'vae_encode'
+    STRUCTURAL_PREPROCESS = 'structural_preprocess'
+    CONTEXTUAL_PREPROCESS = 'contextual_preprocess'
+    CONTROL_APPLY = 'control_apply'
     REMOVAL = 'removal'
     DIFFUSION = 'diffusion'
     DECODE = 'decode'
+    STITCH = 'stitch'
     UPSCALE = 'upscale'
-    POSTPROCESS = 'postprocess'
+    TILED_REFINE = 'tiled_refine'
+    FINALIZE = 'finalize'
+
+
+PHASE_ALIASES = {
+    'prepare': MemoryPhase.MODEL_REFRESH.value,
+    'image_input': MemoryPhase.IMAGE_INPUT_PREPARE.value,
+    'control': MemoryPhase.CONTROL_APPLY.value,
+    'postprocess': MemoryPhase.FINALIZE.value,
+}
 
 
 @dataclass
@@ -102,6 +119,21 @@ class MemoryGovernor:
             snapshot = self.capture_snapshot(notes=notes)
             self._history.append(snapshot)
             return snapshot
+
+    @contextmanager
+    def phase_scope(
+        self,
+        phase: str | MemoryPhase,
+        task=None,
+        notes: Dict[str, Any] | None = None,
+        end_notes: Dict[str, Any] | None = None,
+    ):
+        phase_name = self._normalize_phase(phase)
+        self.begin_phase(phase_name, task=task, notes=notes)
+        try:
+            yield phase_name
+        finally:
+            self.end_phase(phase_name, notes=end_notes)
 
     def capture_snapshot(self, notes: Dict[str, Any] | None = None, task=None):
         total_vram_mb = None
@@ -188,7 +220,8 @@ class MemoryGovernor:
     def _normalize_phase(phase: str | MemoryPhase):
         if isinstance(phase, MemoryPhase):
             return phase.value
-        return str(phase).strip().lower()
+        phase_name = str(phase).strip().lower()
+        return PHASE_ALIASES.get(phase_name, phase_name)
 
 
 governor = MemoryGovernor()
@@ -200,6 +233,15 @@ def begin_phase(phase: str | MemoryPhase, task=None, notes: Dict[str, Any] | Non
 
 def end_phase(phase: str | MemoryPhase | None = None, notes: Dict[str, Any] | None = None):
     return governor.end_phase(phase, notes=notes)
+
+
+def phase_scope(
+    phase: str | MemoryPhase,
+    task=None,
+    notes: Dict[str, Any] | None = None,
+    end_notes: Dict[str, Any] | None = None,
+):
+    return governor.phase_scope(phase, task=task, notes=notes, end_notes=end_notes)
 
 
 def capture_snapshot(notes: Dict[str, Any] | None = None, task=None):
@@ -220,3 +262,7 @@ def plan_for_task(task=None, phase: str | MemoryPhase | None = None):
 
 def current_phase():
     return governor.current_phase()
+
+
+def normalize_phase(phase: str | MemoryPhase):
+    return governor._normalize_phase(phase)

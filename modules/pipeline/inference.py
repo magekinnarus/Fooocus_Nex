@@ -57,22 +57,28 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
 
     if 'cn' in task_state.goals:
         structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
-        for cn_flag in [flags.cn_canny, flags.cn_cpds, flags.cn_depth, flags.cn_mistoline, flags.cn_mlsd]:
-            cn_path = controlnet_paths.get(cn_flag)
-            if cn_path is None:
-                continue
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.CONTROL_APPLY,
+            task=task_state,
+            notes={'structural_task_count': sum(len(tasks) for tasks in structural_tasks.values())},
+            end_notes={'completed': True},
+        ):
+            for cn_flag in [flags.cn_canny, flags.cn_cpds, flags.cn_depth, flags.cn_mistoline, flags.cn_mlsd]:
+                cn_path = controlnet_paths.get(cn_flag)
+                if cn_path is None:
+                    continue
 
-            cn_net = pipeline.loaded_ControlNets.get(cn_path)
-            if cn_net is None:
-                print(f'[ControlNet] Loaded model missing for {cn_flag}: {cn_path}')
-                continue
+                cn_net = pipeline.loaded_ControlNets.get(cn_path)
+                if cn_net is None:
+                    print(f'[ControlNet] Loaded model missing for {cn_flag}: {cn_path}')
+                    continue
 
-            loader.patch_controlnet_for_quality(cn_net, quality)
-            for cn_task in structural_tasks.get(cn_flag, []):
-                cn_img, cn_stop, cn_weight = cn_task
-                positive_cond, negative_cond = core.apply_controlnet(
-                    positive_cond, negative_cond,
-                    cn_net, cn_img, cn_weight, 0, cn_stop)
+                loader.patch_controlnet_for_quality(cn_net, quality)
+                for cn_task in structural_tasks.get(cn_flag, []):
+                    cn_img, cn_stop, cn_weight = cn_task
+                    positive_cond, negative_cond = core.apply_controlnet(
+                        positive_cond, negative_cond,
+                        cn_net, cn_img, cn_weight, 0, cn_stop)
 
     callback = get_sampling_callback(
         task_state, progressbar_callback, current_task_id, total_count,
@@ -100,9 +106,15 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
     del positive_cond, negative_cond  # Save memory
 
     if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
-        from modules.pipeline.inpaint import InpaintPipeline
-        inpaint = InpaintPipeline()
-        imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.STITCH,
+            task=task_state,
+            notes={'current_task_id': current_task_id},
+            end_notes={'completed': True},
+        ):
+            from modules.pipeline.inpaint import InpaintPipeline
+            inpaint = InpaintPipeline()
+            imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
 
     current_progress = int(preparation_steps + (100 - preparation_steps) / float(all_steps) * task_state.steps)
 

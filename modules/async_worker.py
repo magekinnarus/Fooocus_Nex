@@ -1,4 +1,4 @@
-﻿import gc
+import gc
 import os
 import time
 import traceback
@@ -219,10 +219,24 @@ def handler(async_task: AsyncTask):
     save_step1_result = None
     try:
         res = {}
-        if s.input_image_checkbox:
-            res = apply_image_input(s, base_model_additional_loras, progressbar)
-            base_model_additional_loras = res['base_model_additional_loras']
-            
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.ROUTE_SELECT,
+            task=s,
+            notes={
+                'current_tab': s.current_tab,
+                'input_image_checkbox': bool(s.input_image_checkbox),
+            },
+            end_notes={'completed': True},
+        ):
+            if s.input_image_checkbox:
+                with resources.memory_phase_scope(
+                    resources.MemoryPhase.IMAGE_INPUT_PREPARE,
+                    task=s,
+                    notes={'current_tab': s.current_tab},
+                    end_notes={'completed': True},
+                ):
+                    res = apply_image_input(s, base_model_additional_loras, progressbar)
+                    base_model_additional_loras = res['base_model_additional_loras']            
         s.current_progress = 1
         progressbar(s, s.current_progress, 'Loading ControlNets ...')
         pipeline.refresh_controlnets(list(res.get('controlnet_paths', {}).values()) if s.input_image_checkbox else [])
@@ -388,19 +402,30 @@ def worker():
             set_active_task(task)
             try:
                 handler(task)
-                if task.state.generate_image_grid:
-                    build_image_wall(task.state)
-                task.yields.append(['finish', task.results])
-                pipeline.prepare_text_encoder(async_call=True)
+                with resources.memory_phase_scope(
+                    resources.MemoryPhase.FINALIZE,
+                    task=task.state,
+                    notes={'generate_image_grid': bool(task.state.generate_image_grid)},
+                    end_notes={'completed': True, 'success': True},
+                ):
+                    if task.state.generate_image_grid:
+                        build_image_wall(task.state)
+                    task.yields.append(['finish', task.results])
+                    pipeline.prepare_text_encoder(async_call=True)
             except:
                 traceback.print_exc()
-                task.yields.append(['finish', task.results])
+                with resources.memory_phase_scope(
+                    resources.MemoryPhase.FINALIZE,
+                    task=task.state,
+                    notes={'generate_image_grid': False},
+                    end_notes={'completed': True, 'success': False},
+                ):
+                    task.yields.append(['finish', task.results])
             finally:
                 set_active_task(None)
                 gc.collect()
                 resources.soft_empty_cache()
                 resources.end_memory_phase('task', notes={'completed': True})
-
 
 threading.Thread(target=worker, daemon=True).start()
 

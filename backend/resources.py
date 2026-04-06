@@ -720,6 +720,14 @@ def soft_empty_cache(force=False):
     memory_governor.note_cache_flush()
 
 
+MemoryPhase = memory_governor.MemoryPhase
+
+def normalize_memory_phase(phase):
+    return memory_governor.normalize_phase(phase)
+
+def memory_phase_scope(phase, task=None, notes=None, end_notes=None):
+    return memory_governor.phase_scope(phase, task=task, notes=notes, end_notes=end_notes)
+
 def begin_memory_phase(phase, task=None, notes=None):
     return memory_governor.begin_phase(phase, task=task, notes=notes)
 
