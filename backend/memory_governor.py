@@ -91,7 +91,7 @@ BASE_RESIDENCY_PLANS = {
     MemoryPhase.CONTROL_APPLY.value: _plan(pinned=('unet', 'controlnet'), warm=('contextual_adapters', 'vae'), evictable=('clip', 'structural_preprocessors', 'clip_vision', 'insightface', 'pulid_support')),
     MemoryPhase.REMOVAL.value: _plan(pinned=('removal_models',), evictable=RESIDENCY_RESOURCE_GROUPS['core_checkpoint'] + RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
     MemoryPhase.DIFFUSION.value: _plan(pinned=('unet',), warm=('vae', 'controlnet', 'contextual_adapters'), evictable=('clip', 'structural_preprocessors', 'clip_vision', 'insightface', 'pulid_support')),
-    MemoryPhase.DECODE.value: _plan(pinned=('vae',), warm=('unet',), evictable=('clip', 'controlnet', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.DECODE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
     MemoryPhase.STITCH.value: _plan(warm=('vae',), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
     MemoryPhase.UPSCALE.value: _plan(pinned=('upscaler_model',), warm=('prompt_conditions',), evictable=RESIDENCY_RESOURCE_GROUPS['core_checkpoint'] + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
     MemoryPhase.TILED_REFINE.value: _plan(pinned=('unet', 'vae'), warm=('prompt_conditions',), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches']),

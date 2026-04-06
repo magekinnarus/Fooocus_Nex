@@ -40,6 +40,8 @@ def test_residency_plan_differs_by_profile_and_phase(restore_profile):
     assert free_plan.mode_for('unet') == 'pinned'
     assert free_plan.mode_for('controlnet') == 'warm'
     assert free_plan.mode_for('clip_vision') == 'evictable'
+    decode_plan = memory_governor.plan_for_task(phase=memory_governor.MemoryPhase.DECODE)
+    assert decode_plan.mode_for('controlnet') == 'warm'
     assert pro_plan.mode_for('unet') == 'pinned'
     assert pro_plan.mode_for('clip_vision') == 'warm'
     assert memory_governor.plan_for_task(phase=memory_governor.MemoryPhase.PROMPT_ENCODE).mode_for('clip') == 'pinned'
