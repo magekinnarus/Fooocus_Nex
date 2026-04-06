@@ -21,11 +21,57 @@ final_vae = None
 loaded_ControlNets = {}
 
 
+def _controlnet_residency_summary():
+    return {'cached_paths': len(loaded_ControlNets)}
+
+
+def _offload_controlnet(model):
+    if model is None:
+        return
+    patcher = getattr(model, 'control_model_wrapped', None)
+    if patcher is not None:
+        try:
+            patcher.detach()
+        except Exception:
+            pass
+
+
+def _destroy_controlnet(model):
+    if model is None:
+        return
+    _offload_controlnet(model)
+    try:
+        model.cleanup()
+    except Exception:
+        pass
+
+
+def apply_controlnet_residency(mode='offload'):
+    global loaded_ControlNets
+
+    actions = {'mode': mode, 'count': len(loaded_ControlNets)}
+    if mode == 'destroy':
+        stale = list(loaded_ControlNets.values())
+        loaded_ControlNets = {}
+        for model in stale:
+            _destroy_controlnet(model)
+    else:
+        for model in loaded_ControlNets.values():
+            _offload_controlnet(model)
+    return actions
+
+
 @torch.no_grad()
 @torch.inference_mode()
 def refresh_controlnets(model_paths):
     global loaded_ControlNets
     cache = {}
+    requested_paths = {p for p in model_paths if p is not None}
+    stale_paths = [p for p in loaded_ControlNets.keys() if p not in requested_paths]
+
+    for stale_path in stale_paths:
+        _destroy_controlnet(loaded_ControlNets.pop(stale_path, None))
+
     for p in model_paths:
         if p is not None:
             if p in loaded_ControlNets:
@@ -351,7 +397,7 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         )
 
     # Phase: Sampling -> Decoding
-    resources.cleanup_memory('sampling_to_decode', notes={'tiled': tiled})
+    resources.cleanup_memory('sampling_to_decode', notes={'tiled': tiled}, target_phase=resources.MemoryPhase.DECODE)
     print('[Nex-Memory] Phase: Sampling -> Decoding')
 
     with resources.memory_phase_scope(

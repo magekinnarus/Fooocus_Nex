@@ -29,6 +29,75 @@ contextual_models = {}
 insightface_apps = {}
 
 
+def _offload_patcher(patcher):
+    if patcher is None:
+        return
+    try:
+        patcher.detach()
+    except Exception:
+        pass
+
+
+def _offload_clip_vision_model(clip_model):
+    if clip_model is None:
+        return
+    patcher = getattr(clip_model, 'patcher', None)
+    if patcher is not None:
+        _offload_patcher(patcher)
+    else:
+        try:
+            clip_model.model.to('cpu')
+        except Exception:
+            pass
+
+
+def _offload_contextual_entry(entry):
+    if not isinstance(entry, dict):
+        return
+    model = entry.get('model')
+    if model is not None:
+        try:
+            model.to(getattr(model, 'offload_device', torch.device('cpu')), dtype=getattr(model, 'dtype', None))
+        except Exception:
+            try:
+                model.to(getattr(model, 'offload_device', torch.device('cpu')))
+            except Exception:
+                pass
+    _offload_patcher(entry.get('image_proj_model'))
+    _offload_patcher(entry.get('ip_layers'))
+
+
+def apply_contextual_residency(mode='offload', *, clip_vision_action=None, insightface_action=None):
+    global clip_vision_models, ip_negative, contextual_models, insightface_apps
+
+    clip_vision_action = clip_vision_action or mode
+    insightface_action = insightface_action or mode
+    actions = {
+        'mode': mode,
+        'clip_vision_action': clip_vision_action,
+        'insightface_action': insightface_action,
+        'contextual_models': len(contextual_models),
+        'clip_vision_models': len(clip_vision_models),
+        'insightface_apps': len(insightface_apps),
+    }
+
+    for entry in contextual_models.values():
+        _offload_contextual_entry(entry)
+    for clip_model in clip_vision_models.values():
+        _offload_clip_vision_model(clip_model)
+
+    if mode == 'destroy':
+        contextual_models = {}
+    if clip_vision_action == 'destroy':
+        clip_vision_models = {}
+    if insightface_action == 'destroy':
+        insightface_apps = {}
+    if mode == 'destroy':
+        ip_negative = {}
+
+    return actions
+
+
 def sdp(q, k, v, extra_options):
     return attention.optimized_attention(q, k, v, heads=extra_options["n_heads"], mask=None)
 

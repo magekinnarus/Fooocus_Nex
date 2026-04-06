@@ -161,7 +161,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         end_notes={'completed': True},
     ):
         # Pre-flight cleanup: Clear everything to maximize tile headroom.
-        resources.cleanup_memory('tiled_refine_preflight', unload_models=True, force_cache=True, trim_host=True)
+        resources.cleanup_memory('tiled_refine_preflight', unload_models=True, force_cache=True, trim_host=True, target_phase=resources.MemoryPhase.TILED_REFINE)
         
         min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
         bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
@@ -181,7 +181,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             refined_tiles.append(t._replace(tile_image=refined_img))
             
             # Post-tile cleanup
-            resources.cleanup_memory('tiled_refine_tile_complete', notes={'tile_index': i}, trim_host=False)
+            resources.cleanup_memory('tiled_refine_tile_complete', notes={'tile_index': i}, trim_host=False, target_phase=resources.MemoryPhase.TILED_REFINE)
         
         if progressbar_callback:
             progressbar_callback(task_state, task_state.current_progress + 10, 'Stitching tiles ...')
@@ -189,6 +189,6 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
         
         # Final sweep: Leave the GPU clean
-        resources.cleanup_memory('tiled_refine_finalize', unload_models=True, force_cache=True)
+        resources.cleanup_memory('tiled_refine_finalize', unload_models=True, force_cache=True, target_phase=resources.MemoryPhase.FINALIZE)
         
         return result

@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any, Deque, Dict, Optional
 
+from backend import environment_profile as environment_profiles
+
 import psutil
 
 
@@ -50,6 +52,76 @@ PHASE_ALIASES = {
 }
 
 
+RESIDENCY_RESOURCE_GROUPS = {
+    'core_checkpoint': ('unet', 'clip', 'vae'),
+    'support_caches': ('controlnet', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
+    'route_artifacts': ('prompt_conditions', 'route_state'),
+}
+
+
+def _ordered_unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for group in groups:
+        for item in group:
+            if item not in seen:
+                ordered.append(item)
+                seen.add(item)
+    return tuple(ordered)
+
+
+def _plan(*, pinned: tuple[str, ...] = (), warm: tuple[str, ...] = (), evictable: tuple[str, ...] = ()) -> Dict[str, tuple[str, ...]]:
+    return {
+        'pinned': _ordered_unique(pinned),
+        'warm': _ordered_unique(warm),
+        'evictable': _ordered_unique(evictable),
+    }
+
+
+BASE_RESIDENCY_PLANS = {
+    MemoryPhase.IDLE.value: _plan(evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
+    MemoryPhase.TASK.value: _plan(warm=('unet', 'vae'), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
+    MemoryPhase.ROUTE_SELECT.value: _plan(warm=('unet', 'vae'), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
+    MemoryPhase.MODEL_REFRESH.value: _plan(pinned=('unet', 'clip', 'vae'), evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
+    MemoryPhase.PROMPT_ENCODE.value: _plan(pinned=('clip',), warm=('unet', 'vae'), evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
+    MemoryPhase.IMAGE_INPUT_PREPARE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.VAE_ENCODE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.STRUCTURAL_PREPROCESS.value: _plan(pinned=('controlnet', 'structural_preprocessors'), warm=('unet', 'vae'), evictable=('clip', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.CONTEXTUAL_PREPROCESS.value: _plan(pinned=('contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors')),
+    MemoryPhase.CONTROL_APPLY.value: _plan(pinned=('unet', 'controlnet'), warm=('contextual_adapters', 'vae'), evictable=('clip', 'structural_preprocessors', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.REMOVAL.value: _plan(pinned=('removal_models',), evictable=RESIDENCY_RESOURCE_GROUPS['core_checkpoint'] + RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
+    MemoryPhase.DIFFUSION.value: _plan(pinned=('unet',), warm=('vae', 'controlnet', 'contextual_adapters'), evictable=('clip', 'structural_preprocessors', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.DECODE.value: _plan(pinned=('vae',), warm=('unet',), evictable=('clip', 'controlnet', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.STITCH.value: _plan(warm=('vae',), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
+    MemoryPhase.UPSCALE.value: _plan(pinned=('upscaler_model',), warm=('prompt_conditions',), evictable=RESIDENCY_RESOURCE_GROUPS['core_checkpoint'] + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
+    MemoryPhase.TILED_REFINE.value: _plan(pinned=('unet', 'vae'), warm=('prompt_conditions',), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches']),
+    MemoryPhase.FINALIZE.value: _plan(evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
+}
+
+
+PROFILE_RESIDENCY_OVERRIDES = {
+    environment_profiles.PROFILE_COLAB_FREE: {
+        'extra_evictable': ('controlnet', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
+    },
+    environment_profiles.PROFILE_LOCAL_LOW_VRAM: {
+        'extra_evictable': ('controlnet', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
+    },
+    environment_profiles.PROFILE_COLAB_PRO: {
+        MemoryPhase.DIFFUSION.value: {
+            'warm': ('clip_vision', 'insightface', 'pulid_support'),
+        },
+        MemoryPhase.DECODE.value: {
+            'warm': ('controlnet', 'contextual_adapters'),
+        },
+    },
+    environment_profiles.PROFILE_LOCAL_NORMAL: {
+        MemoryPhase.DIFFUSION.value: {
+            'warm': ('controlnet', 'contextual_adapters'),
+        },
+    },
+}
+
+
 @dataclass
 class MemorySnapshot:
     timestamp: float
@@ -67,6 +139,23 @@ class ResidencyPlan:
     warm: tuple[str, ...] = ()
     evictable: tuple[str, ...] = ()
     notes: Dict[str, Any] = field(default_factory=dict)
+
+    def mode_for(self, resource_id: str) -> str | None:
+        if resource_id in self.pinned:
+            return 'pinned'
+        if resource_id in self.warm:
+            return 'warm'
+        if resource_id in self.evictable:
+            return 'evictable'
+        return None
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            'pinned': list(self.pinned),
+            'warm': list(self.warm),
+            'evictable': list(self.evictable),
+            'notes': dict(self.notes),
+        }
 
 
 @dataclass
@@ -229,11 +318,56 @@ class MemoryGovernor:
         )
 
     def plan_for_task(self, task=None, phase: str | MemoryPhase | None = None):
-        notes = {'phase': self._normalize_phase(phase) if phase is not None else self.current_phase()}
+        phase_name = self._normalize_phase(phase) if phase is not None else self.current_phase()
+        notes = {'phase': phase_name}
         if task is not None:
             notes['task_type'] = task.__class__.__name__
-        notes['profile'] = self.profile_name()
-        return ResidencyPlan(notes=notes)
+        profile_name = self.profile_name()
+        notes['profile'] = profile_name
+
+        base_plan = BASE_RESIDENCY_PLANS.get(phase_name, BASE_RESIDENCY_PLANS[MemoryPhase.IDLE.value])
+        pinned = list(base_plan['pinned'])
+        warm = [item for item in base_plan['warm'] if item not in pinned]
+        evictable = [item for item in base_plan['evictable'] if item not in pinned and item not in warm]
+
+        overrides = PROFILE_RESIDENCY_OVERRIDES.get(profile_name, {})
+        extra_evictable = tuple(overrides.get('extra_evictable', ()))
+        for resource_id in extra_evictable:
+            if resource_id in warm:
+                warm.remove(resource_id)
+            if resource_id not in pinned and resource_id not in evictable:
+                evictable.append(resource_id)
+
+        phase_override = overrides.get(phase_name, {})
+        for resource_id in phase_override.get('pinned', ()):
+            if resource_id not in pinned:
+                pinned.append(resource_id)
+            if resource_id in warm:
+                warm.remove(resource_id)
+            if resource_id in evictable:
+                evictable.remove(resource_id)
+        for resource_id in phase_override.get('warm', ()):
+            if resource_id in pinned:
+                continue
+            if resource_id not in warm:
+                warm.append(resource_id)
+            if resource_id in evictable:
+                evictable.remove(resource_id)
+        for resource_id in phase_override.get('evictable', ()):
+            if resource_id in pinned:
+                continue
+            if resource_id in warm:
+                warm.remove(resource_id)
+            if resource_id not in evictable:
+                evictable.append(resource_id)
+
+        notes['source'] = 'profile_phase_residency'
+        return ResidencyPlan(
+            pinned=tuple(pinned),
+            warm=tuple(warm),
+            evictable=tuple(evictable),
+            notes=notes,
+        )
 
     def can_afford(
         self,

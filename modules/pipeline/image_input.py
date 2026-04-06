@@ -248,6 +248,7 @@ def apply_upscale(task_state, progressbar_callback=None):
         unload_models=True,
         force_cache=True,
         trim_host=True,
+        target_phase=resources.MemoryPhase.UPSCALE,
         notes={'uov_method': uov_method},
     )
 
@@ -269,7 +270,7 @@ def apply_upscale(task_state, progressbar_callback=None):
 
     # Post-upscale cleanup: Purge GAN model and route cleanup through the governor.
     clear_model_cache()
-    resources.cleanup_memory('upscale_postflight', force_cache=True, trim_host=False, notes={'uov_method': uov_method})
+    resources.cleanup_memory('upscale_postflight', force_cache=True, trim_host=False, notes={'uov_method': uov_method}, target_phase=resources.MemoryPhase.FINALIZE)
 
     # 2. Handle "Upscale" (Light) or "Super-Upscale" (Stage 1)
     if uov_method == 'upscale':
@@ -496,39 +497,47 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         'structural_preprocessor_paths': structural_preprocessor_paths
     }
 
-def apply_control_nets(task_state, contextual_assets=None, structural_preprocessor_paths=None):
-    """
-    Applies Structural preprocessors and patches the UNet for contextual guidance.
-    """
+def load_controlnet_support_models(image_input_result=None):
+    image_input_result = image_input_result or {}
+    controlnet_paths = image_input_result.get('controlnet_paths', {}) or {}
+    pipeline.refresh_controlnets(list(controlnet_paths.values()))
+
+    contextual_assets = image_input_result.get('contextual_assets') or {}
+    for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():
+        contextual_ip_adapter.load_contextual_model(
+            contextual_model_path,
+            clip_vision_path=contextual_assets.get('clip_vision_path'),
+            ip_negative_path=contextual_assets.get('ip_negative_path')
+        )
+    for insightface_model_name in contextual_assets.get('insightface_model_names', []):
+        contextual_ip_adapter.load_insightface(insightface_model_name)
+
+
+def _unpack_cn_image(raw_img, label):
+    cn_img = mask_proc.unpack_gradio_data(raw_img)
+    if cn_img is None:
+        print(f'[ControlNet] Skipping {label} task with empty or invalid image input.')
+        return None
+    return HWC3(cn_img)
+
+
+def _save_structural_preprocessor_output(cn_img, cn_type, slot_index):
+    prefix = f"{cn_type.lower().replace(' ', '_')}_slot{slot_index}"
+    saved_path = mask_proc.save_to_temp_png(cn_img)
+    if saved_path is not None:
+        print(f'[ControlNet] Saved {cn_type} preprocessor output to temp: {saved_path}')
+
+
+def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=None):
     width, height = task_state.width, task_state.height
     structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
-    contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
     structural_preprocessor_paths = structural_preprocessor_paths or {}
-    contextual_assets = contextual_assets or {}
-    contextual_model_paths = contextual_assets.get('contextual_model_paths', {})
-    clip_vision_path = contextual_assets.get('clip_vision_path')
-    ip_negative_path = contextual_assets.get('ip_negative_path')
-    insightface_model_names = contextual_assets.get('insightface_model_names') or ['antelopev2', 'buffalo_l']
-    eva_clip_path = contextual_assets.get('eva_clip_path')
-
-    def unpack_cn_image(raw_img, label):
-        cn_img = mask_proc.unpack_gradio_data(raw_img)
-        if cn_img is None:
-            print(f'[ControlNet] Skipping {label} task with empty or invalid image input.')
-            return None
-        return HWC3(cn_img)
-
-    def save_structural_preprocessor_output(cn_img, cn_type, slot_index):
-        prefix = f"{cn_type.lower().replace(' ', '_')}_slot{slot_index}"
-        saved_path = mask_proc.save_to_temp_png(cn_img)
-        if saved_path is not None:
-            print(f'[ControlNet] Saved {cn_type} preprocessor output to temp: {saved_path}')
 
     def preprocess_structural_tasks(cn_type, tasks, processor=None):
         valid_tasks = []
         for slot_index, task in enumerate(tasks, start=1):
             raw_img, cn_stop, cn_weight = task
-            cn_img = unpack_cn_image(raw_img, cn_type)
+            cn_img = _unpack_cn_image(raw_img, cn_type)
             if cn_img is None:
                 continue
             cn_img = resize_image(cn_img, width=width, height=height)
@@ -539,46 +548,9 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
                 except Exception as exc:
                     print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
                     continue
-                save_structural_preprocessor_output(cn_img, cn_type, slot_index)
+                _save_structural_preprocessor_output(cn_img, cn_type, slot_index)
             cn_img = HWC3(cn_img)
             task[0] = core.numpy_to_pytorch(cn_img)
-            valid_tasks.append(task)
-        task_state.set_cn_tasks(cn_type, valid_tasks)
-
-    def preprocess_contextual_tasks(cn_type, tasks, resize_to=None):
-        valid_tasks = []
-        model_path = contextual_model_paths.get(cn_type)
-        if len(tasks) > 0 and model_path is None:
-            print(f'[ControlNet] {cn_type} is missing its contextual model path. Skipping these tasks for now.')
-            task_state.set_cn_tasks(cn_type, [])
-            return
-
-        for slot_index, task in enumerate(tasks, start=1):
-            raw_img, cn_stop, cn_weight = task
-            cn_img = unpack_cn_image(raw_img, cn_type)
-            if cn_img is None:
-                continue
-            if resize_to is not None:
-                cn_img = resize_image(cn_img, width=resize_to, height=resize_to, resize_mode=0)
-            try:
-                if cn_type == flags.cn_pulid:
-                    task[0] = pulid_runtime.preprocess(
-                        cn_img,
-                        model_path=model_path,
-                        eva_clip_path=eva_clip_path,
-                        insightface_model_names=insightface_model_names,
-                    )
-                else:
-                    task[0] = contextual_ip_adapter.preprocess(
-                        cn_img,
-                        model_path=model_path,
-                        clip_vision_path=clip_vision_path,
-                        ip_negative_path=ip_negative_path,
-                        insightface_model_names=insightface_model_names,
-                    )
-            except Exception as exc:
-                print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
-                continue
             valid_tasks.append(task)
         task_state.set_cn_tasks(cn_type, valid_tasks)
 
@@ -613,7 +585,54 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
             structural_tasks.get(flags.cn_mlsd, []),
             structural_preprocessors.run_structural_preprocessor
         )
-        structural_preprocessors.offload_cached_preprocessors()
+
+
+def preprocess_contextual_controlnets(task_state, contextual_assets=None):
+    width, height = task_state.width, task_state.height
+    contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
+    contextual_assets = contextual_assets or {}
+    contextual_model_paths = contextual_assets.get('contextual_model_paths', {})
+    clip_vision_path = contextual_assets.get('clip_vision_path')
+    ip_negative_path = contextual_assets.get('ip_negative_path')
+    insightface_model_names = contextual_assets.get('insightface_model_names') or ['antelopev2', 'buffalo_l']
+    eva_clip_path = contextual_assets.get('eva_clip_path')
+
+    def preprocess_contextual_tasks(cn_type, tasks, resize_to=None):
+        valid_tasks = []
+        model_path = contextual_model_paths.get(cn_type)
+        if len(tasks) > 0 and model_path is None:
+            print(f'[ControlNet] {cn_type} is missing its contextual model path. Skipping these tasks for now.')
+            task_state.set_cn_tasks(cn_type, [])
+            return
+
+        for slot_index, task in enumerate(tasks, start=1):
+            raw_img, cn_stop, cn_weight = task
+            cn_img = _unpack_cn_image(raw_img, cn_type)
+            if cn_img is None:
+                continue
+            if resize_to is not None:
+                cn_img = resize_image(cn_img, width=resize_to, height=resize_to, resize_mode=0)
+            try:
+                if cn_type == flags.cn_pulid:
+                    task[0] = pulid_runtime.preprocess(
+                        cn_img,
+                        model_path=model_path,
+                        eva_clip_path=eva_clip_path,
+                        insightface_model_names=insightface_model_names,
+                    )
+                else:
+                    task[0] = contextual_ip_adapter.preprocess(
+                        cn_img,
+                        model_path=model_path,
+                        clip_vision_path=clip_vision_path,
+                        ip_negative_path=ip_negative_path,
+                        insightface_model_names=insightface_model_names,
+                    )
+            except Exception as exc:
+                print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
+                continue
+            valid_tasks.append(task)
+        task_state.set_cn_tasks(cn_type, valid_tasks)
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.CONTEXTUAL_PREPROCESS,
@@ -647,5 +666,9 @@ def apply_control_nets(task_state, contextual_assets=None, structural_preprocess
             pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
 
 
-
-
+def apply_control_nets(task_state, contextual_assets=None, structural_preprocessor_paths=None):
+    """
+    Applies Structural preprocessors and patches the UNet for contextual guidance.
+    """
+    preprocess_structural_controlnets(task_state, structural_preprocessor_paths=structural_preprocessor_paths)
+    preprocess_contextual_controlnets(task_state, contextual_assets=contextual_assets)

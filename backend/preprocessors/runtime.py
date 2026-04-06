@@ -39,6 +39,18 @@ def offload_cached_preprocessors():
     resources.soft_empty_cache()
 
 
+def apply_residency_policy(mode='offload'):
+    actions = {'mode': mode, 'count': len(_MODEL_CACHE)}
+    for entry in _MODEL_CACHE.values():
+        _offload_model(entry['model'])
+        if mode == 'destroy':
+            entry['model'] = None
+            entry['path'] = None
+    if mode in ('offload', 'destroy'):
+        resources.soft_empty_cache(force=(mode == 'destroy'))
+    return actions
+
+
 def _prepare_state_dict(state_dict):
     if isinstance(state_dict, dict) and "state_dict" in state_dict and isinstance(state_dict["state_dict"], dict):
         state_dict = state_dict["state_dict"]

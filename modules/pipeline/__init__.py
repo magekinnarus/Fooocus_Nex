@@ -21,3 +21,21 @@ from modules.pipeline.output import (
     build_image_wall,
     save_and_log
 )
+from modules.pipeline.image_input import (
+    load_controlnet_support_models,
+    preprocess_structural_controlnets,
+    preprocess_contextual_controlnets
+)
+from modules.pipeline.stage_runtime import (
+    PipelineResourceRequirement,
+    PipelineRoute,
+    PipelineRouteContext,
+    PipelineStage,
+    PipelineStageResult,
+    PipelineStageRunner,
+    StageMemoryEstimate
+)
+from modules.pipeline.routes import (
+    build_generation_route,
+    describe_route
+)

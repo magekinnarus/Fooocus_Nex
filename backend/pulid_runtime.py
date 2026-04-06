@@ -15,6 +15,36 @@ eva_clip_models = {}
 face_parsers = {}
 
 
+def _offload_module(module):
+    if module is None:
+        return
+    try:
+        module.to('cpu')
+    except Exception:
+        pass
+
+
+def apply_contextual_residency(mode='offload'):
+    global eva_clip_models, face_parsers
+
+    for module in eva_clip_models.values():
+        _offload_module(module)
+    for parser in face_parsers.values():
+        _offload_module(parser)
+
+    actions = {
+        'mode': mode,
+        'eva_clip_models': len(eva_clip_models),
+        'face_parsers': len(face_parsers),
+    }
+
+    if mode == 'destroy':
+        eva_clip_models = {}
+        face_parsers = {}
+
+    return actions
+
+
 def image_to_tensor(image):
     tensor = torch.clamp(torch.from_numpy(image).float() / 255.0, 0, 1)
     return tensor[..., [2, 1, 0]]

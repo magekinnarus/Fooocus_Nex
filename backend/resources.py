@@ -15,6 +15,7 @@ import ctypes
 import time
 import os
 import backend.memory_governor as memory_governor
+from backend import environment_profile as environment_profiles
 
 class VRAMState(Enum):
     DISABLED = 0    # No vram present: no need to move models to vram
@@ -85,7 +86,7 @@ def _memory_mb(value):
     return float(value) / (1024 ** 2)
 
 
-def _describe_model_for_logs(model_patcher):
+def _classify_model_role(model_patcher):
     patcher_name = type(model_patcher).__name__
     model_obj = getattr(model_patcher, "model", None)
     model_name = type(model_obj).__name__ if model_obj is not None else "UnknownModel"
@@ -94,13 +95,136 @@ def _describe_model_for_logs(model_patcher):
     if model_obj is not None:
         if hasattr(model_obj, "diffusion_model"):
             role = "unet"
+        elif 'controlnet' in model_name.lower():
+            role = "controlnet"
         elif model_name == "CLIP" or hasattr(model_obj, "tokenizer"):
             role = "clip"
         elif model_name == "VAE" or hasattr(model_obj, "first_stage_model"):
             role = "vae"
 
     gguf_suffix = "[gguf]" if "GGUF" in patcher_name else ""
+    return role, patcher_name, model_name, gguf_suffix
+
+
+def _describe_model_for_logs(model_patcher):
+    role, patcher_name, model_name, gguf_suffix = _classify_model_role(model_patcher)
     return f"{role}:{patcher_name}/{model_name}{gguf_suffix}"
+
+
+def _residency_profile_name():
+    profile = memory_governor.environment_profile()
+    return getattr(profile, 'name', environment_profiles.PROFILE_CUSTOM)
+
+
+def _warn_legacy_vram_mode_if_needed(current_vram_state):
+    if current_vram_state not in (VRAMState.LOW_VRAM, VRAMState.NO_VRAM):
+        return
+
+    warned = getattr(_warn_legacy_vram_mode_if_needed, '_warned', set())
+    if current_vram_state.name in warned:
+        return
+
+    logging.warning(
+        '[Nex-Memory] Legacy VRAM flag behavior (%s) is deprecated; residency policy now follows profile=%s phase=%s with compatibility fallback.',
+        current_vram_state.name,
+        _residency_profile_name(),
+        memory_governor.current_phase(),
+    )
+    warned = set(warned)
+    warned.add(current_vram_state.name)
+    _warn_legacy_vram_mode_if_needed._warned = warned
+
+
+def _residency_plan_for_phase(target_phase=None, task=None):
+    phase_name = normalize_memory_phase(target_phase) if target_phase is not None else current_memory_phase()
+    return memory_governor.plan_for_task(task=task, phase=phase_name)
+
+
+def _emit_residency_log(prefix, *, plan, notes=None, role=None, item=None, action=None):
+    payload = {
+        'profile': plan.notes.get('profile'),
+        'phase': plan.notes.get('phase'),
+        'pinned': ','.join(plan.pinned) or '-',
+        'warm': ','.join(plan.warm) or '-',
+        'evictable': ','.join(plan.evictable) or '-',
+    }
+    if role is not None:
+        payload['role'] = role
+    if item is not None:
+        payload['item'] = item
+    if action is not None:
+        payload['action'] = action
+    if notes:
+        payload.update(notes)
+
+    extras = ' '.join(f"{key}={value}" for key, value in payload.items())
+    message = f"[Nex-Residency] {prefix} {extras}"
+    print(message)
+    logging.info(message)
+
+
+def _eviction_mode_for_resource(plan, resource_id, *, aggressive=False):
+    residency_mode = plan.mode_for(resource_id)
+    if residency_mode is None or residency_mode == 'pinned':
+        return None
+    if aggressive:
+        return 'destroy'
+    if residency_mode == 'warm':
+        return None
+    profile_name = plan.notes.get('profile')
+    if profile_name in (environment_profiles.PROFILE_COLAB_FREE, environment_profiles.PROFILE_LOCAL_LOW_VRAM):
+        return 'destroy'
+    return 'offload'
+
+
+def _apply_support_residency(plan, *, aggressive=False, notes=None):
+    actions = {}
+
+    controlnet_action = _eviction_mode_for_resource(plan, 'controlnet', aggressive=aggressive)
+    if controlnet_action is not None:
+        try:
+            import modules.default_pipeline as default_pipeline
+            actions['controlnet'] = default_pipeline.apply_controlnet_residency(controlnet_action)
+        except Exception:
+            logging.debug('ControlNet residency cleanup failed.', exc_info=True)
+
+    preprocessor_action = _eviction_mode_for_resource(plan, 'structural_preprocessors', aggressive=aggressive)
+    if preprocessor_action is not None:
+        try:
+            from backend.preprocessors import runtime as preprocessor_runtime
+            actions['structural_preprocessors'] = preprocessor_runtime.apply_residency_policy(preprocessor_action)
+        except Exception:
+            logging.debug('Structural preprocessor residency cleanup failed.', exc_info=True)
+
+    contextual_action = _eviction_mode_for_resource(plan, 'contextual_adapters', aggressive=aggressive)
+    clip_vision_action = _eviction_mode_for_resource(plan, 'clip_vision', aggressive=aggressive)
+    insightface_action = _eviction_mode_for_resource(plan, 'insightface', aggressive=aggressive)
+    if any(action is not None for action in (contextual_action, clip_vision_action, insightface_action)):
+        try:
+            import backend.ip_adapter as ip_adapter
+            actions['contextual_adapters'] = ip_adapter.apply_contextual_residency(
+                contextual_action or 'offload',
+                clip_vision_action=clip_vision_action,
+                insightface_action=insightface_action,
+            )
+        except Exception:
+            logging.debug('Contextual adapter residency cleanup failed.', exc_info=True)
+
+    pulid_action = _eviction_mode_for_resource(plan, 'pulid_support', aggressive=aggressive)
+    if pulid_action is not None:
+        try:
+            import backend.pulid_runtime as pulid_runtime
+            actions['pulid_support'] = pulid_runtime.apply_contextual_residency(pulid_action)
+        except Exception:
+            logging.debug('PuLID residency cleanup failed.', exc_info=True)
+
+    if actions:
+        action_notes = dict(notes or {})
+        action_notes['support_actions'] = actions
+        _emit_residency_log('cleanup', plan=plan, notes=action_notes)
+
+    return actions
+
 
 def get_supported_float8_types():
     float8_types = []
@@ -166,8 +290,10 @@ def apply_config():
     if config.lowvram:
         set_vram_to = VRAMState.LOW_VRAM
         lowvram_available = True
+        logging.warning('[Nex-Memory] --lowvram compatibility mode is active; prefer memory_environment_profile for stage-aware residency.')
     elif config.novram:
         set_vram_to = VRAMState.NO_VRAM
+        logging.warning('[Nex-Memory] --novram compatibility mode is active; prefer memory_environment_profile for stage-aware residency.')
     elif config.highvram or config.gpu_only:
         vram_state = VRAMState.HIGH_VRAM
 
@@ -546,11 +672,13 @@ def free_memory(memory_required, device, keep_loaded=[]):
         soft_empty_cache()
     return unloaded_models
 
-def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimum_memory_required=None, force_full_load=False, force_high_vram=False):
+def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimum_memory_required=None, force_full_load=False, force_high_vram=False, target_phase=None):
     cleanup_models_gc()
     global vram_state
     
     current_vram_state = VRAMState.HIGH_VRAM if force_high_vram else vram_state
+    _warn_legacy_vram_mode_if_needed(current_vram_state)
+    residency_plan = _residency_plan_for_phase(target_phase=target_phase)
 
     inference_memory = minimum_inference_memory()
     extra_mem = max(inference_memory, memory_required + extra_reserved_memory())
@@ -608,11 +736,22 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             vram_set_state = VRAMState.DISABLED
         else:
             vram_set_state = current_vram_state
-        
+
+        model_role, _, _, _ = _classify_model_role(model)
+        residency_mode = residency_plan.mode_for(model_role) or 'evictable'
+        profile_name = residency_plan.notes.get('profile')
+        pinned_full_load = (
+            residency_mode == 'pinned'
+            and not force_high_vram
+            and vram_set_state in (VRAMState.NORMAL_VRAM, VRAMState.HIGH_VRAM)
+            and profile_name not in (environment_profiles.PROFILE_COLAB_FREE, environment_profiles.PROFILE_LOCAL_LOW_VRAM)
+        )
+        effective_force_full_load = force_full_load or pinned_full_load
+
         lowvram_model_memory = 0
         loaded_memory = loaded_model.model_loaded_memory()
         current_free_mem = None
-        if vram_set_state in (VRAMState.LOW_VRAM, VRAMState.NORMAL_VRAM) and not force_full_load:
+        if vram_set_state in (VRAMState.LOW_VRAM, VRAMState.NORMAL_VRAM) and not effective_force_full_load:
             current_free_mem = get_free_memory(torch_dev) + loaded_memory
             lowvram_model_memory = max(128 * 1024 * 1024, (current_free_mem - minimum_memory_required), min(current_free_mem * MIN_WEIGHT_MEMORY_RATIO, current_free_mem - minimum_inference_memory()))
             if total_vram < 4096:
@@ -626,6 +765,14 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
         model_label = _describe_model_for_logs(model)
         target_memory = loaded_model.model_memory_required(torch_dev)
         load_mode = 'partial' if lowvram_model_memory > 0 and lowvram_model_memory < target_memory else 'full'
+        _emit_residency_log(
+            'load_plan',
+            plan=residency_plan,
+            role=model_role,
+            item=model_label,
+            action=load_mode,
+            notes={'full_load': effective_force_full_load, 'legacy_vram': vram_set_state.name},
+        )
         free_mem_text = 'n/a' if current_free_mem is None else f"{_memory_mb(current_free_mem):.1f}"
         perf_message = (
             f"[Nex-Perf] load_models_gpu item={model_label} device={torch_dev} mode={load_mode} "
@@ -746,18 +893,27 @@ def _try_malloc_trim():
     return False
 
 
-def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect=True, trim_host=None, notes=None):
+def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect=True, trim_host=None, notes=None, target_phase=None):
     cleanup_notes = dict(notes or {})
     cleanup_notes['reason'] = reason
+    cleanup_phase = normalize_memory_phase(target_phase) if target_phase is not None else current_memory_phase()
+    cleanup_notes['target_phase'] = cleanup_phase
     before = capture_memory_snapshot(notes={**cleanup_notes, 'stage': 'before_cleanup'})
+    residency_plan = _residency_plan_for_phase(target_phase=cleanup_phase)
 
     if unload_models:
         unload_all_models()
 
+    support_actions = _apply_support_residency(
+        residency_plan,
+        aggressive=bool(unload_models or force_cache),
+        notes={'reason': reason, 'target_phase': cleanup_phase},
+    )
+
     if gc_collect:
         gc.collect()
 
-    soft_empty_cache(force=force_cache or unload_models)
+    soft_empty_cache(force=force_cache or unload_models or bool(support_actions))
 
     if trim_host is None:
         trim_host = memory_governor.should_trim_host_memory(snapshot=before, aggressive=bool(unload_models and force_cache))
@@ -768,14 +924,16 @@ def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect
         'stage': 'after_cleanup',
         'trimmed': trimmed,
         'unload_models': bool(unload_models),
+        'support_actions': support_actions,
     })
 
     logging.info(
-        '[Nex-Memory] cleanup reason=%s unload_models=%s force_cache=%s trimmed=%s '
+        '[Nex-Memory] cleanup reason=%s unload_models=%s force_cache=%s target_phase=%s trimmed=%s '
         'ram_before=%sMB ram_after=%sMB vram_before=%sMB vram_after=%sMB',
         reason,
         unload_models,
         force_cache,
+        cleanup_phase,
         trimmed,
         'n/a' if before.free_ram_mb is None else f'{before.free_ram_mb:.1f}',
         'n/a' if after.free_ram_mb is None else f'{after.free_ram_mb:.1f}',
@@ -811,6 +969,7 @@ def prepare_for_checkpoint_switch(*, current_model=None, next_model=None, releas
         force_cache=True,
         gc_collect=True,
         trim_host=aggressive,
+        target_phase=MemoryPhase.MODEL_REFRESH,
         notes={
             'current_model': current_model,
             'next_model': next_model,
