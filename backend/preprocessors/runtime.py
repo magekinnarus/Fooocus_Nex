@@ -6,7 +6,6 @@ import torch
 
 from backend import resources
 from backend import utils as backend_utils
-from .depth_anything_v2 import DepthAnythingV2
 from .mlsd.models import MobileV2_MLSD_Large
 from .mlsd.utils import pred_lines
 from .teed import TED
@@ -69,6 +68,8 @@ def _get_cached_model(method, model_path, loader):
 
 
 def _load_depth_model(model_path):
+    from .depth_anything_v2 import DepthAnythingV2
+
     model = DepthAnythingV2(**_get_depth_config(model_path))
     state_dict = _prepare_state_dict(backend_utils.load_torch_file(model_path))
     model.load_state_dict(state_dict, strict=True)

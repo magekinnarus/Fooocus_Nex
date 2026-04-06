@@ -128,9 +128,6 @@ def get_default_cn_parameters_for_type(cn_type):
 
 output_formats = ['png', 'jpeg', 'webp']
 
-inpaint_mask_models = ['u2net', 'u2netp', 'u2net_human_seg', 'u2net_cloth_seg', 'silueta', 'isnet-general-use', 'isnet-anime']
-inpaint_mask_cloth_category = ['full', 'upper', 'lower']
-
 inpaint_engine_versions = ['None', 'v1', 'v2.5', 'v2.6']
 inpaint_option_default = 'Outpaint (2-Step)'
 inpaint_option_detail = 'Improve Detail (face, hand, eyes, etc.)'

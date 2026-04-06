@@ -479,11 +479,6 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
                 if 'antelopev2' not in contextual_assets['insightface_model_names']:
                     contextual_assets['insightface_model_names'].append('antelopev2')
 
-    if task_state.current_tab == 'enhance' and task_state.enhance_input_image is not None:
-        task_state.goals.append('enhance')
-        skip_prompt_processing = True
-        task_state.enhance_input_image = HWC3(mask_proc.ensure_numpy(task_state.enhance_input_image))
-
     return {
         'base_model_additional_loras': base_model_additional_loras,
         'clip_vision_path': contextual_assets.get('clip_vision_path'),
