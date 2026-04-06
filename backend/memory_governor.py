@@ -101,10 +101,10 @@ BASE_RESIDENCY_PLANS = {
 
 PROFILE_RESIDENCY_OVERRIDES = {
     environment_profiles.PROFILE_COLAB_FREE: {
-        'extra_evictable': ('controlnet', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
+        'extra_evictable': ('contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
     },
     environment_profiles.PROFILE_LOCAL_LOW_VRAM: {
-        'extra_evictable': ('controlnet', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
+        'extra_evictable': ('contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'),
     },
     environment_profiles.PROFILE_COLAB_PRO: {
         MemoryPhase.DIFFUSION.value: {

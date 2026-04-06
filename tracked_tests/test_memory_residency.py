@@ -38,6 +38,7 @@ def test_residency_plan_differs_by_profile_and_phase(restore_profile):
     pro_plan = memory_governor.plan_for_task(phase=memory_governor.MemoryPhase.DIFFUSION)
 
     assert free_plan.mode_for('unet') == 'pinned'
+    assert free_plan.mode_for('controlnet') == 'warm'
     assert free_plan.mode_for('clip_vision') == 'evictable'
     assert pro_plan.mode_for('unet') == 'pinned'
     assert pro_plan.mode_for('clip_vision') == 'warm'
