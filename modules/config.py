@@ -10,6 +10,7 @@ import modules.flags
 import modules.sdxl_styles
 import modules.model_taxonomy
 import modules.model_catalog_index
+from backend import environment_profile as memory_environment_profiles
 
 from modules.model_loader import load_file_from_url
 from modules.extra_utils import makedirs_with_log, get_files_from_folder, try_eval_env_var
@@ -547,6 +548,51 @@ def get_config_item_or_set_default(key, default_value, validator, disable_empty_
             print(f'Failed to load config key: {json.dumps({key:v})} is invalid; will use {json.dumps({key:default_value})} instead.')
         config_dict[key] = default_value
         return default_value
+
+
+def _get_optional_memory_policy_override(key):
+    value = get_config_item_or_set_default(
+        key=key,
+        default_value=None,
+        validator=lambda x: x is None or x == 'None' or isinstance(x, numbers.Number),
+        expected_type=numbers.Number
+    )
+    if value in (None, 'None'):
+        return None
+    return float(value)
+
+
+memory_environment_profile_override = get_config_item_or_set_default(
+    key='memory_environment_profile',
+    default_value=memory_environment_profiles.PROFILE_AUTO,
+    validator=lambda x: isinstance(x, str) and x.lower() in memory_environment_profiles.KNOWN_PROFILE_OVERRIDES,
+    expected_type=str
+)
+memory_profile_custom_name = get_config_item_or_set_default(
+    key='memory_profile_custom_name',
+    default_value='Custom Override',
+    validator=lambda x: isinstance(x, str) and len(x.strip()) > 0,
+    expected_type=str
+)
+memory_low_ram_headroom_override_mb = _get_optional_memory_policy_override('memory_low_ram_headroom_mb')
+memory_critical_ram_headroom_override_mb = _get_optional_memory_policy_override('memory_critical_ram_headroom_mb')
+memory_checkpoint_switch_headroom_override_mb = _get_optional_memory_policy_override('memory_checkpoint_switch_ram_headroom_mb')
+memory_linux_malloc_trim_trigger_override_mb = _get_optional_memory_policy_override('memory_linux_malloc_trim_trigger_mb')
+resolved_memory_environment_profile = memory_environment_profiles.resolve_environment_profile(
+    override=memory_environment_profile_override,
+    custom_name=memory_profile_custom_name,
+    custom_policy_overrides={
+        'low_ram_headroom_mb': memory_low_ram_headroom_override_mb,
+        'critical_ram_headroom_mb': memory_critical_ram_headroom_override_mb,
+        'checkpoint_switch_ram_headroom_mb': memory_checkpoint_switch_headroom_override_mb,
+        'linux_malloc_trim_trigger_mb': memory_linux_malloc_trim_trigger_override_mb,
+    },
+)
+
+import backend.memory_governor as memory_governor
+memory_governor.configure_environment(resolved_memory_environment_profile)
+print(resolved_memory_environment_profile.startup_message())
+print(f"[Startup] Memory policy summary: {memory_governor.policy_summary()}")
 
 
 def init_temp_path(path: str | None, default_path: str) -> str:

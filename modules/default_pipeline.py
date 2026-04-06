@@ -1,5 +1,6 @@
 import modules.core as core
 import os
+import gc
 import torch
 import modules.patch
 import modules.config
@@ -65,13 +66,34 @@ def refresh_base_model(name, vae_name=None, clip_name=None):
     if vae_name is not None and vae_name != modules.flags.default_vae:
         vae_filename = get_file_from_folder_list(vae_name, modules.config.path_vae)
 
-    if model_base.filename == filename and model_base.vae_filename == vae_filename and getattr(model_base, 'clip_filename', None) == clip_name:
+    current_clip_name = getattr(model_base, 'clip_filename', None)
+    if model_base.filename == filename and model_base.vae_filename == vae_filename and current_clip_name == clip_name:
         return
+
+    previous_model_filename = getattr(model_base, 'filename', None)
+    if previous_model_filename is not None:
+        def release_previous_model_state():
+            global model_base
+            previous_model = model_base
+            model_base = core.StableDiffusionModel()
+            del previous_model
+            gc.collect()
+
+        resources.prepare_for_checkpoint_switch(
+            current_model=previous_model_filename,
+            next_model=filename,
+            release_callback=release_previous_model_state,
+            notes={
+                'current_vae': getattr(model_base, 'vae_filename', None),
+                'next_vae': vae_filename,
+                'current_clip': current_clip_name,
+                'next_clip': clip_name,
+            },
+        )
 
     model_base = core.load_model(filename, vae_filename, clip_name)
     model_base.clip_filename = clip_name
-    
-    # Only print if we actually performed a load (check above handled the early return)
+
     print(f'Base model loaded: {model_base.filename}')
     if model_base.vae_filename:
         print(f'VAE loaded: {model_base.vae_filename}')
@@ -329,9 +351,7 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         )
 
     # Phase: Sampling -> Decoding
-    import gc
-    gc.collect()
-    resources.soft_empty_cache()
+    resources.cleanup_memory('sampling_to_decode', notes={'tiled': tiled})
     print('[Nex-Memory] Phase: Sampling -> Decoding')
 
     with resources.memory_phase_scope(

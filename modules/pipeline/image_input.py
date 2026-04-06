@@ -240,29 +240,25 @@ def apply_upscale(task_state, progressbar_callback=None):
         task_state.current_progress += 1
         progressbar_callback(task_state, task_state.current_progress, f'Upscaling image from {str((W, H))} ...')
     
-    # Pre-upscale memory cleanup: Clear UNet/VAE/CLIP to make room for GAN
     from backend import resources
-    resources.unload_all_models()
-    resources.soft_empty_cache()
-    import gc
-    gc.collect()
+
+    # Pre-upscale cleanup: central governor path before bringing the GAN model online.
+    resources.cleanup_memory(
+        'upscale_preflight',
+        unload_models=True,
+        force_cache=True,
+        trim_host=True,
+        notes={'uov_method': uov_method},
+    )
 
     # 1. GAN Upscale with new multi-model engine
     from modules.upscaler import perform_upscale, clear_model_cache
-    
+
     # Super-Upscale should use the lightest default model (Nomos2) to save memory
     upscale_model_to_use = task_state.upscale_model
     if uov_method == 'super-upscale':
         upscale_model_to_use = '4xNomos2_otf_esrgan.pth'
         print(f'Super-Upscale detected: Forcing light model {upscale_model_to_use} for initial pass.')
-
-    import gc
-    from backend import resources
-    
-    # Pre-upscale cleanup: Offload everything to make room for GAN model
-    resources.unload_all_models()
-    gc.collect()
-    resources.soft_empty_cache()
 
     uov_input_image = perform_upscale(
         uov_input_image, 
@@ -271,10 +267,9 @@ def apply_upscale(task_state, progressbar_callback=None):
     )
     print(f'Image upscaled via GAN to {str(uov_input_image.shape[:2])}.')
 
-    # Post-upscale cleanup: Purge GAN model and ensure GPU is clear
+    # Post-upscale cleanup: Purge GAN model and route cleanup through the governor.
     clear_model_cache()
-    gc.collect()
-    resources.soft_empty_cache()
+    resources.cleanup_memory('upscale_postflight', force_cache=True, trim_host=False, notes={'uov_method': uov_method})
 
     # 2. Handle "Upscale" (Light) or "Super-Upscale" (Stage 1)
     if uov_method == 'upscale':

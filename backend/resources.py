@@ -11,6 +11,7 @@ import sys
 import platform
 import weakref
 import gc
+import ctypes
 import time
 import os
 import backend.memory_governor as memory_governor
@@ -720,6 +721,106 @@ def soft_empty_cache(force=False):
     memory_governor.note_cache_flush()
 
 
+def _try_malloc_trim():
+    if platform.system() != 'Linux':
+        return False
+
+    for library_name in ('libc.so.6', 'libc.so'):
+        try:
+            libc = ctypes.CDLL(library_name)
+        except OSError:
+            continue
+
+        trim = getattr(libc, 'malloc_trim', None)
+        if trim is None:
+            continue
+
+        try:
+            trim.argtypes = [ctypes.c_size_t]
+            trim.restype = ctypes.c_int
+            return bool(trim(0))
+        except Exception:
+            logging.debug('malloc_trim call failed.', exc_info=True)
+            return False
+
+    return False
+
+
+def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect=True, trim_host=None, notes=None):
+    cleanup_notes = dict(notes or {})
+    cleanup_notes['reason'] = reason
+    before = capture_memory_snapshot(notes={**cleanup_notes, 'stage': 'before_cleanup'})
+
+    if unload_models:
+        unload_all_models()
+
+    if gc_collect:
+        gc.collect()
+
+    soft_empty_cache(force=force_cache or unload_models)
+
+    if trim_host is None:
+        trim_host = memory_governor.should_trim_host_memory(snapshot=before, aggressive=bool(unload_models and force_cache))
+    trimmed = _try_malloc_trim() if trim_host else False
+
+    after = capture_memory_snapshot(notes={
+        **cleanup_notes,
+        'stage': 'after_cleanup',
+        'trimmed': trimmed,
+        'unload_models': bool(unload_models),
+    })
+
+    logging.info(
+        '[Nex-Memory] cleanup reason=%s unload_models=%s force_cache=%s trimmed=%s '
+        'ram_before=%sMB ram_after=%sMB vram_before=%sMB vram_after=%sMB',
+        reason,
+        unload_models,
+        force_cache,
+        trimmed,
+        'n/a' if before.free_ram_mb is None else f'{before.free_ram_mb:.1f}',
+        'n/a' if after.free_ram_mb is None else f'{after.free_ram_mb:.1f}',
+        'n/a' if before.free_vram_mb is None else f'{before.free_vram_mb:.1f}',
+        'n/a' if after.free_vram_mb is None else f'{after.free_vram_mb:.1f}',
+    )
+    return after
+
+
+def prepare_for_checkpoint_switch(*, current_model=None, next_model=None, release_callback=None, notes=None):
+    affordance = memory_governor.can_afford(
+        minimum_free_ram_mb=memory_governor.governor.policy.checkpoint_switch_ram_headroom_mb,
+        phase=memory_governor.MemoryPhase.MODEL_REFRESH,
+        notes=notes,
+    )
+    aggressive = memory_governor.governor.policy.aggressive_checkpoint_switch_reclaim or not affordance.allowed
+
+    logging.info(
+        '[Nex-Memory] checkpoint_switch current=%s next=%s allowed=%s aggressive=%s detail=%s',
+        current_model,
+        next_model,
+        affordance.allowed,
+        aggressive,
+        affordance.reason,
+    )
+
+    if release_callback is not None:
+        release_callback()
+
+    return cleanup_memory(
+        'checkpoint_switch',
+        unload_models=True,
+        force_cache=True,
+        gc_collect=True,
+        trim_host=aggressive,
+        notes={
+            'current_model': current_model,
+            'next_model': next_model,
+            'affordance_allowed': affordance.allowed,
+            'affordance_reason': affordance.reason,
+            **(notes or {}),
+        },
+    )
+
+
 MemoryPhase = memory_governor.MemoryPhase
 
 def normalize_memory_phase(phase):
@@ -742,6 +843,15 @@ def capture_memory_snapshot(notes=None, task=None):
 
 def current_memory_phase():
     return memory_governor.current_phase()
+
+def active_memory_environment_profile():
+    return memory_governor.environment_profile()
+
+def memory_policy_summary():
+    return memory_governor.policy_summary()
+
+def memory_can_afford(**kwargs):
+    return memory_governor.can_afford(**kwargs)
 
 def is_device_type(device, type):
     if hasattr(device, 'type'):

@@ -180,8 +180,7 @@ def handler(async_task: AsyncTask):
         resources.begin_memory_phase('removal', notes={'goals': list(s.goals)})
         try:
             progressbar(s, 5, "Clearing VRAM for Removal Models...")
-            resources.soft_empty_cache(force=True)
-            resources.unload_all_models()
+            resources.cleanup_memory('removal_preflight', unload_models=True, force_cache=True, trim_host=True, notes={'goals': list(s.goals)})
 
             if flags.remove_bg in s.goals:
                 progressbar(s, 10, "Background Removal Starting...")
@@ -310,8 +309,7 @@ def handler(async_task: AsyncTask):
         
         # Phase Boundary: Encoding -> Diffusion
         print('[Nex-Memory] Phase: Encoding -> Diffusion')
-        gc.collect()
-        resources.soft_empty_cache()
+        resources.cleanup_memory('encoding_to_diffusion', notes={'goals': list(s.goals)})
 
     if len(s.goals) > 0:
         s.current_progress += 1
@@ -370,7 +368,7 @@ def handler(async_task: AsyncTask):
                 del t['c']
             if 'uc' in t:
                 del t['uc']
-            resources.soft_empty_cache()
+            resources.cleanup_memory('task_image_complete', gc_collect=False, notes={'task_index': i})
 
         if interrupted_action == 'skip':
             continue
@@ -423,8 +421,7 @@ def worker():
                     task.yields.append(['finish', task.results])
             finally:
                 set_active_task(None)
-                gc.collect()
-                resources.soft_empty_cache()
+                resources.cleanup_memory('task_finalize', force_cache=True, notes={'completed': True})
                 resources.end_memory_phase('task', notes={'completed': True})
 
 threading.Thread(target=worker, daemon=True).start()
