@@ -47,6 +47,77 @@ def test_residency_plan_differs_by_profile_and_phase(restore_profile):
     assert memory_governor.plan_for_task(phase=memory_governor.MemoryPhase.PROMPT_ENCODE).mode_for('clip') == 'pinned'
 
 
+def test_txt2img_does_not_keep_controlnet_warm_on_constrained_profiles(restore_profile):
+    low_vram_profile = environment_profile.resolve_environment_profile(
+        override=environment_profile.PROFILE_LOCAL_LOW_VRAM,
+        total_ram_mb=16384,
+        total_vram_mb=4096,
+        is_colab=False,
+    )
+    memory_governor.configure_environment(low_vram_profile)
+
+    txt2img_task = SimpleNamespace(current_tab='txt2img', cn_tasks={})
+    diffusion_plan = memory_governor.plan_for_task(task=txt2img_task, phase=memory_governor.MemoryPhase.DIFFUSION)
+    decode_plan = memory_governor.plan_for_task(task=txt2img_task, phase=memory_governor.MemoryPhase.DECODE)
+
+    assert diffusion_plan.mode_for('controlnet') == 'evictable'
+    assert decode_plan.mode_for('controlnet') == 'evictable'
+
+    controlnet_task = SimpleNamespace(current_tab='ip', cn_tasks={})
+    controlnet_plan = memory_governor.plan_for_task(task=controlnet_task, phase=memory_governor.MemoryPhase.DECODE)
+
+    assert controlnet_plan.mode_for('controlnet') == 'warm'
+
+def test_cleanup_memory_ignores_zero_count_support_actions(monkeypatch, restore_profile):
+    low_vram_profile = environment_profile.resolve_environment_profile(
+        override=environment_profile.PROFILE_LOCAL_LOW_VRAM,
+        total_ram_mb=16384,
+        total_vram_mb=4096,
+        is_colab=False,
+    )
+    memory_governor.configure_environment(low_vram_profile)
+
+    cache_calls = []
+
+    def snapshot(*args, **kwargs):
+        return SimpleNamespace(free_ram_mb=8192.0, free_vram_mb=2048.0)
+
+    monkeypatch.setattr(resources, 'capture_memory_snapshot', snapshot)
+    monkeypatch.setattr(resources, 'soft_empty_cache', lambda force=False: cache_calls.append(force))
+    monkeypatch.setattr(resources, '_try_malloc_trim', lambda: False)
+    monkeypatch.setattr(resources.gc, 'collect', lambda: None)
+
+    import modules.default_pipeline as default_pipeline
+    from backend.preprocessors import runtime as preprocessor_runtime
+    import backend.ip_adapter as ip_adapter
+    import backend.pulid_runtime as pulid_runtime
+
+    monkeypatch.setattr(default_pipeline, 'apply_controlnet_residency', lambda mode: {'mode': mode, 'count': 0})
+    monkeypatch.setattr(preprocessor_runtime, 'apply_residency_policy', lambda mode: {'mode': mode, 'count': 0})
+    monkeypatch.setattr(
+        ip_adapter,
+        'apply_contextual_residency',
+        lambda mode, clip_vision_action=None, insightface_action=None: {
+            'mode': mode,
+            'clip_vision_action': clip_vision_action,
+            'insightface_action': insightface_action,
+            'contextual_models': 0,
+            'clip_vision_models': 0,
+            'insightface_apps': 0,
+        },
+    )
+    monkeypatch.setattr(pulid_runtime, 'apply_contextual_residency', lambda mode: {'mode': mode, 'eva_clip_models': 0, 'face_parsers': 0})
+
+    txt2img_task = SimpleNamespace(current_tab='txt2img', cn_tasks={})
+    resources.cleanup_memory(
+        'unit_test_noop_txt2img',
+        gc_collect=False,
+        target_phase=resources.MemoryPhase.DIFFUSION,
+        task=txt2img_task,
+    )
+
+    assert cache_calls == [False]
+
 def test_cleanup_memory_dispatches_residency_handlers_by_target_phase(monkeypatch, restore_profile):
     low_vram_profile = environment_profile.resolve_environment_profile(
         override=environment_profile.PROFILE_LOCAL_LOW_VRAM,

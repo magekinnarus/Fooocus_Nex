@@ -177,6 +177,25 @@ def _eviction_mode_for_resource(plan, resource_id, *, aggressive=False):
     return 'offload'
 
 
+def _has_residency_effect(summary):
+    if not isinstance(summary, dict):
+        return True
+    count_keys = (
+        'count',
+        'contextual_models',
+        'clip_vision_models',
+        'insightface_apps',
+        'eva_clip_models',
+        'face_parsers',
+    )
+    for key in count_keys:
+        try:
+            if int(summary.get(key, 0) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            return True
+    return not any(key in summary for key in count_keys)
+
 def _apply_support_residency(plan, *, aggressive=False, notes=None):
     actions = {}
 
@@ -184,7 +203,9 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
     if controlnet_action is not None:
         try:
             import modules.default_pipeline as default_pipeline
-            actions['controlnet'] = default_pipeline.apply_controlnet_residency(controlnet_action)
+            action = default_pipeline.apply_controlnet_residency(controlnet_action)
+            if _has_residency_effect(action):
+                actions['controlnet'] = action
         except Exception:
             logging.debug('ControlNet residency cleanup failed.', exc_info=True)
 
@@ -192,7 +213,9 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
     if preprocessor_action is not None:
         try:
             from backend.preprocessors import runtime as preprocessor_runtime
-            actions['structural_preprocessors'] = preprocessor_runtime.apply_residency_policy(preprocessor_action)
+            action = preprocessor_runtime.apply_residency_policy(preprocessor_action)
+            if _has_residency_effect(action):
+                actions['structural_preprocessors'] = action
         except Exception:
             logging.debug('Structural preprocessor residency cleanup failed.', exc_info=True)
 
@@ -202,11 +225,13 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
     if any(action is not None for action in (contextual_action, clip_vision_action, insightface_action)):
         try:
             import backend.ip_adapter as ip_adapter
-            actions['contextual_adapters'] = ip_adapter.apply_contextual_residency(
+            action = ip_adapter.apply_contextual_residency(
                 contextual_action or 'offload',
                 clip_vision_action=clip_vision_action,
                 insightface_action=insightface_action,
             )
+            if _has_residency_effect(action):
+                actions['contextual_adapters'] = action
         except Exception:
             logging.debug('Contextual adapter residency cleanup failed.', exc_info=True)
 
@@ -214,7 +239,9 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
     if pulid_action is not None:
         try:
             import backend.pulid_runtime as pulid_runtime
-            actions['pulid_support'] = pulid_runtime.apply_contextual_residency(pulid_action)
+            action = pulid_runtime.apply_contextual_residency(pulid_action)
+            if _has_residency_effect(action):
+                actions['pulid_support'] = action
         except Exception:
             logging.debug('PuLID residency cleanup failed.', exc_info=True)
 
@@ -893,13 +920,13 @@ def _try_malloc_trim():
     return False
 
 
-def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect=True, trim_host=None, notes=None, target_phase=None):
+def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect=True, trim_host=None, notes=None, target_phase=None, task=None):
     cleanup_notes = dict(notes or {})
     cleanup_notes['reason'] = reason
     cleanup_phase = normalize_memory_phase(target_phase) if target_phase is not None else current_memory_phase()
     cleanup_notes['target_phase'] = cleanup_phase
     before = capture_memory_snapshot(notes={**cleanup_notes, 'stage': 'before_cleanup'})
-    residency_plan = _residency_plan_for_phase(target_phase=cleanup_phase)
+    residency_plan = _residency_plan_for_phase(target_phase=cleanup_phase, task=task)
 
     if unload_models:
         unload_all_models()

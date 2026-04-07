@@ -144,7 +144,8 @@ def refine_tile(tile_image: np.ndarray, task_state, denoise_strength: float) -> 
         denoise=denoise_strength,
         tiled=False,
         cfg_scale=task_state.cfg_scale,
-        quality={'sharpness': task_state.sharpness}
+        quality={'sharpness': task_state.sharpness},
+        task_state=task_state
     )
     
     return refined_images[0]

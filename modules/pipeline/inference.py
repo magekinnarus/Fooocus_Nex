@@ -100,7 +100,8 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
         tiled=task_state.tiled,
         cfg_scale=task_state.cfg_scale,
         disable_preview=task_state.disable_preview,
-        quality=quality
+        quality=quality,
+        task_state=task_state
     )
 
     del positive_cond, negative_cond  # Save memory

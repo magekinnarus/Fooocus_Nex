@@ -1,4 +1,5 @@
 import torch
+import time
 import collections
 from typing import Any, Callable, List, Dict, Optional, Union, Tuple, NamedTuple
 
@@ -113,15 +114,29 @@ def cond_cat(c_list: List[Dict[str, Any]]) -> Dict[str, Any]:
             out[k] = torch.cat(conds, dim=0)
     return out
 
+_cond_batch_trace_stats = {}
+def reset_cond_batch_trace_stats():
+    _cond_batch_trace_stats.clear()
+def consume_cond_batch_trace_stats():
+    snapshot = dict(_cond_batch_trace_stats)
+    reset_cond_batch_trace_stats()
+    return snapshot
+def _record_cond_batch_trace(name, *, wall_seconds, cpu_process_seconds):
+    entry = _cond_batch_trace_stats.setdefault(name, {
+        "calls": 0,
+        "wall_seconds": 0.0,
+        "cpu_process_seconds": 0.0,
+    })
+    entry["calls"] += 1
+    entry["wall_seconds"] += wall_seconds
+    entry["cpu_process_seconds"] += cpu_process_seconds
 def calc_cond_batch(model: Any, conds: List[List[Dict[str, Any]]], x_in: torch.Tensor, timestep: torch.Tensor, model_options: Dict[str, Any]) -> List[torch.Tensor]:
     out_conds = []
     out_counts = []
     to_run = []
-
     for i in range(len(conds)):
         out_conds.append(torch.zeros_like(x_in))
         out_counts.append(torch.ones_like(x_in) * 1e-37)
-
         cond = conds[i]
         if cond is not None:
             for x in cond:
@@ -129,38 +144,47 @@ def calc_cond_batch(model: Any, conds: List[List[Dict[str, Any]]], x_in: torch.T
                 if p is None:
                     continue
                 to_run.append((p, i))
-
     while len(to_run) > 0:
         first = to_run[0]
         to_batch = []
         for x in range(len(to_run)):
             if can_concat_cond(to_run[x][0], first[0]):
                 to_batch.append(x)
-        
         items_to_pop = [to_run[i] for i in to_batch]
         for i in sorted(to_batch, reverse=True):
             to_run.pop(i)
-            
         batch_input_x = []
         batch_mult = []
         batch_c = []
         batch_cond_indices = []
         batch_areas = []
-        
         for p, cond_index in items_to_pop:
             batch_input_x.append(p.input_x)
             batch_mult.append(p.mult)
             batch_c.append(p.conditioning)
             batch_areas.append(p.area)
             batch_cond_indices.append(cond_index)
-
         batch_chunks = len(batch_cond_indices)
+        prep_start = time.perf_counter()
+        prep_cpu_start = time.process_time()
         input_x = torch.cat(batch_input_x)
         c = cond_cat(batch_c)
         timestep_ = torch.cat([timestep] * batch_chunks)
-
+        _record_cond_batch_trace(
+            "batch_prep",
+            wall_seconds=time.perf_counter() - prep_start,
+            cpu_process_seconds=time.process_time() - prep_cpu_start,
+        )
+        apply_start = time.perf_counter()
+        apply_cpu_start = time.process_time()
         output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
-
+        _record_cond_batch_trace(
+            "model_apply",
+            wall_seconds=time.perf_counter() - apply_start,
+            cpu_process_seconds=time.process_time() - apply_cpu_start,
+        )
+        accumulate_start = time.perf_counter()
+        accumulate_cpu_start = time.process_time()
         for o in range(batch_chunks):
             cond_idx = batch_cond_indices[o]
             a = batch_areas[o]
@@ -176,12 +200,21 @@ def calc_cond_batch(model: Any, conds: List[List[Dict[str, Any]]], x_in: torch.T
                     out_cts = out_cts.narrow(i + 2, a[i + dims], a[i])
                 out_c += output[o] * batch_mult[o]
                 out_cts += batch_mult[o]
-
+        _record_cond_batch_trace(
+            "accumulate",
+            wall_seconds=time.perf_counter() - accumulate_start,
+            cpu_process_seconds=time.process_time() - accumulate_cpu_start,
+        )
+    normalize_start = time.perf_counter()
+    normalize_cpu_start = time.process_time()
     for i in range(len(out_conds)):
         out_conds[i] /= out_counts[i]
-
+    _record_cond_batch_trace(
+        "normalize",
+        wall_seconds=time.perf_counter() - normalize_start,
+        cpu_process_seconds=time.process_time() - normalize_cpu_start,
+    )
     return out_conds
-
 def resolve_areas_and_cond_masks_multidim(conditions: List[Dict[str, Any]], dims: Tuple[int, ...], device: torch.device):
     for i in range(len(conditions)):
         c = conditions[i]
@@ -269,3 +302,4 @@ def process_conds(model: Any, noise: torch.Tensor, conds: Dict[str, Any], device
             conds[k] = encode_model_conds(model.extra_conds, conds[k], noise, device, k, latent_image=latent_image, denoise_mask=denoise_mask, seed=seed)
 
     return conds
+

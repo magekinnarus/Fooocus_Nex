@@ -21,7 +21,8 @@ from . import anisotropic
 from .cond_utils import (
     add_area_dims, get_area_and_mult, cond_equal_size, can_concat_cond,
     cond_cat, calc_cond_batch, resolve_areas_and_cond_masks_multidim,
-    calculate_start_end_timesteps, encode_model_conds, process_conds
+    calculate_start_end_timesteps, encode_model_conds, process_conds,
+    reset_cond_batch_trace_stats, consume_cond_batch_trace_stats
 )
 
 class KSamplerX0Inpaint:
@@ -219,6 +220,22 @@ class KSampler:
         with precision.autocast_context(self.device):
             return cfg_guider.sample(noise, latent_image, sampler_inst, sigmas, denoise_mask, callback, disable_pbar, seed)
 
+_sampler_trace_stats = {}
+def reset_sampler_trace_stats():
+    _sampler_trace_stats.clear()
+def consume_sampler_trace_stats():
+    snapshot = dict(_sampler_trace_stats)
+    reset_sampler_trace_stats()
+    return snapshot
+def _record_sampler_trace(name, *, wall_seconds, cpu_process_seconds):
+    entry = _sampler_trace_stats.setdefault(name, {
+        "calls": 0,
+        "wall_seconds": 0.0,
+        "cpu_process_seconds": 0.0,
+    })
+    entry["calls"] += 1
+    entry["wall_seconds"] += wall_seconds
+    entry["cpu_process_seconds"] += cpu_process_seconds
 def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor, cond_scale: float, x: torch.Tensor, timestep: torch.Tensor, model_options: Dict[str, Any] = {}, cfg_pp: bool = False, adaptive_cfg: float = 0.0, diffusion_progress: float = 0.0) -> torch.Tensor:
     if "sampler_cfg_function" in model_options:
         args = {
@@ -271,28 +288,39 @@ def cfg_function(model: Any, cond_pred: torch.Tensor, uncond_pred: torch.Tensor,
 def sampling_function(model: Any, x: torch.Tensor, timestep: torch.Tensor, uncond: Any, cond: Any, cond_scale: float, model_options: Dict[str, Any] = {}, seed: Optional[int] = None, cfg_pp: bool = False, sharpness: float = 0.0, adaptive_cfg: float = 0.0) -> torch.Tensor:
     # Calculate diffusion progress (0.0 -> 1.0)
     # sigma is passed as timestep
+    progress_start = time.perf_counter()
+    progress_cpu_start = time.process_time()
     model_sampling = model.model_sampling
     t = model_sampling.timestep(timestep)
     diffusion_progress = max(0.0, min(1.0, 1.0 - t.item() / 999.0))
-
+    _record_sampler_trace(
+        "progress",
+        wall_seconds=time.perf_counter() - progress_start,
+        cpu_process_seconds=time.process_time() - progress_cpu_start,
+    )
     if math.isclose(cond_scale, 1.0) and not model_options.get("disable_cfg1_optimization", False):
         uncond_ = None
     else:
         uncond_ = uncond
-
     conds = [cond, uncond_]
-    
+    cond_batch_start = time.perf_counter()
+    cond_batch_cpu_start = time.process_time()
     if "sampler_calc_cond_batch_function" in model_options:
         args = {"conds": conds, "input": x, "sigma": timestep, "model": model, "model_options": model_options}
         out = model_options["sampler_calc_cond_batch_function"](args)
     else:
         out = calc_cond_batch(model, conds, x, timestep, model_options)
-
+    _record_sampler_trace(
+        "calc_cond_batch",
+        wall_seconds=time.perf_counter() - cond_batch_start,
+        cpu_process_seconds=time.process_time() - cond_batch_cpu_start,
+    )
     # out[0] is positive_x0, out[1] is negative_x0
     cond_pred = out[0]
     uncond_pred = out[1]
-
     # Fooocus Sharpness (Anisotropic Filtering)
+    sharpness_start = time.perf_counter()
+    sharpness_cpu_start = time.process_time()
     if sharpness > 0.0:
         alpha = 0.001 * sharpness * diffusion_progress
         if alpha >= 0.01:
@@ -303,16 +331,33 @@ def sampling_function(model: Any, x: torch.Tensor, timestep: torch.Tensor, uncon
             positive_eps_weighted = degraded_eps * alpha + positive_eps * (1.0 - alpha)
             # Update cond_pred (x0) back from weighted eps
             cond_pred = x - positive_eps_weighted
-
+    _record_sampler_trace(
+        "sharpness",
+        wall_seconds=time.perf_counter() - sharpness_start,
+        cpu_process_seconds=time.process_time() - sharpness_cpu_start,
+    )
+    pre_cfg_start = time.perf_counter()
+    pre_cfg_cpu_start = time.process_time()
     for fn in model_options.get("sampler_pre_cfg_function", []):
         args = {"conds": conds, "conds_out": [cond_pred, uncond_pred], "cond_scale": cond_scale, "timestep": timestep,
                 "input": x, "sigma": timestep, "model": model, "model_options": model_options}
         out = fn(args)
         cond_pred = out[0]
         uncond_pred = out[1]
-
-    return cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options=model_options, cfg_pp=cfg_pp, adaptive_cfg=adaptive_cfg, diffusion_progress=diffusion_progress)
-
+    _record_sampler_trace(
+        "pre_cfg_hooks",
+        wall_seconds=time.perf_counter() - pre_cfg_start,
+        cpu_process_seconds=time.process_time() - pre_cfg_cpu_start,
+    )
+    cfg_start = time.perf_counter()
+    cfg_cpu_start = time.process_time()
+    result = cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options=model_options, cfg_pp=cfg_pp, adaptive_cfg=adaptive_cfg, diffusion_progress=diffusion_progress)
+    _record_sampler_trace(
+        "cfg_function",
+        wall_seconds=time.perf_counter() - cfg_start,
+        cpu_process_seconds=time.process_time() - cfg_cpu_start,
+    )
+    return result
 class CFGGuider:
     def __init__(self, model_patcher: Any):
         self.model_patcher = model_patcher
@@ -394,6 +439,14 @@ class CFGGuider:
         except Exception:
             gguf_ops = None
 
+        reset_sampler_trace_stats()
+        reset_cond_batch_trace_stats()
+        apply_model_trace = None
+        try:
+            from ldm_patched.modules import model_base as apply_model_trace
+            apply_model_trace.reset_apply_model_trace_stats()
+        except Exception:
+            apply_model_trace = None
         sample_total_start = time.perf_counter()
         load_start = time.perf_counter()
         resources.load_models_gpu([self.model_patcher])
@@ -407,14 +460,17 @@ class CFGGuider:
         cond_duration = time.perf_counter() - cond_start
 
         denoise_start = time.perf_counter()
+        denoise_cpu_start = time.process_time()
         try:
             return sampler.sample(self, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
         finally:
             denoise_duration = time.perf_counter() - denoise_start
+            denoise_cpu_duration = time.process_time() - denoise_cpu_start
             total_duration = time.perf_counter() - sample_total_start
             perf_message = (
                 f"[Nex-Perf] sampler timings model_load={model_load_duration:.3f}s "
-                f"cond_prep={cond_duration:.3f}s denoise={denoise_duration:.3f}s total={total_duration:.3f}s"
+                f"cond_prep={cond_duration:.3f}s denoise={denoise_duration:.3f}s "
+                f"denoise_cpu_proc={denoise_cpu_duration:.3f}s total={total_duration:.3f}s"
             )
             print(perf_message)
             logging.info(perf_message)
@@ -426,6 +482,7 @@ class CFGGuider:
                     perf_message = (
                         f"[Nex-Perf] gguf get_weight calls={stats['calls']} quantized={stats['quantized_calls']} "
                         f"patch_calls={stats['patch_calls']} dequant={stats['dequant_seconds']:.3f}s "
+                        f"dequant_cpu_proc={stats.get('dequant_cpu_process_seconds', 0.0):.3f}s "
                         f"patch={stats['patch_seconds']:.3f}s total={stats['total_seconds']:.3f}s avg={avg_ms:.3f}ms "
                         f"src_cpu={stats['source_cpu_calls']} src_cuda={stats['source_cuda_calls']} src_other={stats['source_other_calls']} "
                         f"src_quant_cpu={stats['source_quantized_cpu_calls']} src_quant_cuda={stats['source_quantized_cuda_calls']} src_quant_other={stats['source_quantized_other_calls']} "
@@ -435,3 +492,86 @@ class CFGGuider:
                     )
                     print(perf_message)
                     logging.info(perf_message)
+                    residual_message = (
+                        f"[Nex-Perf] sampler residual denoise_minus_gguf_total="
+                        f"{denoise_duration - stats['total_seconds']:.3f}s "
+                        f"denoise_minus_gguf_dequant={denoise_duration - stats['dequant_seconds']:.3f}s "
+                        f"denoise_cpu_minus_gguf_cpu="
+                        f"{denoise_cpu_duration - stats.get('dequant_cpu_process_seconds', 0.0):.3f}s"
+                    )
+                    print(residual_message)
+                    logging.info(residual_message)
+                    forward_stats = stats.get('by_forward_op') or {}
+                    if forward_stats:
+                        forward_parts = []
+                        for op_name, fstats in sorted(forward_stats.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+                            calls = fstats.get('calls', 0) or 1
+                            avg_forward_ms = (fstats.get('wall_seconds', 0.0) / calls) * 1000.0
+                            forward_parts.append(
+                                f"{op_name}:calls={fstats.get('calls', 0)},wall={fstats.get('wall_seconds', 0.0):.3f}s,"
+                                f"cpu_proc={fstats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_forward_ms:.3f}ms"
+                            )
+                        forward_message = (
+                            f"[Nex-Perf] gguf forward wall={stats.get('forward_seconds', 0.0):.3f}s "
+                            f"cpu_proc={stats.get('forward_cpu_process_seconds', 0.0):.3f}s "
+                            f"breakdown {'; '.join(forward_parts)}"
+                        )
+                        print(forward_message)
+                        logging.info(forward_message)
+                    sampler_trace = consume_sampler_trace_stats()
+                    if sampler_trace:
+                        sampler_parts = []
+                        for trace_name, trace_stats in sorted(sampler_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+                            calls = trace_stats.get('calls', 0) or 1
+                            avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+                            sampler_parts.append(
+                                f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                                f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+                            )
+                        sampler_trace_message = f"[Nex-Perf] sampler function trace {'; '.join(sampler_parts)}"
+                        print(sampler_trace_message)
+                        logging.info(sampler_trace_message)
+                    cond_batch_trace = consume_cond_batch_trace_stats()
+                    if cond_batch_trace:
+                        cond_batch_parts = []
+                        for trace_name, trace_stats in sorted(cond_batch_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+                            calls = trace_stats.get('calls', 0) or 1
+                            avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+                            cond_batch_parts.append(
+                                f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                                f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+                            )
+                        cond_batch_trace_message = f"[Nex-Perf] cond batch trace {'; '.join(cond_batch_parts)}"
+                        print(cond_batch_trace_message)
+                        logging.info(cond_batch_trace_message)
+                    if apply_model_trace is not None:
+                        apply_trace = apply_model_trace.consume_apply_model_trace_stats()
+                        if apply_trace:
+                            apply_parts = []
+                            for trace_name, trace_stats in sorted(apply_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+                                calls = trace_stats.get('calls', 0) or 1
+                                avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+                                apply_parts.append(
+                                    f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                                    f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+                                )
+                            apply_trace_message = f"[Nex-Perf] apply_model trace {'; '.join(apply_parts)}"
+                            print(apply_trace_message)
+                            logging.info(apply_trace_message)
+                    by_qtype = stats.get('by_qtype') or {}
+                    if by_qtype:
+                        summary_parts = []
+                        for qtype_name, qstats in sorted(by_qtype.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True)[:6]:
+                            calls = qstats.get('calls', 0) or 1
+                            avg_q_ms = (qstats.get('wall_seconds', 0.0) / calls) * 1000.0
+                            summary_parts.append(
+                                f"{qtype_name}:calls={qstats.get('calls', 0)},quant={qstats.get('quantized_calls', 0)},"
+                                f"wall={qstats.get('wall_seconds', 0.0):.3f}s,cpu_proc={qstats.get('cpu_process_seconds', 0.0):.3f}s,"
+                                f"avg={avg_q_ms:.3f}ms,src_cuda={qstats.get('source_cuda_calls', 0)},elems={qstats.get('elements', 0)}"
+                            )
+                        perf_message = f"[Nex-Perf] gguf qtype breakdown {'; '.join(summary_parts)}"
+                        print(perf_message)
+                        logging.info(perf_message)
+
+
+

@@ -78,6 +78,32 @@ def _plan(*, pinned: tuple[str, ...] = (), warm: tuple[str, ...] = (), evictable
     }
 
 
+def _task_expects_controlnet(task) -> bool:
+    if task is None:
+        return True
+    try:
+        if getattr(task, 'current_tab', None) == 'ip':
+            return True
+        if getattr(task, 'mixing_image_prompt_and_inpaint', False):
+            return True
+        if getattr(task, 'mixing_image_prompt_and_outpaint', False):
+            return True
+        cn_tasks = getattr(task, 'cn_tasks', {}) or {}
+        if isinstance(cn_tasks, dict):
+            return any(len(tasks) > 0 for tasks in cn_tasks.values())
+    except Exception:
+        return True
+    return False
+
+
+def _move_resource_to_evictable(resource_id: str, pinned: list[str], warm: list[str], evictable: list[str]) -> None:
+    if resource_id in pinned:
+        return
+    if resource_id in warm:
+        warm.remove(resource_id)
+    if resource_id not in evictable:
+        evictable.append(resource_id)
+
 BASE_RESIDENCY_PLANS = {
     MemoryPhase.IDLE.value: _plan(evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
     MemoryPhase.TASK.value: _plan(warm=('unet', 'vae'), evictable=('clip',) + RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
@@ -197,8 +223,9 @@ class MemoryGovernor:
         self._phase_started_at = time.time()
         self._last_cache_flush = 0.0
         self._history: Deque[MemorySnapshot] = deque(maxlen=64)
-        self._phase_stack: list[tuple[str, float]] = []
+        self._phase_stack: list[tuple[str, float, Any | None]] = []
         self._base_policy = policy or MemoryPolicy()
+        self._current_task = None
         self.policy = MemoryPolicy(**vars(self._base_policy))
         self._environment_profile = None
 
@@ -238,9 +265,10 @@ class MemoryGovernor:
         phase_name = self._normalize_phase(phase)
         with self._lock:
             started_at = time.time()
-            self._phase_stack.append((phase_name, started_at))
+            self._phase_stack.append((phase_name, started_at, task))
             self._phase = phase_name
             self._phase_started_at = started_at
+            self._current_task = task
             snapshot = self.capture_snapshot(notes=notes, task=task)
             self._history.append(snapshot)
             return snapshot
@@ -258,10 +286,11 @@ class MemoryGovernor:
                         break
 
             if self._phase_stack:
-                self._phase, self._phase_started_at = self._phase_stack[-1]
+                self._phase, self._phase_started_at, self._current_task = self._phase_stack[-1]
             else:
                 self._phase = MemoryPhase.IDLE.value
                 self._phase_started_at = time.time()
+                self._current_task = None
             snapshot = self.capture_snapshot(notes=notes)
             self._history.append(snapshot)
             return snapshot
@@ -319,6 +348,8 @@ class MemoryGovernor:
 
     def plan_for_task(self, task=None, phase: str | MemoryPhase | None = None):
         phase_name = self._normalize_phase(phase) if phase is not None else self.current_phase()
+        if task is None:
+            task = self._current_task
         notes = {'phase': phase_name}
         if task is not None:
             notes['task_type'] = task.__class__.__name__
@@ -361,6 +392,9 @@ class MemoryGovernor:
             if resource_id not in evictable:
                 evictable.append(resource_id)
 
+        if phase_name in {MemoryPhase.DIFFUSION.value, MemoryPhase.DECODE.value} and not _task_expects_controlnet(task):
+            _move_resource_to_evictable('controlnet', pinned, warm, evictable)
+            notes['controlnet_expected'] = False
         notes['source'] = 'profile_phase_residency'
         return ResidencyPlan(
             pinned=tuple(pinned),

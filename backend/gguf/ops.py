@@ -65,19 +65,86 @@ _gguf_trace_stats = {
     "source_quantized_cpu_calls": 0,
     "source_quantized_cuda_calls": 0,
     "source_quantized_other_calls": 0,
+    "dequant_cpu_process_seconds": 0.0,
+    "by_qtype": {},
+    "forward_seconds": 0.0,
+    "forward_cpu_process_seconds": 0.0,
+    "by_forward_op": {},
 }
 
 
 def reset_trace_stats():
     for key in _gguf_trace_stats:
-        _gguf_trace_stats[key] = 0.0 if key.endswith("seconds") else 0
+        if key in ("by_qtype", "by_forward_op"):
+            _gguf_trace_stats[key] = {}
+        else:
+            _gguf_trace_stats[key] = 0.0 if key.endswith("seconds") else 0
 
 
 def consume_trace_stats():
     snapshot = dict(_gguf_trace_stats)
+    snapshot["by_qtype"] = dict(_gguf_trace_stats.get("by_qtype", {}))
+    snapshot["by_forward_op"] = dict(_gguf_trace_stats.get("by_forward_op", {}))
     reset_trace_stats()
     return snapshot
 
+
+def _qtype_name(tensor):
+    qtype = getattr(tensor, "tensor_type", None)
+    return getattr(qtype, "name", str(qtype))
+
+
+def _record_qtype_stats(qtype_name, *, source_device_type, quantized, wall_seconds, cpu_process_seconds, tensor):
+    by_qtype = _gguf_trace_stats.setdefault("by_qtype", {})
+    entry = by_qtype.setdefault(qtype_name, {
+        "calls": 0,
+        "quantized_calls": 0,
+        "wall_seconds": 0.0,
+        "cpu_process_seconds": 0.0,
+        "source_cpu_calls": 0,
+        "source_cuda_calls": 0,
+        "source_other_calls": 0,
+        "elements": 0,
+        "data_elements": 0,
+    })
+    entry["calls"] += 1
+    if quantized:
+        entry["quantized_calls"] += 1
+    entry["wall_seconds"] += wall_seconds
+    entry["cpu_process_seconds"] += cpu_process_seconds
+    if source_device_type == "cpu":
+        entry["source_cpu_calls"] += 1
+    elif source_device_type == "cuda":
+        entry["source_cuda_calls"] += 1
+    else:
+        entry["source_other_calls"] += 1
+    shape = getattr(tensor, "tensor_shape", getattr(tensor, "shape", ()))
+    try:
+        element_count = 1
+        for dim in shape:
+            element_count *= int(dim)
+        entry["elements"] += element_count
+    except Exception:
+        pass
+    data = getattr(tensor, "data", None)
+    try:
+        entry["data_elements"] += int(data.numel())
+    except Exception:
+        pass
+
+
+def _record_forward_stats(op_name, *, wall_seconds, cpu_process_seconds):
+    _gguf_trace_stats["forward_seconds"] += wall_seconds
+    _gguf_trace_stats["forward_cpu_process_seconds"] += cpu_process_seconds
+    by_op = _gguf_trace_stats.setdefault("by_forward_op", {})
+    entry = by_op.setdefault(op_name, {
+        "calls": 0,
+        "wall_seconds": 0.0,
+        "cpu_process_seconds": 0.0,
+    })
+    entry["calls"] += 1
+    entry["wall_seconds"] += wall_seconds
+    entry["cpu_process_seconds"] += cpu_process_seconds
 
 class GGMLTensor(torch.Tensor):
     """
@@ -207,6 +274,7 @@ class GGMLLayer(torch.nn.Module):
 
         trace_start = time.perf_counter()
         quantized = is_quantized(tensor)
+        qtype_name = _qtype_name(tensor)
         source_device_type = getattr(tensor.device, 'type', str(tensor.device))
         device_type = source_device_type
 
@@ -233,7 +301,9 @@ class GGMLLayer(torch.nn.Module):
 
         # dequantize tensor while patches load
         dequant_start = time.perf_counter()
+        dequant_cpu_start = time.process_time()
         weight = dequantize_tensor(tensor, dtype, self.dequant_dtype)
+        dequant_cpu_duration = time.process_time() - dequant_cpu_start
         dequant_duration = time.perf_counter() - dequant_start
 
         # prevent propagating custom tensor class
@@ -274,6 +344,8 @@ class GGMLLayer(torch.nn.Module):
         if patch_list:
             _gguf_trace_stats["patch_calls"] += 1
         _gguf_trace_stats["dequant_seconds"] += dequant_duration
+        _gguf_trace_stats["dequant_cpu_process_seconds"] += dequant_cpu_duration
+        _record_qtype_stats(qtype_name, source_device_type=source_device_type, quantized=quantized, wall_seconds=dequant_duration, cpu_process_seconds=dequant_cpu_duration, tensor=tensor)
         _gguf_trace_stats["patch_seconds"] += patch_duration
         _gguf_trace_stats["total_seconds"] += time.perf_counter() - trace_start
         return weight
@@ -327,12 +399,28 @@ class GGMLOps(comfy_ops.manual_cast):
 
         def forward_ggml_cast_weights(self, input):
             weight, bias = self.cast_bias_weight(input)
-            return torch.nn.functional.linear(input, weight, bias)
+            forward_start = time.perf_counter()
+            forward_cpu_start = time.process_time()
+            out = torch.nn.functional.linear(input, weight, bias)
+            _record_forward_stats(
+                "Linear",
+                wall_seconds=time.perf_counter() - forward_start,
+                cpu_process_seconds=time.process_time() - forward_cpu_start,
+            )
+            return out
 
     class Conv2d(GGMLLayer, comfy_ops.manual_cast.Conv2d):
         def forward_ggml_cast_weights(self, input):
             weight, bias = self.cast_bias_weight(input)
-            return self._conv_forward(input, weight, bias)
+            forward_start = time.perf_counter()
+            forward_cpu_start = time.process_time()
+            out = self._conv_forward(input, weight, bias)
+            _record_forward_stats(
+                "Conv2d",
+                wall_seconds=time.perf_counter() - forward_start,
+                cpu_process_seconds=time.process_time() - forward_cpu_start,
+            )
+            return out
 
     class Embedding(GGMLLayer, comfy_ops.manual_cast.Embedding):
         def forward_ggml_cast_weights(self, input, out_dtype=None):
@@ -340,21 +428,45 @@ class GGMLOps(comfy_ops.manual_cast):
             if self.weight.dtype == torch.float16 or self.weight.dtype == torch.bfloat16:
                 out_dtype = None
             weight, _bias = self.cast_bias_weight(self, device=input.device, dtype=out_dtype)
-            return torch.nn.functional.embedding(
+            forward_start = time.perf_counter()
+            forward_cpu_start = time.process_time()
+            out = torch.nn.functional.embedding(
                 input, weight, self.padding_idx, self.max_norm, self.norm_type, self.scale_grad_by_freq, self.sparse
             ).to(dtype=output_dtype)
+            _record_forward_stats(
+                "Embedding",
+                wall_seconds=time.perf_counter() - forward_start,
+                cpu_process_seconds=time.process_time() - forward_cpu_start,
+            )
+            return out
 
     class LayerNorm(GGMLLayer, comfy_ops.manual_cast.LayerNorm):
         def forward_ggml_cast_weights(self, input):
             if self.weight is None:
                 return super().forward_comfy_cast_weights(input)
             weight, bias = self.cast_bias_weight(input)
-            return torch.nn.functional.layer_norm(input, self.normalized_shape, weight, bias, self.eps)
+            forward_start = time.perf_counter()
+            forward_cpu_start = time.process_time()
+            out = torch.nn.functional.layer_norm(input, self.normalized_shape, weight, bias, self.eps)
+            _record_forward_stats(
+                "LayerNorm",
+                wall_seconds=time.perf_counter() - forward_start,
+                cpu_process_seconds=time.process_time() - forward_cpu_start,
+            )
+            return out
 
     class GroupNorm(GGMLLayer, comfy_ops.manual_cast.GroupNorm):
         def forward_ggml_cast_weights(self, input):
             weight, bias = self.cast_bias_weight(input)
-            return torch.nn.functional.group_norm(input, self.num_groups, weight, bias, self.eps)
+            forward_start = time.perf_counter()
+            forward_cpu_start = time.process_time()
+            out = torch.nn.functional.group_norm(input, self.num_groups, weight, bias, self.eps)
+            _record_forward_stats(
+                "GroupNorm",
+                wall_seconds=time.perf_counter() - forward_start,
+                cpu_process_seconds=time.process_time() - forward_cpu_start,
+            )
+            return out
 
 def move_patch_to_device(item, device):
     if isinstance(item, torch.Tensor):
@@ -365,3 +477,6 @@ def move_patch_to_device(item, device):
         return [move_patch_to_device(x, device) for x in item]
     else:
         return item
+
+
+

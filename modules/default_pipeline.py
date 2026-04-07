@@ -354,7 +354,7 @@ def get_candidate_vae(steps, denoise=1.0):
 
 @torch.no_grad()
 @torch.inference_mode()
-def process_diffusion(positive_cond, negative_cond, steps, width, height, image_seed, callback, sampler_name, scheduler_name, latent=None, denoise=1.0, tiled=False, cfg_scale=7.0, disable_preview=False, quality=None):
+def process_diffusion(positive_cond, negative_cond, steps, width, height, image_seed, callback, sampler_name, scheduler_name, latent=None, denoise=1.0, tiled=False, cfg_scale=7.0, disable_preview=False, quality=None, task_state=None):
     target_unet, target_vae, target_clip = final_unet, final_vae, final_clip
 
     if target_unet is None:
@@ -363,6 +363,7 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.DIFFUSION,
+        task=task_state,
         notes={
             'steps': steps,
             'sampler': sampler_name,
@@ -397,11 +398,12 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         )
 
     # Phase: Sampling -> Decoding
-    resources.cleanup_memory('sampling_to_decode', notes={'tiled': tiled}, target_phase=resources.MemoryPhase.DECODE)
+    resources.cleanup_memory('sampling_to_decode', notes={'tiled': tiled}, target_phase=resources.MemoryPhase.DECODE, task=task_state)
     print('[Nex-Memory] Phase: Sampling -> Decoding')
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.DECODE,
+        task=task_state,
         notes={
             'tiled': tiled,
             'latent_provided': latent is not None,

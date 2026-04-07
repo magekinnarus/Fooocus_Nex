@@ -1,3 +1,4 @@
+import time
 import torch
 from ldm_patched.ldm.modules.diffusionmodules.openaimodel import UNetModel, Timestep
 from ldm_patched.ldm.modules.encoders.noise_aug_modules import CLIPEmbeddingNoiseAugmentation
@@ -8,6 +9,22 @@ import ldm_patched.modules.ops
 from enum import Enum
 from . import utils
 
+_apply_model_trace_stats = {}
+def reset_apply_model_trace_stats():
+    _apply_model_trace_stats.clear()
+def consume_apply_model_trace_stats():
+    snapshot = dict(_apply_model_trace_stats)
+    reset_apply_model_trace_stats()
+    return snapshot
+def _record_apply_model_trace(name, *, wall_seconds, cpu_process_seconds):
+    entry = _apply_model_trace_stats.setdefault(name, {
+        "calls": 0,
+        "wall_seconds": 0.0,
+        "cpu_process_seconds": 0.0,
+    })
+    entry["calls"] += 1
+    entry["wall_seconds"] += wall_seconds
+    entry["cpu_process_seconds"] += cpu_process_seconds
 class ModelType(Enum):
     EPS = 1
     V_PREDICTION = 2
@@ -83,17 +100,16 @@ class BaseModel(torch.nn.Module):
         print("UNet ADM Dimension", self.adm_channels)
 
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
+        prep_start = time.perf_counter()
+        prep_cpu_start = time.process_time()
         sigma = t
         xc = self.model_sampling.calculate_input(sigma, x)
         if c_concat is not None:
             xc = torch.cat([xc] + [c_concat], dim=1)
-
         context = c_crossattn
         dtype = self.get_dtype()
-
         if self.manual_cast_dtype is not None:
             dtype = self.manual_cast_dtype
-
         xc = xc.to(dtype)
         t = self.model_sampling.timestep(t).float()
         context = context.to(dtype)
@@ -104,10 +120,36 @@ class BaseModel(torch.nn.Module):
                 if extra.dtype != torch.int and extra.dtype != torch.long:
                     extra = extra.to(dtype)
             extra_conds[o] = extra
-
-        model_output = self.diffusion_model(xc, t, context=context, control=control, transformer_options=transformer_options, **extra_conds).float()
-        return self.model_sampling.calculate_denoised(sigma, model_output, x)
-
+        _record_apply_model_trace(
+            "input_prep",
+            wall_seconds=time.perf_counter() - prep_start,
+            cpu_process_seconds=time.process_time() - prep_cpu_start,
+        )
+        diffusion_start = time.perf_counter()
+        diffusion_cpu_start = time.process_time()
+        model_output = self.diffusion_model(xc, t, context=context, control=control, transformer_options=transformer_options, **extra_conds)
+        _record_apply_model_trace(
+            "diffusion_model",
+            wall_seconds=time.perf_counter() - diffusion_start,
+            cpu_process_seconds=time.process_time() - diffusion_cpu_start,
+        )
+        float_start = time.perf_counter()
+        float_cpu_start = time.process_time()
+        model_output = model_output.float()
+        _record_apply_model_trace(
+            "output_float",
+            wall_seconds=time.perf_counter() - float_start,
+            cpu_process_seconds=time.process_time() - float_cpu_start,
+        )
+        denoised_start = time.perf_counter()
+        denoised_cpu_start = time.process_time()
+        result = self.model_sampling.calculate_denoised(sigma, model_output, x)
+        _record_apply_model_trace(
+            "calculate_denoised",
+            wall_seconds=time.perf_counter() - denoised_start,
+            cpu_process_seconds=time.process_time() - denoised_cpu_start,
+        )
+        return result
     def get_dtype(self):
         return self.diffusion_model.dtype
 

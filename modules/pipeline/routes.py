@@ -309,7 +309,7 @@ class PromptEncodingStage(PipelineStage):
             return PipelineStageResult(notes={'prompt_processing': 'skipped'})
 
         context.prompt_tasks = process_prompt(task_state, context.base_model_additional_loras, context.progressbar_callback)
-        resources.cleanup_memory('encoding_to_diffusion', notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.DIFFUSION)
+        resources.cleanup_memory('encoding_to_diffusion', notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.DIFFUSION, task=task_state)
         return PipelineStageResult(notes={'task_count': len(context.prompt_tasks)})
 
 
@@ -488,7 +488,7 @@ class DiffusionTaskStage(PipelineStage):
                     del task_dict['c']
                 if 'uc' in task_dict:
                     del task_dict['uc']
-                resources.cleanup_memory('task_image_complete', gc_collect=False, notes={'task_index': i}, target_phase=resources.MemoryPhase.DECODE)
+                resources.cleanup_memory('task_image_complete', gc_collect=False, notes={'task_index': i}, target_phase=resources.MemoryPhase.DECODE, task=task_state)
 
             if interrupted_action == 'skip':
                 continue
