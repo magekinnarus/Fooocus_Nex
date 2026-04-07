@@ -7,6 +7,8 @@ from modules.flags import SAMPLERS
 from modules.util import unquote, get_file_from_folder_list
 import modules.meta_parser
 
+OVERWRITE_DIMENSION_MAX = 2048
+
 def get_str(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
@@ -69,10 +71,14 @@ def get_resolution(key: str, fallback: str | None, source_dict: dict, results: l
             results.append(formatted)
             results.append(-1)
             results.append(-1)
-        else:
+        elif int(width) <= OVERWRITE_DIMENSION_MAX and int(height) <= OVERWRITE_DIMENSION_MAX:
             results.append(gr.update())
             results.append(int(width))
             results.append(int(height))
+        else:
+            results.append(gr.update())
+            results.append(-1)
+            results.append(-1)
     except:
         results.append(gr.update())
         results.append(gr.update())

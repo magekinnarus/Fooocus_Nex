@@ -18,6 +18,7 @@ import modules.gradio_hijack as grh
 import modules.style_sorter as style_sorter
 import modules.meta_parser
 import modules.ui_components.metadata_ui as metadata_ui
+from modules.ui_components.metadata_preview import format_metadata_preview
 import modules.ui_components.settings_panel as settings_panel
 import modules.ui_components.styles_panel as styles_panel
 import modules.ui_components.models_panel as models_panel
@@ -309,21 +310,7 @@ def outpaint_selection_change(choices):
 
 def trigger_metadata_preview(file):
     parameters, metadata_scheme = modules.meta_parser.read_info_from_image(file)
-
-    lines = []
-    if parameters is not None:
-        if isinstance(parameters, dict):
-            lines.append(json.dumps(parameters, indent=2, ensure_ascii=False))
-        else:
-            lines.append(str(parameters))
-
-    if isinstance(metadata_scheme, flags.MetadataScheme):
-        lines.append(f"metadata_scheme: {metadata_scheme.value}")
-
-    if not lines:
-        return "No metadata found."
-
-    return "\n".join(lines)
+    return format_metadata_preview(parameters, metadata_scheme)
 
 def random_checked(r):
     return gr.update(visible=not r)
@@ -748,6 +735,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     base_model.change(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
     shared.gradio_root.load(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False)
     aspect_ratios_selection.change(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
+    aspect_ratios_selection.change(lambda _: (-1, -1), inputs=aspect_ratios_selection, outputs=[overwrite_width, overwrite_height], queue=False, show_progress=False)
     shared.gradio_root.load(lambda x: None, inputs=aspect_ratios_selection, queue=False, show_progress=False, js='(x)=>{refresh_aspect_ratios_label(x);}')
 
     seed_random.change(random_checked, inputs=[seed_random], outputs=[image_seed],
