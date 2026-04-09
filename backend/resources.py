@@ -111,6 +111,9 @@ def _describe_model_for_logs(model_patcher):
     return f"{role}:{patcher_name}/{model_name}{gguf_suffix}"
 
 
+def describe_model_patcher(model_patcher):
+    return _describe_model_for_logs(model_patcher)
+
 def _residency_profile_name():
     profile = memory_governor.environment_profile()
     return getattr(profile, 'name', environment_profiles.PROFILE_CUSTOM)
@@ -848,6 +851,60 @@ def cleanup_models():
     for i in to_delete:
         del current_loaded_models[i]
 
+
+def loaded_model_state():
+    cleanup_models_gc()
+    state = []
+
+    for loaded_model in current_loaded_models:
+        model_patcher = loaded_model.model
+        if model_patcher is None:
+            continue
+
+        model_obj = getattr(model_patcher, "model", None)
+        role, patcher_name, model_name, gguf_suffix = _classify_model_role(model_patcher)
+
+        try:
+            current_device = model_patcher.current_loaded_device()
+        except Exception:
+            current_device = getattr(model_obj, "device", None)
+
+        try:
+            loaded_memory_mb = _memory_mb(loaded_model.model_loaded_memory())
+        except Exception:
+            loaded_memory_mb = None
+
+        try:
+            total_memory_mb = _memory_mb(loaded_model.model_memory())
+        except Exception:
+            total_memory_mb = None
+
+        lowvram_patch_counter = None
+        if hasattr(model_patcher, "lowvram_patch_counter"):
+            try:
+                lowvram_patch_counter = model_patcher.lowvram_patch_counter()
+            except Exception:
+                lowvram_patch_counter = None
+
+        state.append({
+            "label": _describe_model_for_logs(model_patcher),
+            "role": role,
+            "patcher_class": patcher_name,
+            "model_class": model_name,
+            "gguf": bool(gguf_suffix),
+            "load_device": str(getattr(model_patcher, "load_device", None)),
+            "offload_device": str(getattr(model_patcher, "offload_device", None)),
+            "current_loaded_device": str(current_device),
+            "currently_used": bool(getattr(loaded_model, "currently_used", False)),
+            "loaded_memory_mb": loaded_memory_mb,
+            "total_memory_mb": total_memory_mb,
+            "model_lowvram": bool(getattr(model_obj, "model_lowvram", False)),
+            "lowvram_patch_counter": lowvram_patch_counter,
+            "current_weight_patches_uuid": str(getattr(model_obj, "current_weight_patches_uuid", None)),
+        })
+
+    return state
+
 def get_free_memory(dev=None, torch_free_too=False):
     global directml_enabled
     if dev is None:
@@ -1228,3 +1285,5 @@ def throw_exception_if_processing_interrupted():
         if interrupt_processing:
             interrupt_processing = False
             raise InterruptProcessingException()
+
+

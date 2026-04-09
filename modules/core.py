@@ -376,22 +376,17 @@ def generate_empty_latent(width=1024, height=1024, batch_size=1):
 @torch.inference_mode()
 def decode_vae(vae, latent_image, tiled=False):
     overall_start = time.perf_counter()
-    load_start = time.perf_counter()
-    resources.load_models_gpu([vae.patcher])
-    load_duration = time.perf_counter() - load_start
     decode_start = time.perf_counter()
     try:
         return vae.decode(latent_image["samples"], tiled=tiled)
     finally:
+        total_duration = time.perf_counter() - overall_start
         decode_duration = time.perf_counter() - decode_start
-        resources.eject_model(vae.patcher)
         perf_message = (
-            f"[Nex-Perf] vae decode tiled={tiled} load={load_duration:.3f}s "
-            f"decode={decode_duration:.3f}s total={time.perf_counter() - overall_start:.3f}s"
+            f"[Nex-Perf] vae decode tiled={tiled} load=compat_wrapper decode={decode_duration:.3f}s total={total_duration:.3f}s"
         )
         print(perf_message)
         logging.info(perf_message)
-
 
 @torch.inference_mode()
 def encode_vae(vae, pixels):

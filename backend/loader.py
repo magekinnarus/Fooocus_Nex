@@ -65,8 +65,8 @@ class CLIP:
         self.cond_stage_model = cond_stage_model
         self.tokenizer = tokenizer
         self.patcher = patching.NexModelPatcher(
-            self.cond_stage_model, 
-            load_device=load_device, 
+            self.cond_stage_model,
+            load_device=load_device,
             offload_device=offload_device
         )
         self.layer_idx = None
@@ -87,27 +87,31 @@ class CLIP:
     def tokenize(self, text, return_word_ids=False):
         return self.tokenizer.tokenize_with_weights(text, return_word_ids)
 
-    def encode_from_tokens(self, tokens, return_pooled=False):
+    def _apply_clip_layer_selection(self):
         if self.layer_idx is not None:
             self.cond_stage_model.clip_layer(self.layer_idx)
         else:
             self.cond_stage_model.reset_clip_layer()
-            
-        load_device = self.patcher.load_device
-        offload_device = self.patcher.offload_device
-        
-        if load_device != offload_device:
-            self.patcher.model.to(load_device)
-            
-        try:
-            cond, pooled = self.cond_stage_model.encode_token_weights(tokens)
-        finally:
-            if load_device != offload_device:
-                self.patcher.model.to(offload_device)
-                
+
+    def encode_from_tokens_resident(self, tokens, return_pooled=False):
+        self._apply_clip_layer_selection()
+        cond, pooled = self.cond_stage_model.encode_token_weights(tokens)
         if return_pooled:
             return cond, pooled
         return cond
+
+    def encode_from_tokens(self, tokens, return_pooled=False):
+        load_device = self.patcher.load_device
+        offload_device = self.patcher.offload_device
+
+        if load_device != offload_device:
+            self.patcher.model.to(load_device)
+
+        try:
+            return self.encode_from_tokens_resident(tokens, return_pooled=return_pooled)
+        finally:
+            if load_device != offload_device:
+                self.patcher.model.to(offload_device)
 
 class VAE:
     """Isolated VAE container to avoid modules.sd baggage."""
