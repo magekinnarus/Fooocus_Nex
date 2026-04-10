@@ -6,8 +6,7 @@ Remember to split the paths with "\\" rather than "\", and there is no "," befor
 
 {
     "path_checkpoints": [
-        "D:\\AI\\Imagine\\models\\checkpoints",
-        "H:\\webui_forge_cu121_torch21\\webui\\models\\Stable-diffusion\\SDXL_Type\\test",
+        "D:\\AI\\Fooocus_Nex\\models\\checkpoints",
         "D:\\AI\\Imagine\\models\\unet"
     ],
     "path_loras": [

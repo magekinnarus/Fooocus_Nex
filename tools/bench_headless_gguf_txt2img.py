@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--route",
         required=True,
-        choices=["headless_intermediate", "headless_clean", "backend_explicit"],
+        choices=["headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf"],
         help="Residency path to benchmark.",
     )
     parser.add_argument(

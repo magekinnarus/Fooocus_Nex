@@ -14,6 +14,7 @@ import torch
 from PIL import Image
 
 from backend import conditioning, decode as backend_decode, inference_lifecycle, loader, precision, resources, sampling
+from backend.gguf.direct_sdxl_runtime import DirectSDXLGGUFRuntime, DirectSDXLGGUFRunConfig
 from ldm_patched.modules import latent_formats
 from ldm_patched.modules import model_base as apply_model_trace
 
@@ -287,7 +288,7 @@ class HeadlessGGUFRunner:
         force_high_vram: bool = False,
         explicit_unet_budget_mb: Optional[int] = None,
     ) -> None:
-        if route_label not in {"headless_intermediate", "headless_clean", "backend_explicit"}:
+        if route_label not in {"headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf"}:
             raise ValueError(f"Unsupported route label: {route_label}")
 
         self.scenario = scenario
@@ -306,26 +307,56 @@ class HeadlessGGUFRunner:
         self.unet = None
         self.clip = None
         self.vae = None
+        self.direct_runtime = None
 
     def load_models(self) -> float:
         if self._models_loaded:
             return self._cold_model_load_cpu
 
         start = time.perf_counter()
-        self.unet = loader.load_sdxl_unet(self.scenario.unet_path, dtype=torch.float16)
-        self.clip = loader.load_sdxl_clip(
-            self.scenario.clip_l_path,
-            self.scenario.clip_g_path,
-            dtype=torch.float16,
-        )
-        self.clip.clip_layer(self.scenario.clip_layer)
-        self.vae = loader.load_vae(
-            self.scenario.vae_path,
-            dtype=torch.float32,
-            latent_format=latent_formats.SDXL(),
-        )
-        if self.scenario.quality.needs_quality_patch():
-            loader.patch_unet_for_quality(self.unet, self.scenario.quality.as_sampling_dict())
+        if self.route_label == "direct_sdxl_gguf":
+            self.direct_runtime = DirectSDXLGGUFRuntime(
+                DirectSDXLGGUFRunConfig(
+                    unet_path=self.scenario.unet_path,
+                    clip_l_path=self.scenario.clip_l_path,
+                    clip_g_path=self.scenario.clip_g_path,
+                    vae_path=self.scenario.vae_path,
+                    prompt=self.scenario.prompt,
+                    negative_prompt=self.scenario.negative_prompt,
+                    width=self.scenario.width,
+                    height=self.scenario.height,
+                    steps=self.scenario.steps,
+                    cfg=self.scenario.cfg,
+                    sampler=self.scenario.sampler,
+                    scheduler=self.scenario.scheduler,
+                    seed=self.scenario.seed,
+                    clip_layer=self.scenario.clip_layer,
+                    denoise=self.scenario.denoise,
+                    batch_size=self.scenario.batch_size,
+                    quality=self.scenario.quality.as_sampling_dict(),
+                ),
+                device=self.device,
+                unet_budget_mb=self.explicit_unet_budget_mb,
+            )
+            self.direct_runtime.load_components()
+            self.unet = self.direct_runtime.unet
+            self.clip = self.direct_runtime.clip
+            self.vae = self.direct_runtime.vae
+        else:
+            self.unet = loader.load_sdxl_unet(self.scenario.unet_path, dtype=torch.float16)
+            self.clip = loader.load_sdxl_clip(
+                self.scenario.clip_l_path,
+                self.scenario.clip_g_path,
+                dtype=torch.float16,
+            )
+            self.clip.clip_layer(self.scenario.clip_layer)
+            self.vae = loader.load_vae(
+                self.scenario.vae_path,
+                dtype=torch.float32,
+                latent_format=latent_formats.SDXL(),
+            )
+            if self.scenario.quality.needs_quality_patch():
+                loader.patch_unet_for_quality(self.unet, self.scenario.quality.as_sampling_dict())
 
         self._cold_model_load_cpu = time.perf_counter() - start
         self._models_loaded = True
@@ -711,10 +742,15 @@ class HeadlessGGUFRunner:
             return (notes + " " if notes else "") + "Uses resources.load_models_gpu() for CLIP/UNet/VAE residency."
         if self.route_label == "backend_explicit":
             return (notes + " " if notes else "") + "Uses exposed backend lifecycle seams for CLIP attach/encode, sampler cond prep/denoise, and VAE decode."
+        if self.route_label == "direct_sdxl_gguf":
+            return (notes + " " if notes else "") + "Uses backend.gguf.direct_sdxl_runtime direct GGUF runtime path."
         return (notes + " " if notes else "") + "Uses direct patch_model()/decode path without resources.load_models_gpu()."
 
     def run_once(self, run_label: str, output_dir: Path) -> RunMetrics:
         self.load_models()
+
+        if self.route_label == "direct_sdxl_gguf":
+            return self._run_direct_runtime_once(run_label, output_dir)
 
         total_start = time.perf_counter()
         start_state = self._capture_run_boundary_state("run_start", run_label)
@@ -823,13 +859,100 @@ class HeadlessGGUFRunner:
             notes=self._route_notes(),
         )
 
+    def _run_direct_runtime_once(self, run_label: str, output_dir: Path) -> RunMetrics:
+        assert self.direct_runtime is not None
+
+        total_start = time.perf_counter()
+        start_state = self._capture_run_boundary_state("run_start", run_label)
+        clip_cache_before = self._clip_cache_entry_count()
+        gguf_mmap_released_before = self._gguf_mmap_released()
+
+        direct_result = self.direct_runtime.run()
+        self.unet = self.direct_runtime.unet
+        self.clip = self.direct_runtime.clip
+        self.vae = self.direct_runtime.vae
+        benchmark = direct_result.benchmark
+
+        image_name = f"{self.scenario.name}_{self.route_label}_{run_label}.png"
+        image_path = output_dir / image_name
+        _ensure_parent(image_path)
+        save_start = time.perf_counter()
+        _png_save(direct_result.images[0].cpu(), image_path)
+        image_save = time.perf_counter() - save_start
+
+        end_state = self._capture_run_boundary_state("run_end", run_label)
+        clip_cache_after = self._clip_cache_entry_count()
+        gguf_mmap_released_after = self._gguf_mmap_released()
+        total_wall = time.perf_counter() - total_start
+
+        clip_residency_attach = float(benchmark.get("clip_residency_attach", 0.0))
+        clip_residency_offload = float(benchmark.get("clip_residency_offload", 0.0))
+        clip_encode = float(benchmark.get("clip_encode", 0.0))
+        adm_build = float(benchmark.get("adm_build", 0.0))
+        sampler_model_attach = float(benchmark.get("sampler_model_attach", 0.0))
+        cond_prepare_explicit = float(benchmark.get("cond_prepare_explicit", 0.0))
+        vae_attach = float(benchmark.get("vae_attach", 0.0))
+        vae_decode = float(benchmark.get("vae_decode", 0.0))
+
+        return RunMetrics(
+            scenario=self.scenario.name,
+            route_label=self.route_label,
+            run_label=run_label,
+            prompt_hash=_hash_prompt(self.scenario.prompt, self.scenario.negative_prompt),
+            quant_model=Path(self.scenario.unet_path).name,
+            resolution=f"{self.scenario.width}x{self.scenario.height}",
+            steps=self.scenario.steps,
+            cfg=self.scenario.cfg,
+            sampler=self.scenario.sampler,
+            scheduler=self.scenario.scheduler,
+            seed=self.scenario.seed,
+            batch_size=self.scenario.batch_size,
+            process_start=self._process_started,
+            cold_model_load_cpu=self._cold_model_load_cpu if run_label == "cold" else 0.0,
+            clip_residency_attach=clip_residency_attach,
+            clip_residency_offload=clip_residency_offload,
+            clip_gpu_load=clip_residency_attach,
+            clip_encode=clip_encode,
+            adm_build=adm_build,
+            sampler_model_attach=sampler_model_attach,
+            unet_gpu_load_or_patch=sampler_model_attach,
+            cond_prepare_explicit=cond_prepare_explicit,
+            cond_prep=cond_prepare_explicit,
+            denoise_wall=float(benchmark.get("denoise_wall", 0.0)),
+            denoise_s_per_it=float(benchmark.get("denoise_s_per_it", 0.0)),
+            denoise_cpu_proc=float(benchmark.get("denoise_cpu_proc", 0.0)),
+            gguf_dequant=float(benchmark.get("gguf_dequant", 0.0)),
+            gguf_dequant_cpu_proc=float(benchmark.get("gguf_dequant_cpu_proc", 0.0)),
+            vae_attach=vae_attach,
+            vae_gpu_load=vae_attach,
+            vae_decode=vae_decode,
+            cleanup_reset=0.0,
+            image_save=image_save,
+            total_wall=total_wall,
+            image_path=str(image_path),
+            warm_state_annotation=self._build_warm_state_annotation(
+                run_label,
+                start_state,
+                end_state,
+                clip_cache_before=clip_cache_before,
+                clip_cache_after=clip_cache_after,
+                cleanup_result=None,
+                gguf_mmap_released_before=gguf_mmap_released_before,
+                gguf_mmap_released_after=gguf_mmap_released_after,
+            ),
+            notes=self._route_notes(),
+        )
+
     def close(self) -> None:
-        if self.unet is not None:
-            self.unet.detach()
-        if self.vae is not None:
-            self.vae.patcher.detach()
-        if self.clip is not None:
-            self.clip.patcher.detach()
+        if self.direct_runtime is not None:
+            self.direct_runtime.close()
+        else:
+            if self.unet is not None:
+                self.unet.detach()
+            if self.vae is not None:
+                self.vae.patcher.detach()
+            if self.clip is not None:
+                self.clip.patcher.detach()
         resources.soft_empty_cache(force=True)
         gc.collect()
 
