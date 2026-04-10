@@ -1,12 +1,24 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import math
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import torch
 
-from backend import cond_utils, conditioning, decode as backend_decode, loader, precision, resources, sampling
+from backend import (
+    anisotropic,
+    cond_utils,
+    conditioning,
+    k_diffusion,
+    loader,
+    precision,
+    resources,
+    sampling,
+    utils as backend_utils,
+)
 from ldm_patched.modules import latent_formats
 
 
@@ -247,38 +259,45 @@ class DirectSDXLGGUFRuntime:
             },
         )
 
-    def _prepare_cfg_guider(self, prepared_inputs: DirectSDXLGGUFPreparedInputs) -> sampling.CFGGuider:
-        self.load_components()
-        cfg_guider = sampling.CFGGuider(self.unet)
-        cfg_guider.set_conds(prepared_inputs.positive, prepared_inputs.negative)
-        cfg_guider.set_cfg(self.config.cfg, cfg_pp="_cfg_pp" in self.config.sampler)
-        cfg_guider.set_quality(self.config.quality)
-        cfg_guider.ensure_inner_model(self.unet.model)
-        cfg_guider.clone_original_conds()
+    def _convert_sampler_cond(self, cond: Any) -> list[Dict[str, Any]]:
+        out = []
+        if isinstance(cond, list) and len(cond) > 0 and isinstance(cond[0], dict):
+            for entry in cond:
+                converted = entry.copy()
+                converted["uuid"] = converted.get("uuid", uuid.uuid4())
+                out.append(converted)
+            return out
 
+        for cross_attn, payload in cond:
+            converted = payload.copy()
+            if cross_attn is not None:
+                converted["cross_attn"] = cross_attn
+            converted["model_conds"] = converted.get("model_conds", {})
+            converted["uuid"] = uuid.uuid4()
+            out.append(converted)
+        return out
+
+    def _prepare_direct_conds(
+        self,
+        prepared_inputs: DirectSDXLGGUFPreparedInputs,
+    ) -> tuple[Dict[str, Any], float]:
+        conds = {
+            "positive": self._convert_sampler_cond(prepared_inputs.positive),
+            "negative": self._convert_sampler_cond(prepared_inputs.negative),
+        }
         cond_start = time.perf_counter()
-        cfg_guider.conds = cond_utils.process_conds(
+        processed = cond_utils.process_conds(
             self.unet.model,
             prepared_inputs.noise,
-            cfg_guider.conds,
+            conds,
             self.device,
             latent_image=prepared_inputs.latent,
             denoise_mask=None,
             seed=self.config.seed,
         )
-        cfg_guider.cond_prep_duration = time.perf_counter() - cond_start
-        cfg_guider.prepared = True
-        return cfg_guider
+        return processed, time.perf_counter() - cond_start
 
-    def denoise_prepared_inputs(
-        self,
-        prepared_inputs: DirectSDXLGGUFPreparedInputs,
-        *,
-        callback: Any = None,
-        disable_pbar: bool = True,
-    ) -> DirectSDXLGGUFDenoiseResult:
-        self.load_components()
-
+    def _calculate_sigmas(self) -> torch.Tensor:
         sampler_instance = sampling.KSampler(
             self.unet,
             self.config.steps,
@@ -288,43 +307,298 @@ class DirectSDXLGGUFRuntime:
             self.config.denoise,
             model_options={"quality": self.config.quality},
         )
-        guider = self._prepare_cfg_guider(prepared_inputs)
-        sampler_kernel = sampling.ksampler(self.config.sampler)
+        return sampler_instance.sigmas
+
+    def _resolve_sampler_function(self) -> Callable[..., torch.Tensor]:
+        sampler_name = self.config.sampler
+        if sampler_name == "dpm_fast":
+            def dpm_fast_function(model, noise, sigmas, extra_args, callback, disable):
+                if len(sigmas) <= 1:
+                    return noise
+                sigma_min = sigmas[-1] if sigmas[-1] > 0 else sigmas[-2]
+                return k_diffusion.sample_dpm_fast(
+                    model,
+                    noise,
+                    sigma_min,
+                    sigmas[0],
+                    len(sigmas) - 1,
+                    extra_args=extra_args,
+                    callback=callback,
+                    disable=disable,
+                )
+
+            return dpm_fast_function
+
+        if sampler_name == "dpm_adaptive":
+            def dpm_adaptive_function(model, noise, sigmas, extra_args, callback, disable):
+                if len(sigmas) <= 1:
+                    return noise
+                sigma_min = sigmas[-1] if sigmas[-1] > 0 else sigmas[-2]
+                return k_diffusion.sample_dpm_adaptive(
+                    model,
+                    noise,
+                    sigma_min,
+                    sigmas[0],
+                    extra_args=extra_args,
+                    callback=callback,
+                    disable=disable,
+                )
+
+            return dpm_adaptive_function
+
+        func_name = f"sample_{sampler_name.replace('_cfg_pp', '')}"
+        sampler_function = getattr(k_diffusion, func_name, None)
+        if sampler_function is None:
+            raise ValueError(f"Sampler {sampler_name} not implemented in k_diffusion as {func_name}")
+        return sampler_function
+
+    def _begin_gguf_trace_capture(self) -> Any:
+        try:
+            from backend.gguf import ops as gguf_ops
+        except Exception:
+            return None
+
+        gguf_ops.reset_trace_stats()
+        return gguf_ops
+
+    def _consume_gguf_trace_stats(self, gguf_ops: Any) -> Dict[str, Any]:
+        if gguf_ops is None:
+            return {}
+        try:
+            return dict(gguf_ops.consume_trace_stats())
+        except Exception:
+            return {}
+
+    def _calc_fullframe_cond_batch(
+        self,
+        conds: list[Optional[list[Dict[str, Any]]]],
+        x_in: torch.Tensor,
+        timestep: torch.Tensor,
+    ) -> list[torch.Tensor]:
+        out_conds = [torch.zeros_like(x_in) for _ in conds]
+        out_counts = [torch.ones_like(x_in) * 1e-37 for _ in conds]
+        to_run = []
+
+        for cond_index, cond in enumerate(conds):
+            if cond is None:
+                continue
+            for cond_entry in cond:
+                prepared = cond_utils.get_area_and_mult(cond_entry, x_in, timestep)
+                if prepared is None:
+                    continue
+                if prepared.area is not None or prepared.input_x.shape != x_in.shape:
+                    raise ValueError("Direct SDXL GGUF denoise only supports full-frame txt2img conditions.")
+                to_run.append((prepared, cond_index))
+
+        while len(to_run) > 0:
+            first = to_run[0]
+            to_batch = []
+            for index in range(len(to_run)):
+                if cond_utils.can_concat_cond(to_run[index][0], first[0]):
+                    to_batch.append(index)
+
+            batch_items = [to_run[index] for index in to_batch]
+            for index in sorted(to_batch, reverse=True):
+                to_run.pop(index)
+
+            batch_input_x = [prepared.input_x for prepared, _ in batch_items]
+            batch_mult = [prepared.mult for prepared, _ in batch_items]
+            batch_conditioning = [prepared.conditioning for prepared, _ in batch_items]
+            batch_cond_indices = [cond_index for _, cond_index in batch_items]
+            input_x = torch.cat(batch_input_x)
+            conditioning_batch = cond_utils.cond_cat(batch_conditioning)
+            timestep_batch = torch.cat([timestep] * len(batch_cond_indices))
+            outputs = self.unet.model.apply_model(input_x, timestep_batch, **conditioning_batch).chunk(len(batch_cond_indices))
+
+            for output, cond_index, mult in zip(outputs, batch_cond_indices, batch_mult):
+                out_conds[cond_index] += output * mult
+                out_counts[cond_index] += mult
+
+        for index in range(len(out_conds)):
+            out_conds[index] /= out_counts[index]
+        return out_conds
+
+    def _apply_direct_cfg(
+        self,
+        x: torch.Tensor,
+        timestep: torch.Tensor,
+        cond_pred: torch.Tensor,
+        uncond_pred: torch.Tensor,
+    ) -> torch.Tensor:
+        model_sampling = self.unet.model.model_sampling
+        t = model_sampling.timestep(timestep).float()
+        diffusion_progress = max(0.0, min(1.0, 1.0 - float(t.reshape(-1)[0].item()) / 999.0))
+
+        sharpness = float(self.config.quality.get("sharpness", 0.0))
+        if sharpness > 0.0:
+            alpha = 0.001 * sharpness * diffusion_progress
+            if alpha >= 0.01:
+                positive_eps = x - cond_pred
+                degraded_eps = anisotropic.adaptive_anisotropic_filter(x=positive_eps, g=cond_pred)
+                positive_eps_weighted = degraded_eps * alpha + positive_eps * (1.0 - alpha)
+                cond_pred = x - positive_eps_weighted
+
+        adaptive_cfg = float(self.config.quality.get("adaptive_cfg", 0.0))
+        if adaptive_cfg > 0.0 and self.config.cfg > adaptive_cfg:
+            cond_eps = x - cond_pred
+            uncond_eps = x - uncond_pred
+            real_eps = uncond_eps + self.config.cfg * (cond_eps - uncond_eps)
+            mimic_eps = uncond_eps + adaptive_cfg * (cond_eps - uncond_eps)
+            final_eps = real_eps * diffusion_progress + mimic_eps * (1.0 - diffusion_progress)
+            return x - final_eps
+
+        if "_cfg_pp" in self.config.sampler:
+            return cond_pred + (self.config.cfg - 1.0) * (cond_pred - uncond_pred)
+        return uncond_pred + (cond_pred - uncond_pred) * self.config.cfg
+
+    def _build_direct_model_callable(
+        self,
+        processed_conds: Dict[str, Any],
+    ) -> Callable[..., torch.Tensor]:
+        model_options = getattr(self.unet, "model_options", {}) or {}
+        disable_cfg1_optimization = bool(model_options.get("disable_cfg1_optimization", False))
+
+        def model_fn(x: torch.Tensor, sigma: torch.Tensor, **_: Any) -> torch.Tensor:
+            negative_conds = processed_conds.get("negative")
+            if math.isclose(self.config.cfg, 1.0) and not disable_cfg1_optimization:
+                negative_conds = None
+            cond_pred, uncond_pred = self._calc_fullframe_cond_batch(
+                [processed_conds.get("positive"), negative_conds],
+                x,
+                sigma,
+            )
+            return self._apply_direct_cfg(x, sigma, cond_pred, uncond_pred)
+
+        return model_fn
+
+    def _direct_denoise(
+        self,
+        prepared_inputs: DirectSDXLGGUFPreparedInputs,
+        *,
+        callback: Any = None,
+        disable_pbar: bool = True,
+    ) -> DirectSDXLGGUFDenoiseResult:
+        self.load_components()
+        processed_conds, cond_prepare_duration = self._prepare_direct_conds(prepared_inputs)
+        sigmas = self._calculate_sigmas()
+        if sigmas.shape[-1] == 0:
+            return DirectSDXLGGUFDenoiseResult(
+                samples=prepared_inputs.latent,
+                cond_prepare_duration=cond_prepare_duration,
+                sampler_model_attach=0.0,
+                denoise_wall=0.0,
+                denoise_cpu_proc=0.0,
+                gguf_trace_stats={},
+            )
+
+        sampler_function = self._resolve_sampler_function()
 
         attach_start = time.perf_counter()
         self.attach_unet_direct()
         sampler_model_attach = time.perf_counter() - attach_start
 
+        gguf_ops = self._begin_gguf_trace_capture()
         denoise_start = time.perf_counter()
         denoise_cpu_start = time.process_time()
+        gguf_trace_stats = {}
         try:
             with torch.inference_mode(), precision.autocast_context(self.device):
-                samples = sampling.sample_prepared_sdxl(
-                    guider,
+                model_sampling = self.unet.model.model_sampling
+                max_sigma = float(model_sampling.sigma_max)
+                sigma = float(sigmas[0])
+                max_denoise = math.isclose(max_sigma, sigma, rel_tol=1e-05) or sigma > max_sigma
+                scaled_noise = model_sampling.noise_scaling(
+                    sigmas[0],
                     prepared_inputs.noise,
-                    sampler_instance.sigmas,
-                    sampler=sampler_kernel,
-                    latent_image=prepared_inputs.latent,
-                    denoise_mask=None,
-                    callback=callback,
-                    disable_pbar=disable_pbar,
-                    seed=self.config.seed,
-                    attach_model=False,
+                    prepared_inputs.latent,
+                    max_denoise,
                 )
-        finally:
-            self.detach_unet_direct()
 
-        denoise_wall = time.perf_counter() - denoise_start
-        denoise_cpu_proc = time.process_time() - denoise_cpu_start
+                total_steps = len(sigmas) - 1
+                k_callback = None
+                if callback is not None:
+                    k_callback = lambda x: callback(x["i"], x["denoised"], x["x"], total_steps, x.get("denoised", None))
+
+                samples = sampler_function(
+                    self._build_direct_model_callable(processed_conds),
+                    scaled_noise,
+                    sigmas,
+                    extra_args={"denoise_mask": None},
+                    callback=k_callback,
+                    disable=disable_pbar,
+                )
+                samples = model_sampling.inverse_noise_scaling(sigmas[-1], samples)
+        finally:
+            denoise_wall = time.perf_counter() - denoise_start
+            denoise_cpu_proc = time.process_time() - denoise_cpu_start
+            gguf_trace_stats = self._consume_gguf_trace_stats(gguf_ops)
+            self.detach_unet_direct()
 
         return DirectSDXLGGUFDenoiseResult(
             samples=samples,
-            cond_prepare_duration=guider.cond_prep_duration,
+            cond_prepare_duration=cond_prepare_duration,
             sampler_model_attach=sampler_model_attach,
             denoise_wall=denoise_wall,
             denoise_cpu_proc=denoise_cpu_proc,
-            gguf_trace_stats=dict(getattr(guider, "last_gguf_trace_stats", {}) or {}),
+            gguf_trace_stats=gguf_trace_stats,
         )
+
+    def denoise_prepared_inputs(
+        self,
+        prepared_inputs: DirectSDXLGGUFPreparedInputs,
+        *,
+        callback: Any = None,
+        disable_pbar: bool = True,
+    ) -> DirectSDXLGGUFDenoiseResult:
+        return self._direct_denoise(
+            prepared_inputs,
+            callback=callback,
+            disable_pbar=disable_pbar,
+        )
+
+    def _normalize_decoded_output(self, image: torch.Tensor) -> torch.Tensor:
+        return torch.clamp((image + 1.0) / 2.0, min=0.0, max=1.0)
+
+    def _decode_tiled_local(
+        self,
+        scaled_latent: torch.Tensor,
+        *,
+        tile_x: int = 64,
+        tile_y: int = 64,
+        overlap: int = 16,
+    ) -> torch.Tensor:
+        decode_dtype = next(self.vae.first_stage_model.parameters()).dtype
+        decode_fn = lambda a: self.vae.first_stage_model.decode(a.to(device=self.device, dtype=decode_dtype)).float()
+
+        p3 = backend_utils.tiled_scale(scaled_latent, decode_fn, tile_x, tile_y, overlap, upscale_amount=8, output_device='cpu')
+        p1 = backend_utils.tiled_scale(scaled_latent, decode_fn, tile_x // 2, tile_y * 2, overlap, upscale_amount=8, output_device='cpu')
+        p2 = backend_utils.tiled_scale(scaled_latent, decode_fn, tile_x * 2, tile_y // 2, overlap, upscale_amount=8, output_device='cpu')
+
+        return self._normalize_decoded_output((p1 + p2 + p3) / 3.0).movedim(1, -1)
+
+    def _decode_direct_or_tiled(self, latent: torch.Tensor) -> torch.Tensor:
+        scaled_latent = self.vae.latent_format.process_out(latent)
+        decode_dtype = next(self.vae.first_stage_model.parameters()).dtype
+
+        try:
+            direct_latent = scaled_latent.to(device=self.device, dtype=decode_dtype)
+            pixels = self.vae.first_stage_model.decode(direct_latent).float()
+            return self._normalize_decoded_output(pixels).movedim(1, -1).cpu()
+        except (resources.OOM_EXCEPTION, torch.OutOfMemoryError):
+            resources.soft_empty_cache(force=True)
+
+        tile_attempts = [(64, 64), (32, 32), (16, 16)]
+        last_error = None
+        for tile_x, tile_y in tile_attempts:
+            try:
+                return self._decode_tiled_local(scaled_latent, tile_x=tile_x, tile_y=tile_y)
+            except (resources.OOM_EXCEPTION, torch.OutOfMemoryError) as exc:
+                last_error = exc
+                resources.soft_empty_cache(force=True)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError('Direct VAE decode failed without producing an output.')
 
     def decode_latent(self, latent: torch.Tensor) -> tuple[torch.Tensor, float, float]:
         attach_start = time.perf_counter()
@@ -334,7 +608,7 @@ class DirectSDXLGGUFRuntime:
         decode_start = time.perf_counter()
         try:
             with torch.inference_mode():
-                images = backend_decode.decode_preloaded_vae(self.vae, latent)
+                images = self._decode_direct_or_tiled(latent)
         finally:
             self.detach_vae_direct()
         vae_decode = time.perf_counter() - decode_start
@@ -378,3 +652,7 @@ class DirectSDXLGGUFRuntime:
         self.detach_vae_direct()
         self.detach_clip_direct()
         resources.soft_empty_cache(force=True)
+
+
+
+
