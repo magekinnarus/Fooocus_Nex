@@ -47,11 +47,11 @@ write_environment_report = RUNNER_API["write_environment_report"]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark the W01 headless GGUF txt2img runner.")
+    parser = argparse.ArgumentParser(description="Benchmark the W03 headless GGUF txt2img runner.")
     parser.add_argument(
         "--route",
         required=True,
-        choices=["headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf"],
+        choices=["headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf", "glass_sdxl_gguf"],
         help="Residency path to benchmark.",
     )
     parser.add_argument(
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         help="Named benchmark scenario.",
     )
     parser.add_argument("--runs", type=int, default=3, help="Total runs including the cold run.")
-    parser.add_argument("--output-dir", default=str(REPO_ROOT / "outputs" / "P4-M08-W01"))
+    parser.add_argument("--output-dir", default=str(REPO_ROOT / "outputs" / "P4-M09-W03"))
     parser.add_argument("--force-high-vram", action="store_true")
     parser.add_argument("--unet-budget-mb", type=int, default=None)
     parser.add_argument("--prompt", default=None)
@@ -75,6 +75,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-path", default=None, help="Override both clip_l_path and clip_g_path.")
     parser.add_argument("--vae-path", default=None)
     parser.add_argument("--notes", default=None, help="Append a free-form note to the scenario.")
+    parser.add_argument("--route-checkpoints", action="store_true", help="Enable route checkpoint metadata capture for checkpoint-capable routes.")
+    parser.add_argument("--glass-checkpoints", action="store_true", help="Alias for --route-checkpoints retained for W03 glass-route commands.")
+    parser.add_argument("--glass-checkpoint-tensors", action="store_true", help="Persist full glass checkpoint tensors when checkpointing is enabled.")
+    parser.add_argument(
+        "--glass-ancestral-noise-policy",
+        choices=["direct_compatible", "seeded"],
+        default="direct_compatible",
+        help="Control ancestral noise RNG policy for the glass route; default matches the M08 direct runtime.",
+    )
+    parser.add_argument(
+        "--glass-checkpoint-steps",
+        default=None,
+        help="Comma-separated step indices for full tensor persistence; metadata is still captured for all steps.",
+    )
     return parser.parse_args()
 
 
@@ -140,11 +154,19 @@ def main() -> int:
         environment = collect_environment(args.route, scenario)
         write_environment_report(environment, output_dir)
 
+        checkpoint_steps = None
+        if args.glass_checkpoint_steps:
+            checkpoint_steps = [int(value.strip()) for value in args.glass_checkpoint_steps.split(",") if value.strip()]
+
         runner = HeadlessGGUFRunner(
             scenario,
             args.route,
             force_high_vram=args.force_high_vram,
             explicit_unet_budget_mb=args.unet_budget_mb,
+            checkpoint_enabled=args.route_checkpoints or args.glass_checkpoints,
+            checkpoint_persist_full_tensors=args.glass_checkpoint_tensors,
+            checkpoint_persist_steps=checkpoint_steps,
+            glass_ancestral_noise_policy=args.glass_ancestral_noise_policy,
         )
 
         results = []

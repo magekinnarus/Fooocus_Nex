@@ -15,6 +15,7 @@ from PIL import Image
 
 from backend import conditioning, decode as backend_decode, inference_lifecycle, loader, precision, resources, sampling
 from backend.gguf.direct_sdxl_runtime import DirectSDXLGGUFRuntime, DirectSDXLGGUFRunConfig
+from backend.gguf.sdxl_glass_pipeline import GlassSDXLGGUFCheckpointConfig, GlassSDXLGGUFRunConfig, GlassSDXLGGUFPipeline
 from ldm_patched.modules import latent_formats
 from ldm_patched.modules import model_base as apply_model_trace
 
@@ -155,6 +156,11 @@ class RunMetrics:
     total_wall: float
     image_path: str
     warm_state_annotation: Dict[str, Any] = field(default_factory=dict)
+    checkpoint_records_path: str = ""
+    checkpoint_record_count: int = 0
+    glass_ancestral_noise_policy: str = ""
+    gguf_trace_stats: Dict[str, Any] = field(default_factory=dict)
+    apply_model_trace_stats: Dict[str, Any] = field(default_factory=dict)
     notes: str = ""
 
 
@@ -211,6 +217,48 @@ def _hash_prompt(prompt: str, negative_prompt: str) -> str:
 
     payload = f"{prompt}\n---\n{negative_prompt}".encode("utf-8")
     return hashlib.sha1(payload).hexdigest()[:12]
+
+
+def _tensor_digest(tensor: Optional[torch.Tensor]) -> str:
+    if tensor is None:
+        return ""
+    import hashlib
+
+    cpu_tensor = tensor.detach().to(device="cpu", copy=True).contiguous()
+    return hashlib.sha256(cpu_tensor.numpy().tobytes()).hexdigest()
+
+
+def _tensor_stats(tensor: Optional[torch.Tensor]) -> Dict[str, Any]:
+    if tensor is None:
+        return {}
+    stats_tensor = tensor.detach().float().to(device="cpu")
+    return {
+        "shape": list(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+        "mean": float(stats_tensor.mean().item()),
+        "std": float(stats_tensor.std(unbiased=False).item()),
+        "min": float(stats_tensor.min().item()),
+        "max": float(stats_tensor.max().item()),
+    }
+
+
+def _tensor_checkpoint_record(
+    name: str,
+    tensor: Optional[torch.Tensor],
+    *,
+    step_index: Optional[int] = None,
+    summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "kind": "tensor",
+        "step_index": step_index,
+        "digest": _tensor_digest(tensor),
+        "summary": summary or {},
+        "tensor_stats": _tensor_stats(tensor),
+        "artifact_path": None,
+    }
 
 
 def _png_save(image: torch.Tensor, destination: Path) -> None:
@@ -287,14 +335,22 @@ class HeadlessGGUFRunner:
         *,
         force_high_vram: bool = False,
         explicit_unet_budget_mb: Optional[int] = None,
+        checkpoint_enabled: bool = False,
+        checkpoint_persist_full_tensors: bool = False,
+        checkpoint_persist_steps: Optional[list[int]] = None,
+        glass_ancestral_noise_policy: str = "direct_compatible",
     ) -> None:
-        if route_label not in {"headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf"}:
+        if route_label not in {"headless_intermediate", "headless_clean", "backend_explicit", "direct_sdxl_gguf", "glass_sdxl_gguf"}:
             raise ValueError(f"Unsupported route label: {route_label}")
 
         self.scenario = scenario
         self.route_label = route_label
         self.force_high_vram = force_high_vram
         self.explicit_unet_budget_mb = explicit_unet_budget_mb
+        self.checkpoint_enabled = checkpoint_enabled
+        self.checkpoint_persist_full_tensors = checkpoint_persist_full_tensors
+        self.checkpoint_persist_steps = checkpoint_persist_steps
+        self.glass_ancestral_noise_policy = glass_ancestral_noise_policy
         self.device = resources.get_torch_device()
         self._models_loaded = False
         self._process_started = time.perf_counter()
@@ -308,6 +364,7 @@ class HeadlessGGUFRunner:
         self.clip = None
         self.vae = None
         self.direct_runtime = None
+        self.glass_pipeline = None
 
     def load_models(self) -> float:
         if self._models_loaded:
@@ -342,6 +399,35 @@ class HeadlessGGUFRunner:
             self.unet = self.direct_runtime.unet
             self.clip = self.direct_runtime.clip
             self.vae = self.direct_runtime.vae
+        elif self.route_label == "glass_sdxl_gguf":
+            self.glass_pipeline = GlassSDXLGGUFPipeline(
+                GlassSDXLGGUFRunConfig(
+                    unet_path=self.scenario.unet_path,
+                    clip_l_path=self.scenario.clip_l_path,
+                    clip_g_path=self.scenario.clip_g_path,
+                    vae_path=self.scenario.vae_path,
+                    prompt=self.scenario.prompt,
+                    negative_prompt=self.scenario.negative_prompt,
+                    width=self.scenario.width,
+                    height=self.scenario.height,
+                    steps=self.scenario.steps,
+                    cfg=self.scenario.cfg,
+                    sampler=self.scenario.sampler,
+                    scheduler=self.scenario.scheduler,
+                    seed=self.scenario.seed,
+                    clip_layer=self.scenario.clip_layer,
+                    denoise=self.scenario.denoise,
+                    batch_size=self.scenario.batch_size,
+                    quality=self.scenario.quality.as_sampling_dict(),
+                    ancestral_noise_policy=self.glass_ancestral_noise_policy,
+                ),
+                device=self.device,
+                unet_budget_mb=self.explicit_unet_budget_mb,
+            )
+            self.glass_pipeline.load_components()
+            self.unet = self.glass_pipeline.unet
+            self.clip = self.glass_pipeline.clip
+            self.vae = self.glass_pipeline.vae
         else:
             self.unet = loader.load_sdxl_unet(self.scenario.unet_path, dtype=torch.float16)
             self.clip = loader.load_sdxl_clip(
@@ -455,6 +541,122 @@ class HeadlessGGUFRunner:
                 end_summary["lowvram_patch_counter_by_role"],
             ),
         }
+
+    def _run_glass_pipeline_once(self, run_label: str, output_dir: Path) -> RunMetrics:
+        assert self.glass_pipeline is not None
+
+        total_start = time.perf_counter()
+        start_state = self._capture_run_boundary_state("run_start", run_label)
+        clip_cache_before = self._clip_cache_entry_count()
+        gguf_mmap_released_before = self._gguf_mmap_released()
+
+        prepared_inputs, prep_metrics = self.glass_pipeline.prepare_inputs()
+        checkpoint_config = None
+        checkpoint_records_path = ""
+        if self.checkpoint_enabled:
+            tensor_output_dir = output_dir / f"{self.scenario.name}_{self.route_label}_{run_label}_tensors"
+            checkpoint_config = GlassSDXLGGUFCheckpointConfig(
+                enabled=True,
+                persist_full_tensors=self.checkpoint_persist_full_tensors,
+                tensor_output_dir=str(tensor_output_dir),
+                persist_steps=self.checkpoint_persist_steps,
+            )
+        if gguf_ops is not None:
+            gguf_ops.reset_trace_stats()
+        apply_model_trace.reset_apply_model_trace_stats()
+        denoise_result = self.glass_pipeline.run_prepared_inputs(
+            prepared_inputs,
+            prepare_metrics=prep_metrics,
+            checkpoint_config=checkpoint_config,
+            callback=None,
+            disable_pbar=True,
+        )
+        self.unet = self.glass_pipeline.unet
+        self.clip = self.glass_pipeline.clip
+        self.vae = self.glass_pipeline.vae
+
+        gguf_dequant = 0.0
+        gguf_dequant_cpu_proc = 0.0
+        gguf_trace_stats = {}
+        if gguf_ops is not None:
+            gguf_trace_stats = gguf_ops.consume_trace_stats()
+            gguf_dequant = float(gguf_trace_stats.get("dequant_seconds", 0.0))
+            gguf_dequant_cpu_proc = float(gguf_trace_stats.get("dequant_cpu_process_seconds", 0.0))
+        apply_model_trace_stats = apply_model_trace.consume_apply_model_trace_stats()
+
+        if denoise_result.checkpoint_records:
+            checkpoint_records_path = str(output_dir / f"{self.scenario.name}_{self.route_label}_{run_label}_checkpoints.json")
+            Path(checkpoint_records_path).write_text(
+                json.dumps(denoise_result.checkpoint_records, indent=2),
+                encoding="utf-8",
+            )
+
+        decoded, vae_gpu_load, vae_decode = self.glass_pipeline.decode_latent(denoise_result.samples)
+        image_name = f"{self.scenario.name}_{self.route_label}_{run_label}.png"
+        image_path = output_dir / image_name
+        _ensure_parent(image_path)
+        save_start = time.perf_counter()
+        _png_save(decoded[0], image_path)
+        image_save = time.perf_counter() - save_start
+
+        end_state = self._capture_run_boundary_state("run_end", run_label)
+        clip_cache_after = self._clip_cache_entry_count()
+        gguf_mmap_released_after = self._gguf_mmap_released()
+        total_wall = time.perf_counter() - total_start
+
+        return RunMetrics(
+            scenario=self.scenario.name,
+            route_label=self.route_label,
+            run_label=run_label,
+            prompt_hash=_hash_prompt(self.scenario.prompt, self.scenario.negative_prompt),
+            quant_model=Path(self.scenario.unet_path).name,
+            resolution=f"{self.scenario.width}x{self.scenario.height}",
+            steps=self.scenario.steps,
+            cfg=self.scenario.cfg,
+            sampler=self.scenario.sampler,
+            scheduler=self.scenario.scheduler,
+            seed=self.scenario.seed,
+            batch_size=self.scenario.batch_size,
+            process_start=self._process_started,
+            cold_model_load_cpu=self._cold_model_load_cpu if run_label == "cold" else 0.0,
+            clip_residency_attach=prep_metrics.clip_residency_attach,
+            clip_residency_offload=prep_metrics.clip_residency_offload,
+            clip_gpu_load=prep_metrics.clip_residency_attach,
+            clip_encode=prep_metrics.clip_encode,
+            adm_build=prep_metrics.adm_build,
+            sampler_model_attach=denoise_result.sampler_model_attach,
+            unet_gpu_load_or_patch=denoise_result.sampler_model_attach,
+            cond_prepare_explicit=prep_metrics.cond_prepare,
+            cond_prep=prep_metrics.cond_prepare,
+            denoise_wall=denoise_result.denoise_wall,
+            denoise_s_per_it=denoise_result.denoise_wall / max(1, self.scenario.steps),
+            denoise_cpu_proc=denoise_result.denoise_cpu_proc,
+            gguf_dequant=gguf_dequant,
+            gguf_dequant_cpu_proc=gguf_dequant_cpu_proc,
+            vae_attach=vae_gpu_load,
+            vae_gpu_load=vae_gpu_load,
+            vae_decode=vae_decode,
+            cleanup_reset=0.0,
+            image_save=image_save,
+            total_wall=total_wall,
+            image_path=str(image_path),
+            warm_state_annotation=self._build_warm_state_annotation(
+                run_label,
+                start_state,
+                end_state,
+                clip_cache_before=clip_cache_before,
+                clip_cache_after=clip_cache_after,
+                cleanup_result=None,
+                gguf_mmap_released_before=gguf_mmap_released_before,
+                gguf_mmap_released_after=gguf_mmap_released_after,
+            ),
+            checkpoint_records_path=checkpoint_records_path,
+            checkpoint_record_count=len(denoise_result.checkpoint_records),
+            glass_ancestral_noise_policy=self.glass_pipeline.config.ancestral_noise_policy,
+            gguf_trace_stats=gguf_trace_stats,
+            apply_model_trace_stats=apply_model_trace_stats,
+            notes=self._route_notes(),
+        )
 
     def _clean_unet_budget(self) -> int:
         if self.explicit_unet_budget_mb is not None:
@@ -744,6 +946,8 @@ class HeadlessGGUFRunner:
             return (notes + " " if notes else "") + "Uses exposed backend lifecycle seams for CLIP attach/encode, sampler cond prep/denoise, and VAE decode."
         if self.route_label == "direct_sdxl_gguf":
             return (notes + " " if notes else "") + "Uses backend.gguf.direct_sdxl_runtime direct GGUF runtime path."
+        if self.route_label == "glass_sdxl_gguf":
+            return (notes + " " if notes else "") + "Uses backend.gguf.sdxl_glass_pipeline glass pipeline path with explicit denoise boundaries."
         return (notes + " " if notes else "") + "Uses direct patch_model()/decode path without resources.load_models_gpu()."
 
     def run_once(self, run_label: str, output_dir: Path) -> RunMetrics:
@@ -751,6 +955,8 @@ class HeadlessGGUFRunner:
 
         if self.route_label == "direct_sdxl_gguf":
             return self._run_direct_runtime_once(run_label, output_dir)
+        if self.route_label == "glass_sdxl_gguf":
+            return self._run_glass_pipeline_once(run_label, output_dir)
 
         total_start = time.perf_counter()
         start_state = self._capture_run_boundary_state("run_start", run_label)
@@ -866,19 +1072,80 @@ class HeadlessGGUFRunner:
         start_state = self._capture_run_boundary_state("run_start", run_label)
         clip_cache_before = self._clip_cache_entry_count()
         gguf_mmap_released_before = self._gguf_mmap_released()
+        checkpoint_records = []
+        checkpoint_records_path = ""
 
-        direct_result = self.direct_runtime.run()
+        if self.checkpoint_enabled:
+            prepared_inputs, prep_metrics = self.direct_runtime.prepare_inputs()
+
+            def direct_checkpoint_callback(step: int, x0: torch.Tensor, x: torch.Tensor, total_steps: int, denoised: Optional[torch.Tensor] = None) -> None:
+                checkpoint_records.append(_tensor_checkpoint_record(
+                    f"step_{step:03d}.x_in",
+                    x,
+                    step_index=step,
+                    summary={"step_index": step, "total_steps": total_steps},
+                ))
+                checkpoint_records.append(_tensor_checkpoint_record(
+                    f"step_{step:03d}.post_cfg_denoised",
+                    denoised if denoised is not None else x0,
+                    step_index=step,
+                    summary={"step_index": step, "total_steps": total_steps},
+                ))
+
+            apply_model_trace.reset_apply_model_trace_stats()
+            denoise_result = self.direct_runtime.denoise_prepared_inputs(
+                prepared_inputs,
+                callback=direct_checkpoint_callback,
+                disable_pbar=True,
+            )
+            apply_model_trace_stats = apply_model_trace.consume_apply_model_trace_stats()
+            checkpoint_records.append(_tensor_checkpoint_record(
+                "final.latent",
+                denoise_result.samples,
+                summary={"route": self.route_label},
+            ))
+            images, vae_attach, vae_decode = self.direct_runtime.decode_latent(denoise_result.samples)
+            gguf_trace_stats = dict(denoise_result.gguf_trace_stats)
+            benchmark = {
+                "clip_residency_attach": prep_metrics.get("clip_residency_attach", 0.0),
+                "clip_residency_offload": prep_metrics.get("clip_residency_offload", 0.0),
+                "clip_encode": prep_metrics.get("clip_encode", 0.0),
+                "adm_build": prep_metrics.get("adm_build", 0.0),
+                "sampler_model_attach": denoise_result.sampler_model_attach,
+                "cond_prepare_explicit": denoise_result.cond_prepare_duration,
+                "denoise_wall": denoise_result.denoise_wall,
+                "denoise_s_per_it": denoise_result.denoise_wall / max(1, self.scenario.steps),
+                "denoise_cpu_proc": denoise_result.denoise_cpu_proc,
+                "gguf_dequant": float(denoise_result.gguf_trace_stats.get("dequant_seconds", 0.0)),
+                "gguf_dequant_cpu_proc": float(denoise_result.gguf_trace_stats.get("dequant_cpu_process_seconds", 0.0)),
+                "vae_attach": vae_attach,
+                "vae_decode": vae_decode,
+            }
+        else:
+            apply_model_trace.reset_apply_model_trace_stats()
+            direct_result = self.direct_runtime.run()
+            apply_model_trace_stats = apply_model_trace.consume_apply_model_trace_stats()
+            images = direct_result.images
+            benchmark = direct_result.benchmark
+            gguf_trace_stats = {}
+
         self.unet = self.direct_runtime.unet
         self.clip = self.direct_runtime.clip
         self.vae = self.direct_runtime.vae
-        benchmark = direct_result.benchmark
 
         image_name = f"{self.scenario.name}_{self.route_label}_{run_label}.png"
         image_path = output_dir / image_name
         _ensure_parent(image_path)
         save_start = time.perf_counter()
-        _png_save(direct_result.images[0].cpu(), image_path)
+        _png_save(images[0].cpu(), image_path)
         image_save = time.perf_counter() - save_start
+
+        if checkpoint_records:
+            checkpoint_records_path = str(output_dir / f"{self.scenario.name}_{self.route_label}_{run_label}_checkpoints.json")
+            Path(checkpoint_records_path).write_text(
+                json.dumps(checkpoint_records, indent=2),
+                encoding="utf-8",
+            )
 
         end_state = self._capture_run_boundary_state("run_end", run_label)
         clip_cache_after = self._clip_cache_entry_count()
@@ -940,12 +1207,21 @@ class HeadlessGGUFRunner:
                 gguf_mmap_released_before=gguf_mmap_released_before,
                 gguf_mmap_released_after=gguf_mmap_released_after,
             ),
+            checkpoint_records_path=checkpoint_records_path,
+            checkpoint_record_count=len(checkpoint_records),
+            gguf_trace_stats=gguf_trace_stats,
+            apply_model_trace_stats=apply_model_trace_stats,
             notes=self._route_notes(),
         )
 
     def close(self) -> None:
         if self.direct_runtime is not None:
             self.direct_runtime.close()
+        elif self.glass_pipeline is not None:
+            self.glass_pipeline.detach_unet_direct()
+            self.glass_pipeline.detach_clip_direct()
+            if self.vae is not None:
+                self.vae.patcher.detach()
         else:
             if self.unet is not None:
                 self.unet.detach()
