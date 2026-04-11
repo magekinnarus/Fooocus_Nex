@@ -44,3 +44,4 @@ configs/model_catalogs/user/*.json
 config_old.txt
 /config_modification_tutorial.txt
 /config_colab_modification_tutorial.txt
+/backend/gguf/sdxl_glass_pipeline.py

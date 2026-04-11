@@ -32,6 +32,39 @@ def calculate_transformer_depth(prefix, state_dict_keys, state_dict):
 def detect_unet_config(state_dict, key_prefix, dtype):
     state_dict_keys = list(state_dict.keys())
 
+    if '{}double_blocks.0.img_attn.norm.key_norm.scale'.format(key_prefix) in state_dict_keys and '{}img_in.weight'.format(key_prefix) in state_dict_keys:
+        dit_config = {}
+        dit_config["image_model"] = "flux"
+        patch_size = 2
+        dit_config["patch_size"] = patch_size
+        in_key = "{}img_in.weight".format(key_prefix)
+        dit_config["in_channels"] = state_dict[in_key].shape[1] // (patch_size * patch_size)
+        final_key = "{}final_layer.linear.weight".format(key_prefix)
+        if final_key in state_dict:
+            dit_config["out_channels"] = state_dict[final_key].shape[0] // (patch_size * patch_size)
+        else:
+            dit_config["out_channels"] = 16
+        vec_in_key = "{}vector_in.in_layer.weight".format(key_prefix)
+        if vec_in_key in state_dict_keys:
+            dit_config["vec_in_dim"] = state_dict[vec_in_key].shape[1]
+        else:
+            dit_config["vec_in_dim"] = 768
+        txt_in_key = "{}txt_in.weight".format(key_prefix)
+        if txt_in_key in state_dict_keys:
+            dit_config["context_in_dim"] = state_dict[txt_in_key].shape[1]
+        else:
+            dit_config["context_in_dim"] = 4096
+        dit_config["hidden_size"] = state_dict[in_key].shape[0]
+        dit_config["mlp_ratio"] = 4.0
+        dit_config["num_heads"] = 24
+        dit_config["depth"] = count_blocks(state_dict_keys, '{}double_blocks.'.format(key_prefix) + '{}.')
+        dit_config["depth_single_blocks"] = count_blocks(state_dict_keys, '{}single_blocks.'.format(key_prefix) + '{}.')
+        dit_config["axes_dim"] = [16, 56, 56]
+        dit_config["theta"] = 10000
+        dit_config["qkv_bias"] = True
+        dit_config["guidance_embed"] = "{}guidance_in.in_layer.weight".format(key_prefix) in state_dict_keys
+        dit_config["dtype"] = dtype
+        return dit_config
     unet_config = {
         "use_checkpoint": False,
         "image_size": 32,

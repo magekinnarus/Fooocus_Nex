@@ -6,6 +6,7 @@ from ldm_patched.ldm.modules.diffusionmodules.upscaling import ImageConcatWithNo
 import ldm_patched.modules.model_management
 import ldm_patched.modules.conds
 import ldm_patched.modules.ops
+import ldm_patched.modules.flux.model
 from enum import Enum
 from . import utils
 
@@ -36,7 +37,7 @@ class ModelType(Enum):
     FLUX = 8
 
 
-from ldm_patched.modules.model_sampling import EPS, V_PREDICTION, EDM as EDM_sampler, CONST, ModelSamplingDiscrete, ModelSamplingContinuousEDM, StableCascadeSampling
+from ldm_patched.modules.model_sampling import EPS, V_PREDICTION, EDM as EDM_sampler, CONST, FLUX as FLUX_sampler, ModelSamplingDiscrete, ModelSamplingContinuousEDM, ModelSamplingFlux, StableCascadeSampling
 
 
 def model_sampling(model_config, model_type):
@@ -59,8 +60,8 @@ def model_sampling(model_config, model_type):
         c = CONST
         s = ModelSamplingContinuousEDM
     elif model_type == ModelType.FLUX:
-        c = CONST
-        s = ModelSamplingContinuousEDM
+        c = FLUX_sampler
+        s = ModelSamplingFlux
     elif model_type == ModelType.V_PREDICTION_CONTINUOUS:
         c = V_PREDICTION
         s = ModelSamplingContinuousEDM
@@ -74,7 +75,7 @@ def model_sampling(model_config, model_type):
 
 
 class BaseModel(torch.nn.Module):
-    def __init__(self, model_config, model_type=ModelType.EPS, device=None, operations=None):
+    def __init__(self, model_config, model_type=ModelType.EPS, device=None, operations=None, unet_model=UNetModel):
         super().__init__()
 
         unet_config = model_config.unet_config
@@ -88,7 +89,7 @@ class BaseModel(torch.nn.Module):
                     operations = ldm_patched.modules.ops.manual_cast
                 else:
                     operations = ldm_patched.modules.ops.disable_weight_init
-            self.diffusion_model = UNetModel(**unet_config, device=device, operations=operations)
+            self.diffusion_model = unet_model(**unet_config, device=device, operations=operations)
         self.model_type = model_type
         self.model_sampling = model_sampling(model_config, model_type)
 
@@ -282,6 +283,81 @@ class BaseModel(torch.nn.Module):
             area = input_shape[0] * input_shape[2] * input_shape[3]
             return (((area * 0.6) / 0.9) + 1024) * (1024 * 1024)
 
+
+class Flux(BaseModel):
+    def __init__(self, model_config, model_type=ModelType.FLUX, device=None, operations=None):
+        super().__init__(
+            model_config,
+            model_type,
+            device=device,
+            operations=operations,
+            unet_model=ldm_patched.modules.flux.model.Flux,
+        )
+        self.memory_usage_factor_conds = ("ref_latents",)
+
+    def concat_cond(self, **kwargs):
+        try:
+            num_channels = self.diffusion_model.img_in.weight.shape[1] // (
+                self.diffusion_model.patch_size * self.diffusion_model.patch_size
+            )
+        except Exception:
+            num_channels = self.model_config.unet_config["in_channels"]
+
+        out_channels = self.model_config.unet_config["out_channels"]
+        if num_channels <= out_channels:
+            return None
+
+        image = kwargs.get("concat_latent_image", None)
+        noise = kwargs.get("noise", None)
+        device = kwargs["device"]
+
+        if image is None:
+            image = torch.zeros_like(noise)
+
+        image = utils.common_upscale(image.to(device), noise.shape[-1], noise.shape[-2], "bilinear", "center")
+        image = utils.resize_to_batch_size(image, noise.shape[0])
+        image = self.process_latent_in(image)
+        if num_channels <= out_channels * 2:
+            return image
+
+        mask = kwargs.get("concat_mask", kwargs.get("denoise_mask", None))
+        if mask is None:
+            mask = torch.ones_like(noise)[:, :1]
+
+        mask = torch.mean(mask, dim=1, keepdim=True)
+        mask = utils.common_upscale(mask.to(device), noise.shape[-1] * 8, noise.shape[-2] * 8, "bilinear", "center")
+        mask = mask.view(
+            mask.shape[0],
+            mask.shape[2] // 8,
+            8,
+            mask.shape[3] // 8,
+            8,
+        ).permute(0, 2, 4, 1, 3).reshape(mask.shape[0], -1, mask.shape[2] // 8, mask.shape[3] // 8)
+        mask = utils.resize_to_batch_size(mask, noise.shape[0])
+        return torch.cat((image, mask), dim=1)
+
+    def encode_adm(self, **kwargs):
+        return kwargs.get("pooled_output", None)
+
+    def extra_conds(self, **kwargs):
+        out = {}
+        concat_cond = self.concat_cond(**kwargs)
+        if concat_cond is not None:
+            out['c_concat'] = ldm_patched.modules.conds.CONDNoiseShape(concat_cond)
+
+        adm = self.encode_adm(**kwargs)
+        if adm is not None:
+            out['y'] = ldm_patched.modules.conds.CONDRegular(adm)
+
+        cross_attn = kwargs.get("cross_attn", None)
+        if cross_attn is not None:
+            out['c_crossattn'] = ldm_patched.modules.conds.CONDCrossAttn(cross_attn)
+
+        guidance = kwargs.get("guidance", None)
+        if guidance is not None:
+            out['guidance'] = ldm_patched.modules.conds.CONDRegular(torch.FloatTensor([guidance]))
+
+        return out
 
 def unclip_adm(unclip_conditioning, device, noise_augmentor, noise_augment_merge=0.0, seed=None):
     adm_inputs = []

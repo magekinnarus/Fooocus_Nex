@@ -311,5 +311,33 @@ class SD_X4Upscaler(SD20):
         out = model_base.SD_X4Upscaler(self, device=device, operations=operations)
         return out
 
-models = [Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXL, SSD1B, Segmind_Vega, SD_X4Upscaler]
+class Flux(supported_models_base.BASE):
+    unet_config = {
+        "image_model": "flux",
+        "guidance_embed": True,
+    }
+
+    sampling_settings = {}
+    unet_extra_config = {}
+    latent_format = latent_formats.Flux
+
+    def model_type(self, state_dict, prefix=""):
+        return model_base.ModelType.FLUX
+
+    def get_model(self, state_dict, prefix="", device=None, model_options={}):
+        operations = model_options.get("custom_operations", None)
+        out = model_base.Flux(self, model_type=self.model_type(state_dict, prefix), device=device, operations=operations)
+        return out
+
+    def clip_target(self):
+        return None
+
+class FluxInpaint(Flux):
+    unet_config = {
+        "image_model": "flux",
+        "guidance_embed": True,
+        "in_channels": 96,
+    }
+
+models = [FluxInpaint, Flux, Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXL, SSD1B, Segmind_Vega, SD_X4Upscaler]
 models += [SVD_img2vid]

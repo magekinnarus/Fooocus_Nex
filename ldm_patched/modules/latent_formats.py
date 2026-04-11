@@ -102,3 +102,35 @@ class SC_B(LatentFormat):
             [-0.3087, -0.1535,  0.0366],
             [ 0.0290, -0.1574, -0.4078]
         ]
+
+class Flux(LatentFormat):
+    latent_channels = 16
+
+    def __init__(self):
+        self.scale_factor = 0.3611
+        self.shift_factor = 0.1159
+        self.latent_rgb_factors = [
+            [-0.0346,  0.0244,  0.0681],
+            [ 0.0034,  0.0210,  0.0687],
+            [ 0.0275, -0.0668, -0.0433],
+            [-0.0174,  0.0160,  0.0617],
+            [ 0.0859,  0.0721,  0.0329],
+            [ 0.0004,  0.0383,  0.0115],
+            [ 0.0405,  0.0868, -0.0224],
+            [-0.0884, -0.0167, -0.0360],
+            [-0.0895, -0.0761,  0.0291],
+            [ 0.0413,  0.0287,  0.0850],
+            [ 0.0244,  0.0552,  0.0256],
+            [-0.0639, -0.0342, -0.0079],
+            [-0.0570, -0.0606, -0.0633],
+            [-0.0201,  0.0259, -0.0614],
+            [ 0.0680,  0.0460, -0.0179],
+            [ 0.0778,  0.0851,  0.0216],
+        ]
+        self.taesd_decoder_name = "taef1_decoder"
+
+    def process_in(self, latent):
+        return (latent - self.shift_factor) * self.scale_factor
+
+    def process_out(self, latent):
+        return (latent / self.scale_factor) + self.shift_factor

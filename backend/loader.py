@@ -282,12 +282,18 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
 
 def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_format=None):
     """
-    Loads VAE (SD15/SDXL compatible) and returns a clean VAE container.
+    Loads VAE/AE (SD15/SDXL/Flux compatible) and returns a clean VAE container.
     """
     load_device = load_device or resources.get_torch_device()
     offload_device = offload_device or resources.vae_offload_device()
-    
-    # Try to infer latent format from filename if not provided
+
+    # Try to infer latent format from filename if not provided.
+    if latent_format is None and isinstance(source, str):
+        normalized_source = source.replace("\\", "/").lower()
+        if "/flux_fill/" in normalized_source or "/flux/" in normalized_source:
+            latent_format = latent_formats.Flux()
+            logging.info(f"VAE: Inferred Flux latent format from {source}")
+
     if latent_format is None and isinstance(source, str):
         from modules import model_taxonomy
         arch = model_taxonomy.infer_architecture_from_filename(source)
@@ -299,20 +305,46 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
             logging.info(f"VAE: Inferred SD15 latent format from {source}")
 
     sd = resolve_source(source)
-    
-    # Generic VAE config (works for both SD1.5 and SDXL usually)
+
+    if latent_format is None and "decoder.conv_in.weight" in sd:
+        latent_channels = sd["decoder.conv_in.weight"].shape[1]
+        if latent_channels == latent_formats.Flux.latent_channels:
+            latent_format = latent_formats.Flux()
+            logging.info("VAE: Inferred Flux latent format from 16-channel AE state dict")
+
+    # Generic VAE config; derive latent/embed width from the state dict for Flux AE.
     ddconfig = {'double_z': True, 'z_channels': 4, 'resolution': 256, 'in_channels': 3, 'out_ch': 3, 'ch': 128, 'ch_mult': [1, 2, 4, 4], 'num_res_blocks': 2, 'attn_resolutions': [], 'dropout': 0.0}
-    model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
-    model.load_state_dict(sd, strict=False)
-    
+    if "decoder.conv_in.weight" in sd:
+        ddconfig["z_channels"] = sd["decoder.conv_in.weight"].shape[1]
+        if 'encoder.down.2.downsample.conv.weight' not in sd and 'decoder.up.3.upsample.conv.weight' not in sd:
+            ddconfig['ch_mult'] = [1, 2, 4]
+
+    if "post_quant_conv.weight" in sd:
+        model = AutoencoderKL(ddconfig=ddconfig, embed_dim=sd["post_quant_conv.weight"].shape[1])
+    elif "decoder.conv_in.weight" in sd:
+        model = AutoencodingEngine(
+            regularizer_config={'target': "ldm_patched.ldm.models.autoencoder.DiagonalGaussianRegularizer"},
+            encoder_config={'target': "ldm_patched.ldm.modules.diffusionmodules.model.Encoder", 'params': ddconfig},
+            decoder_config={'target': "ldm_patched.ldm.modules.diffusionmodules.model.Decoder", 'params': ddconfig},
+        )
+    else:
+        model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
+
+    missing, unexpected = model.load_state_dict(sd, strict=False)
+    if missing:
+        logging.debug("VAE: Missing keys while loading: %s", missing)
+    if unexpected:
+        logging.debug("VAE: Unexpected keys while loading: %s", unexpected)
+
     # User Requirement: VAE should be in fp32
     if dtype is None:
-        dtype = torch.float32 
-    
+        dtype = torch.float32
+
     if dtype is not None:
         model.to(dtype)
-    
+
     return VAE(model.eval(), load_device, offload_device, latent_format=latent_format)
+
 
 def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     """
