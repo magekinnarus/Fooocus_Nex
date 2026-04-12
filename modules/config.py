@@ -479,6 +479,9 @@ _persistent_asset_filenames = {
         'fixfp16errorssdxllowermemoryuse_v10.safetensors',
         'vae-ft-mse-840000-ema-pruned.safetensors',
     },
+    'clip': {
+        'flux_empty_conditioning.pt',
+    },
 }
 
 

@@ -8,7 +8,10 @@
         "/content/models/vae/"
     ],
     "path_unet": "/content/models/unet/",
-    "path_clip": "/content/models/clip/",
+    "path_clip": [
+        "/content/drive/MyDrive/Fooocus_Nex/models/clip/",
+        "/content/models/clip/"
+    ],
     "path_upscale_models": [
         "/content/drive/MyDrive/Fooocus_Nex/models/upscale_models/",
         "/content/models/upscale_models/"

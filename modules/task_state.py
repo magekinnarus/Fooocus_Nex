@@ -47,7 +47,6 @@ class TaskState:
     remove_obj_enabled: bool = False
     objr_engine: str = "MAT (Local)"
     objr_mask_dilate: int = 0
-    objr_model: str = "Places_512_FullData_G.pth"
     disable_preview: bool = False
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False

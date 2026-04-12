@@ -147,7 +147,6 @@ with shared.gradio_root:
                                 bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
                                 bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
                                 objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='MAT defaults to 0. Flux Fill switches this to 16; blur is handled internally.')
-                                objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
                         cn_image_paths = []
@@ -591,7 +590,6 @@ with shared.gradio_root:
             'objr_mask_dilate': objr_mask_dilate,
             'bgr_threshold': bgr_threshold,
             'bgr_jit': bgr_jit,
-            'objr_model': objr_model,
         })
 
         if not args_manager.args.disable_metadata:

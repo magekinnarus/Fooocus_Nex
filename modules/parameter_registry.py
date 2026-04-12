@@ -57,7 +57,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 0, int),
     ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
     ParamDef('bgr_jit', 'bgr_jit', True, bool),
-    ParamDef('objr_model', 'objr_model', 'Places_512_FullData_G.pth', str),
 
     # --- Outpaint ---
     ParamDef('outpaint_selections', 'outpaint_selections', [], list),

@@ -108,6 +108,23 @@
           "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/ae.safetensors"
         }
       ]
+    },
+    {
+      "id": "inpaint.flux_fill.empty_conditioning",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "empty_cond",
+      "internal_only": true,
+      "loader_type": "flux_empty_cond",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux/flux_empty_conditioning.pt",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/flux_empty_conditioning.pt"
+        }
+      ]
     }
   ]
 }
