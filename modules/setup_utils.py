@@ -46,6 +46,7 @@ def _ensure_startup_support_assets(progress=False):
     _ensure_internal_assets('upscale', progress=progress)
     _ensure_internal_assets('removal', progress=progress)
     _ensure_guidance_assets(progress=progress)
+    model_registry.ensure_asset('inpaint.flux_fill.empty_conditioning', progress=progress)
 
 
 def _resolve_startup_download_url(url: str) -> str:

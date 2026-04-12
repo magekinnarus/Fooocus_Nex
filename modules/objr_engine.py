@@ -104,12 +104,7 @@ def _normalize_flux_fill_tier(tier: str | None) -> str:
 
 
 def get_flux_empty_conditioning_cache_path() -> str:
-    clip_root = config.get_preferred_asset_root_path(
-        "clip",
-        file_name=os.path.basename(FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH),
-        relative_path=FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH,
-    )
-    return os.path.join(clip_root, FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH)
+    return model_registry.ensure_asset("inpaint.flux_fill.empty_conditioning")
 
 
 def resolve_flux_fill_asset_paths(tier: str | None = None, *, progress: bool = True) -> dict[str, str]:
