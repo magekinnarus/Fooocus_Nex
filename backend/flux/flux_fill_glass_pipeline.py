@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 
 from backend import resources
 from backend.flux.flux_fill_pipeline import (
@@ -24,6 +25,52 @@ from backend.flux.flux_fill_pipeline import (
     load_flux_empty_conditioning_cache,
     load_flux_fill_unet,
 )
+
+FLUX_FILL_GLASS_MODES = ("baseline", "debug", "scaled")
+FLUX_FILL_GLASS_DEFAULT_MODE = "baseline"
+
+
+def _normalize_glass_mode(mode: str | None) -> str:
+    value = str(mode or FLUX_FILL_GLASS_DEFAULT_MODE).strip().lower()
+    if value in FLUX_FILL_GLASS_MODES:
+        return value
+    raise FluxFillValidationError(
+        f"Unsupported Flux Fill glass mode: {mode!r}. Expected one of {list(FLUX_FILL_GLASS_MODES)}."
+    )
+
+
+def _round_down_to_multiple(value: int, multiple: int) -> int:
+    if multiple < 1:
+        raise ValueError("multiple must be >= 1")
+    return max(multiple, int(value) // int(multiple) * int(multiple))
+
+
+def _scale_working_dimensions(width: int, height: int, *, target_megapixels: float, multiple: int = 8) -> tuple[int, int, float]:
+    if width < 1 or height < 1:
+        raise FluxFillValidationError(f"image dimensions must be positive, got {width}x{height}.")
+
+    current_megapixels = float(width * height) / 1_000_000.0
+    needs_rescale = current_megapixels > float(target_megapixels) or (width % multiple != 0) or (height % multiple != 0)
+    if not needs_rescale:
+        return width, height, 1.0
+
+    scale = 1.0 if current_megapixels <= float(target_megapixels) else float(np.sqrt(float(target_megapixels) / max(current_megapixels, 1e-8)))
+    scaled_width = _round_down_to_multiple(max(1, int(round(width * scale))), multiple)
+    scaled_height = _round_down_to_multiple(max(1, int(round(height * scale))), multiple)
+    return scaled_width, scaled_height, min(scale, 1.0)
+
+
+def _resize_uint8_rgb(image: np.ndarray, width: int, height: int, *, resample: int) -> np.ndarray:
+    return np.asarray(
+        Image.fromarray(np.asarray(image, dtype=np.uint8)).resize((int(width), int(height)), resample=resample),
+        dtype=np.uint8,
+    )
+
+
+def _resize_uint8_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
+    mask_2d = _mask_2d(np.asarray(mask))
+    resized = Image.fromarray(np.asarray(mask_2d, dtype=np.uint8)).resize((int(width), int(height)), resample=Image.Resampling.NEAREST)
+    return np.asarray(resized, dtype=np.uint8)
 
 
 @dataclass
@@ -44,12 +91,15 @@ class FluxFillGlassConfig:
     guidance: float = 15.0
     device: str | None = None
     debug_output_dir: Path | str | None = None
+    mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
+    target_megapixels: float = 1.0
     verify_c_concat: bool = True
     capture_artifacts: bool = False
     capture_tensors: bool = False
     save_composite: bool = False
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
+        self.mode = _normalize_glass_mode(self.mode)
         if self.steps < 1:
             raise FluxFillValidationError(f"steps must be >= 1, got {self.steps}.")
         if self.cfg != 1.0:
@@ -62,6 +112,8 @@ class FluxFillGlassConfig:
             raise NotImplementedError("W04 glass baseline only supports denoise=1.0.")
         if self.guidance <= 0:
             raise FluxFillValidationError(f"guidance must be > 0, got {self.guidance}.")
+        if self.target_megapixels <= 0:
+            raise FluxFillValidationError(f"target_megapixels must be > 0, got {self.target_megapixels}.")
         if require_existing_assets:
             for label, value in (("UNet", self.unet_path), ("AE", self.ae_path), ("empty conditioning cache", self.conditioning_cache_path)):
                 path = Path(value)
@@ -76,6 +128,7 @@ class FluxFillGlassResult:
     seed: int
     width: int
     height: int
+    raw_output_image: Any | None = None
     timings: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     debug_summary: dict[str, Any] = field(default_factory=dict)
@@ -165,6 +218,38 @@ def _ensure_mask_shape(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return np.clip(mask_np, 0, 255).astype(np.uint8, copy=False)
 
 
+def _prepare_scaled_inputs(image: np.ndarray, mask: np.ndarray, *, target_megapixels: float) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    image_np = _ensure_uint8_rgb(image)
+    mask_np = _ensure_mask_shape(image_np, mask)
+    height, width = image_np.shape[:2]
+    scaled_width, scaled_height, scale_factor = _scale_working_dimensions(
+        width,
+        height,
+        target_megapixels=target_megapixels,
+        multiple=8,
+    )
+    if scaled_width == width and scaled_height == height:
+        return image_np, mask_np, {
+            "original_width": width,
+            "original_height": height,
+            "working_width": width,
+            "working_height": height,
+            "scale_factor": 1.0,
+            "scaled": False,
+        }
+
+    resized_image = _resize_uint8_rgb(image_np, scaled_width, scaled_height, resample=Image.Resampling.LANCZOS)
+    resized_mask = _resize_uint8_mask(mask_np, scaled_width, scaled_height)
+    return resized_image, resized_mask, {
+        "original_width": width,
+        "original_height": height,
+        "working_width": scaled_width,
+        "working_height": scaled_height,
+        "scale_factor": scale_factor,
+        "scaled": True,
+    }
+
+
 def _artifact_path(root: Path, name: str, suffix: str) -> Path:
     safe_name = name.replace("/", "_").replace("\\", "_").replace(" ", "_")
     return root / f"{safe_name}{suffix}"
@@ -198,20 +283,22 @@ class FluxFillGlassPipeline:
         self.config = config
         self.device = device or (torch.device(config.device) if config.device else resources.get_torch_device())
 
-    def validate_input_contract(self, image: np.ndarray, mask: np.ndarray) -> dict[str, Any]:
+    def validate_input_contract(self, image: np.ndarray, mask: np.ndarray, *, mode: str) -> dict[str, Any]:
         image_np = _ensure_uint8_rgb(image)
         mask_np = _ensure_mask_shape(image_np, mask)
         height, width = image_np.shape[:2]
-        if height % 8 != 0 or width % 8 != 0:
+        normalized_mode = _normalize_glass_mode(mode)
+        if normalized_mode != "scaled" and (height % 8 != 0 or width % 8 != 0):
             raise FluxFillValidationError(
                 f"W04 glass baseline does not scale or crop; image dimensions must be multiples of 8 (preferably 16). Got {width}x{height}."
             )
         return {
             "image": _array_summary(image_np),
             "mask": _array_summary(mask_np),
+            "mode": normalized_mode,
             "no_bb": True,
-            "no_scale": True,
-            "multiple_of_8": True,
+            "no_scale": normalized_mode != "scaled",
+            "multiple_of_8": (height % 8 == 0 and width % 8 == 0),
             "prefer_multiple_of_16": (height % 16 == 0 and width % 16 == 0),
             "mask_coverage": float(_binary_mask(mask_np).mean()) if mask_np.size else 0.0,
         }
@@ -358,18 +445,22 @@ class FluxFillGlassPipeline:
     def compose_debug(self, original_image: np.ndarray, mask: np.ndarray, decoded_image: np.ndarray) -> tuple[np.ndarray | None, dict[str, Any]]:
         if not self.config.save_composite:
             return None, {"stage": "compose_debug", "enabled": False}
-        mask_binary = _binary_mask(mask).astype(np.float32)[..., None]
+        composite = self.compose_output(original_image, mask, decoded_image)
+        return composite, {"stage": "compose_debug", "enabled": True, "composite": _array_summary(composite)}
+
+    def compose_output(self, original_image: np.ndarray, mask: np.ndarray, decoded_image: np.ndarray) -> np.ndarray:
+        mask_alpha = _mask_2d(mask).astype(np.float32)[..., None] / 255.0
         composite = np.clip(
-            decoded_image.astype(np.float32) * mask_binary + _ensure_uint8_rgb(original_image).astype(np.float32) * (1.0 - mask_binary),
+            decoded_image.astype(np.float32) * mask_alpha + _ensure_uint8_rgb(original_image).astype(np.float32) * (1.0 - mask_alpha),
             0,
             255,
         ).astype(np.uint8)
-        return composite, {"stage": "compose_debug", "enabled": True, "composite": _array_summary(composite)}
+        return composite
 
     def _debug_root(self) -> Path | None:
         if self.config.debug_output_dir is not None:
             return Path(self.config.debug_output_dir)
-        if self.config.capture_artifacts or self.config.capture_tensors or self.config.save_composite:
+        if self.config.mode == "debug" or self.config.capture_artifacts or self.config.capture_tensors or self.config.save_composite:
             if self.config.output_path is not None:
                 return Path(self.config.output_path).parent / f"{Path(self.config.output_path).stem}_glass_debug"
         return None
@@ -390,23 +481,46 @@ class FluxFillGlassPipeline:
 
     def run(self, image: np.ndarray, mask: np.ndarray, *, disable_pbar: bool = True) -> FluxFillGlassResult:
         self.config.validate_static(require_existing_assets=True)
-        debug_summary: dict[str, Any] = {"stage_order": list(self.stage_order), "stages": {}, "artifacts": {}}
+        mode = self.config.mode
+        debug_summary: dict[str, Any] = {"stage_order": list(self.stage_order), "stages": {}, "artifacts": {}, "mode": mode}
         timings: dict[str, float] = {}
         root = self._debug_root()
 
+        image_np = _ensure_uint8_rgb(image)
+        mask_np = _ensure_mask_shape(image_np, mask)
+        if mode == "scaled":
+            working_image, working_mask, scale_summary = _prepare_scaled_inputs(
+                image_np,
+                mask_np,
+                target_megapixels=self.config.target_megapixels,
+            )
+        else:
+            working_image = image_np
+            working_mask = mask_np
+            scale_summary = {
+                "original_width": int(image_np.shape[1]),
+                "original_height": int(image_np.shape[0]),
+                "working_width": int(image_np.shape[1]),
+                "working_height": int(image_np.shape[0]),
+                "scale_factor": 1.0,
+                "scaled": False,
+            }
+        debug_summary["scale"] = scale_summary
+
         stage_start = time.perf_counter()
-        contract = self.validate_input_contract(image, mask)
+        contract = self.validate_input_contract(image_np, mask_np, mode=mode)
         timings["validate_contract"] = time.perf_counter() - stage_start
+        contract["scale"] = dict(scale_summary)
         debug_summary["contract"] = contract
         debug_summary["stages"]["validate_contract"] = contract
 
         stage_start = time.perf_counter()
-        source_pixels, source_pixels_summary = self.prepare_source_pixels(image)
+        source_pixels, source_pixels_summary = self.prepare_source_pixels(working_image)
         timings["prepare_source_pixels"] = time.perf_counter() - stage_start
         debug_summary["stages"]["prepare_source_pixels"] = source_pixels_summary
 
         stage_start = time.perf_counter()
-        concat_pixels, concat_pixels_summary = self.prepare_concat_pixels(image, mask)
+        concat_pixels, concat_pixels_summary = self.prepare_concat_pixels(working_image, working_mask)
         timings["prepare_concat_pixels"] = time.perf_counter() - stage_start
         debug_summary["stages"]["prepare_concat_pixels"] = concat_pixels_summary
 
@@ -424,7 +538,7 @@ class FluxFillGlassPipeline:
             raise FluxFillValidationError(f"source_latent shape {list(source_latent.shape)} does not match concat_latent shape {list(concat_latent.shape)}.")
 
         stage_start = time.perf_counter()
-        denoise_mask, denoise_mask_summary = self.prepare_denoise_mask(mask, source_latent.shape)
+        denoise_mask, denoise_mask_summary = self.prepare_denoise_mask(working_mask, source_latent.shape)
         timings["prepare_denoise_mask"] = time.perf_counter() - stage_start
         debug_summary["stages"]["prepare_denoise_mask"] = denoise_mask_summary
 
@@ -442,14 +556,13 @@ class FluxFillGlassPipeline:
         debug_summary["stages"]["build_conditioning_payload"] = payload_summary
 
         noise = create_flux_fill_noise(source_latent, self.config.seed, device=self.device, dtype=source_latent.dtype)
+        unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
         if self.config.verify_c_concat:
-            unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
             c_concat_preview, c_concat_summary = self.verify_c_concat(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask)
             debug_summary["stages"]["verify_c_concat"] = c_concat_summary
             if c_concat_preview is not None:
                 debug_summary["c_concat_preview"] = _tensor_summary(c_concat_preview)
         else:
-            unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
             c_concat_preview = None
             debug_summary["stages"]["verify_c_concat"] = {"stage": "verify_c_concat", "enabled": False}
 
@@ -463,20 +576,27 @@ class FluxFillGlassPipeline:
         timings["decode"] = time.perf_counter() - stage_start
         debug_summary["stages"]["decode"] = decode_summary
 
-        decoded_image = np.asarray(decoded.bb_image, dtype=np.uint8)
-        composite, composite_summary = self.compose_debug(image, mask, decoded_image)
+        raw_output_image = np.asarray(decoded.bb_image, dtype=np.uint8)
+        if mode == "scaled":
+            resized_raw = _resize_uint8_rgb(raw_output_image, image_np.shape[1], image_np.shape[0], resample=Image.Resampling.LANCZOS)
+            final_output_image = self.compose_output(image_np, mask_np, resized_raw)
+            composite_summary = {"stage": "compose_debug", "enabled": True, "composite": _array_summary(final_output_image), "mode": mode}
+        else:
+            composite, composite_summary = self.compose_debug(image_np, mask_np, raw_output_image)
+            final_output_image = composite if composite is not None else raw_output_image
         debug_summary["stages"]["compose_debug"] = composite_summary
+        debug_summary["raw_output"] = _array_summary(raw_output_image)
+        debug_summary["final_output"] = _array_summary(final_output_image)
 
         if root is not None:
             artifact_paths: dict[str, str] = {}
-            if self.config.capture_artifacts:
+            if self.config.capture_artifacts or mode == "debug":
                 artifact_paths["source_pixels"] = self._write_artifact(root, "source_pixels", source_pixels)
                 artifact_paths["concat_pixels"] = self._write_artifact(root, "concat_pixels", concat_pixels)
-                artifact_paths["mask"] = self._write_artifact(root, "mask", np.repeat(_mask_2d(mask)[:, :, None], 3, axis=2))
-                artifact_paths["decoded_raw"] = self._write_artifact(root, "decoded_raw", decoded_image)
-                if composite is not None:
-                    artifact_paths["decoded_composite"] = self._write_artifact(root, "decoded_composite", composite)
-            if self.config.capture_tensors:
+                artifact_paths["mask"] = self._write_artifact(root, "mask", np.repeat(_mask_2d(working_mask)[:, :, None], 3, axis=2))
+                artifact_paths["decoded_raw"] = self._write_artifact(root, "decoded_raw", raw_output_image)
+                artifact_paths["decoded_final"] = self._write_artifact(root, "decoded_final", final_output_image)
+            if self.config.capture_tensors or mode == "debug":
                 artifact_paths["source_latent"] = self._write_tensor_artifact(root, "source_latent", source_latent)
                 artifact_paths["concat_latent"] = self._write_tensor_artifact(root, "concat_latent", concat_latent)
                 artifact_paths["denoise_mask"] = self._write_tensor_artifact(root, "denoise_mask", denoise_mask)
@@ -489,12 +609,20 @@ class FluxFillGlassPipeline:
 
         metadata = {
             "tier": self.config.tier,
+            "mode": mode,
+            "target_megapixels": float(self.config.target_megapixels),
             "unet_path": str(self.config.unet_path),
             "ae_path": str(self.config.ae_path),
             "conditioning_cache_path": str(self.config.conditioning_cache_path),
             "no_bb": True,
-            "no_scale": True,
+            "no_scale": mode != "scaled",
             "verify_c_concat": bool(self.config.verify_c_concat),
+            "original_width": int(image_np.shape[1]),
+            "original_height": int(image_np.shape[0]),
+            "working_width": int(working_image.shape[1]),
+            "working_height": int(working_image.shape[0]),
+            "scale_factor": float(scale_summary["scale_factor"]),
+            "scaled": bool(scale_summary["scaled"]),
             "source_latent_shape": [int(dim) for dim in source_latent.shape],
             "concat_latent_shape": [int(dim) for dim in concat_latent.shape],
             "denoise_mask_shape": [int(dim) for dim in denoise_mask.shape],
@@ -502,11 +630,12 @@ class FluxFillGlassPipeline:
         }
 
         return FluxFillGlassResult(
-            output_image=decoded_image,
+            output_image=final_output_image,
+            raw_output_image=raw_output_image,
             output_path=Path(self.config.output_path) if self.config.output_path is not None else None,
             seed=int(self.config.seed),
-            width=int(decoded_image.shape[1]),
-            height=int(decoded_image.shape[0]),
+            width=int(final_output_image.shape[1]),
+            height=int(final_output_image.shape[0]),
             timings=timings,
             metadata=metadata,
             debug_summary=debug_summary,

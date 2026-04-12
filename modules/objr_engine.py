@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import torch
 import numpy as np
 import gc
@@ -28,6 +29,8 @@ FLUX_FILL_GUIDANCE_DEFAULT = 15.0
 FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 24 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 16 * 1024
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
+FLUX_FILL_MASK_GROW = 16
+FLUX_FILL_MASK_BLUR = 6
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
     FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
@@ -135,7 +138,7 @@ def resolve_flux_fill_asset_paths(tier: str | None = None, *, progress: bool = T
     }
 
 
-def _expand_flux_fill_mask(mask: np.ndarray, *, grow: int = 16, blur: int = 6) -> np.ndarray:
+def prepare_flux_fill_mask(mask: np.ndarray, *, grow: int = FLUX_FILL_MASK_GROW, blur: int = FLUX_FILL_MASK_BLUR) -> np.ndarray:
     import cv2
 
     mask_np = np.asarray(mask)
@@ -155,6 +158,9 @@ def _expand_flux_fill_mask(mask: np.ndarray, *, grow: int = 16, blur: int = 6) -
             kernel_size += 1
         mask_np = cv2.GaussianBlur(mask_np, (kernel_size, kernel_size), 0)
     return mask_np.clip(0, 255).astype(np.uint8)
+
+
+_expand_flux_fill_mask = prepare_flux_fill_mask
 # --- Utility Functions (Ported from reference) ---
 
 def mask_unsqueeze(mask: torch.Tensor):
@@ -391,6 +397,20 @@ def remove_object(image: np.ndarray, mask: np.ndarray, seed: int = 0, mask_dilat
     final_np = (final_t.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
     return final_np
 
+def _select_flux_fill_mode(image: np.ndarray, requested_mode: str | None = None) -> str:
+    value = str(requested_mode or "").strip().lower()
+    if value:
+        if value in {"baseline", "debug", "scaled"}:
+            return value
+        raise ValueError(f"Unsupported Flux Fill glass mode: {requested_mode!r}. Expected baseline, debug, or scaled.")
+
+    height, width = image.shape[:2]
+    megapixels = float(width * height) / 1_000_000.0
+    if height % 8 == 0 and width % 8 == 0 and megapixels <= 1.0:
+        return "baseline"
+    return "scaled"
+
+
 @torch.inference_mode()
 def remove_object_flux_fill(
     image: np.ndarray,
@@ -401,9 +421,10 @@ def remove_object_flux_fill(
     tier: str | None = None,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
     progress: bool = True,
+    mode: str | None = None,
 ) -> np.ndarray:
     """
-    Remove objects with the direct Flux Fill runtime.
+    Remove objects with the W04 glass Flux Fill runtime.
     Asset resolution is intentionally delayed until this function is called.
     """
     if image.ndim != 3:
@@ -411,22 +432,23 @@ def remove_object_flux_fill(
     if mask.shape[:2] != image.shape[:2]:
         raise ValueError(f"Flux Fill mask shape {mask.shape[:2]} does not match image shape {image.shape[:2]}.")
 
-    flux_grow = max(0, int(mask_dilate or 0))
-    flux_mask = _expand_flux_fill_mask(np.asarray(mask), grow=flux_grow, blur=6)
+    flux_mask = prepare_flux_fill_mask(np.asarray(mask))
+    selected_mode = _select_flux_fill_mode(np.asarray(image), mode)
 
     asset_paths = resolve_flux_fill_asset_paths(tier=tier, progress=progress)
 
-    from backend.flux import FluxFillConfig, run_flux_fill
+    from backend.flux import FluxFillGlassConfig, run_flux_fill_glass
 
-    flux_config = FluxFillConfig(
+    flux_config = FluxFillGlassConfig(
         unet_path=asset_paths["unet_path"],
         ae_path=asset_paths["ae_path"],
         conditioning_cache_path=asset_paths["conditioning_cache_path"],
         tier=asset_paths["tier"],
         seed=int(seed),
         guidance=float(guidance),
+        mode=selected_mode,
     )
-    result = run_flux_fill(flux_config, HWC3(image), flux_mask, extend_factor=1.2, disable_pbar=True)
+    result = run_flux_fill_glass(flux_config, HWC3(image), flux_mask, disable_pbar=True)
     return HWC3(np.asarray(result.output_image))
 
 

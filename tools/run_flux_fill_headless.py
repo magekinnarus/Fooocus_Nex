@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.flux.flux_fill_pipeline import FluxFillConfig, run_flux_fill  # noqa: E402
+from backend.flux.flux_fill_glass_pipeline import FluxFillGlassConfig, run_flux_fill_glass  # noqa: E402
 
 DEFAULT_UNET_BY_TIER = {
     "q8_0": Path(r"models\unet\flux\flux1-fill-dev-Q8_0.gguf"),
@@ -63,11 +63,18 @@ def _resolve_unet_path(tier: str, unet: str | None) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run headless Flux Fill object removal on an image and mask.")
+    parser = argparse.ArgumentParser(description="Run headless Flux Fill glass object removal on an image and mask.")
     parser.add_argument("--image", required=True, help="Input RGB image path.")
     parser.add_argument("--mask", required=True, help="Input mask path. White/regenerate, black/keep.")
     parser.add_argument("--output", required=True, help="Output PNG path.")
     parser.add_argument("--metadata-output", default=None, help="Optional JSON metadata output path.")
+    parser.add_argument("--mode", default="baseline", choices=("baseline", "debug", "scaled"), help="Flux Fill glass mode.")
+    parser.add_argument("--target-megapixels", type=float, default=1.0, help="Target working megapixels when scaled mode is selected.")
+    parser.add_argument("--debug-output-dir", default=None, help="Optional directory for debug artifacts.")
+    parser.add_argument("--capture-artifacts", action="store_true", help="Write debug PNG artifacts.")
+    parser.add_argument("--capture-tensors", action="store_true", help="Write debug tensor artifacts.")
+    parser.add_argument("--save-composite", action="store_true", help="Write a masked composite debug artifact.")
+    parser.add_argument("--no-verify-c-concat", action="store_true", help="Skip c_concat verification preview.")
     parser.add_argument("--unet", default=None, help="Flux Fill GGUF UNet path. Overrides --tier.")
     parser.add_argument("--tier", default="q8_0", choices=sorted(DEFAULT_UNET_BY_TIER), help="Known Flux Fill model tier.")
     parser.add_argument("--ae", default=str(DEFAULT_AE_PATH), help="Flux AE path.")
@@ -76,9 +83,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=30, help="Euler denoise steps.")
     parser.add_argument("--guidance", type=float, default=15.0, help="Flux guidance embedding value.")
     parser.add_argument("--device", default=None, help="Optional torch device override, e.g. cuda or cpu.")
-    parser.add_argument("--extend-factor", type=float, default=1.2, help="Bounding-box context expansion factor.")
-    parser.add_argument("--tiled-vae", action="store_true", help="Decode with tiled VAE mode.")
-    parser.add_argument("--tile-size", type=int, default=64, help="VAE tile size when --tiled-vae is used.")
     parser.add_argument("--show-progress", action="store_true", help="Show sampler progress if the backend supports it.")
     parser.add_argument("--traceback", action="store_true", help="Include traceback details in JSON error output.")
     return parser.parse_args()
@@ -93,7 +97,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
     image = _load_rgb_image(image_path)
     mask = _load_mask(mask_path)
-    config = FluxFillConfig(
+    config = FluxFillGlassConfig(
         unet_path=unet_path,
         ae_path=Path(args.ae),
         conditioning_cache_path=Path(args.conditioning_cache),
@@ -105,14 +109,18 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         steps=args.steps,
         guidance=args.guidance,
         device=args.device,
+        debug_output_dir=Path(args.debug_output_dir) if args.debug_output_dir else None,
+        mode=args.mode,
+        target_megapixels=float(args.target_megapixels),
+        verify_c_concat=not args.no_verify_c_concat,
+        capture_artifacts=bool(args.capture_artifacts or args.mode == "debug"),
+        capture_tensors=bool(args.capture_tensors or args.mode == "debug"),
+        save_composite=bool(args.save_composite or args.mode == "debug"),
     )
-    result = run_flux_fill(
+    result = run_flux_fill_glass(
         config,
         image,
         mask,
-        extend_factor=args.extend_factor,
-        tiled_decode=args.tiled_vae,
-        tile_size=args.tile_size,
         disable_pbar=not args.show_progress,
     )
     _save_png(output_path, result.output_image)
@@ -127,6 +135,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "seed": result.seed,
         "timings": result.timings,
         "metadata": result.metadata,
+        "debug_summary": result.debug_summary,
     }
     if metadata_output is not None:
         metadata_output.parent.mkdir(parents=True, exist_ok=True)

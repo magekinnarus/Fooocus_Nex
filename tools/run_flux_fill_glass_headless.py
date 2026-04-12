@@ -65,6 +65,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask", required=True, help="Input mask path. White/regenerate, black/keep.")
     parser.add_argument("--output", required=True, help="Output PNG path.")
     parser.add_argument("--metadata-output", default=None, help="Optional JSON metadata output path.")
+    parser.add_argument("--mode", default="baseline", choices=("baseline", "debug", "scaled"), help="Flux Fill glass mode.")
+    parser.add_argument("--target-megapixels", type=float, default=1.0, help="Target working megapixels when scaled mode is selected.")
     parser.add_argument("--debug-output-dir", default=None, help="Optional directory for debug artifacts.")
     parser.add_argument("--capture-artifacts", action="store_true", help="Write debug PNG artifacts.")
     parser.add_argument("--capture-tensors", action="store_true", help="Write debug tensor artifacts.")
@@ -104,10 +106,12 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         guidance=args.guidance,
         device=args.device,
         debug_output_dir=Path(args.debug_output_dir) if args.debug_output_dir else None,
+        mode=args.mode,
+        target_megapixels=float(args.target_megapixels),
         verify_c_concat=not args.no_verify_c_concat,
-        capture_artifacts=bool(args.capture_artifacts),
-        capture_tensors=bool(args.capture_tensors),
-        save_composite=bool(args.save_composite),
+        capture_artifacts=bool(args.capture_artifacts or args.mode == "debug"),
+        capture_tensors=bool(args.capture_tensors or args.mode == "debug"),
+        save_composite=bool(args.save_composite or args.mode == "debug"),
     )
     result = run_flux_fill_glass(config, image, mask)
     _save_png(output_path, result.output_image)
