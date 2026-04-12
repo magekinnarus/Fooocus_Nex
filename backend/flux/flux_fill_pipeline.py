@@ -182,7 +182,8 @@ class FluxFillUNetInfo:
 @dataclass(frozen=True)
 class FluxFillLatentSource:
     context: Any
-    source_latent: torch.Tensor
+    source_latent: torch.Tensor        # VAE encode of UNMASKED original (KSampler noise start)
+    concat_latent: torch.Tensor        # VAE encode of gray-masked image (c_concat condition)
     denoise_mask: torch.Tensor
     width: int
     height: int
@@ -388,37 +389,64 @@ def prepare_flux_fill_latent_source(
     context = inpaint_pipeline.prepare(image, mask, extend_factor=extend_factor)
     timings["inpaint_prepare"] = time.perf_counter() - prepare_start
 
-    # Prevent object retention: Flux Fill must not see the original object 
-    # under the mask in its conditioning latent, otherwise it will modify 
-    # instead of cleanly removing. We zero it out before AE encoding.
-    bb_image_masked = context.bb_image.copy()
-    bb_image_masked[context.bb_mask > 127] = 0
-    context.bb_image = bb_image_masked
+    # --- ComfyUI InpaintModelConditioning dual-latent protocol ---
+    # 1. concat_latent: gray-masked image (masked area = 0.5) VAE encode
+    #    → goes to c_concat conditioning so the UNet sees what's masked
+    # 2. source_latent: UNMASKED original image VAE encode
+    #    → goes to KSampler as noise starting point (preserves context)
+    import numpy as np
+    bb_image_for_concat = context.bb_image.copy().astype(np.float32) / 255.0
+    bb_mask_2d = context.bb_mask
+    if bb_mask_2d.ndim == 3:
+        bb_mask_2d = bb_mask_2d[:, :, 0]
+    mask_binary = (bb_mask_2d > 127).astype(np.float32)  # 1.0 = regenerate
+    inv_mask = 1.0 - mask_binary  # 1.0 = keep
+    for ch in range(3):
+        bb_image_for_concat[:, :, ch] -= 0.5
+        bb_image_for_concat[:, :, ch] *= inv_mask
+        bb_image_for_concat[:, :, ch] += 0.5
+    bb_image_for_concat = np.clip(bb_image_for_concat * 255.0, 0, 255).astype(np.uint8)
 
     vae = None
     encode_start = time.perf_counter()
     try:
+        from modules.core import numpy_to_pytorch, encode_vae
+        from backend import resources
+
         vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
-        encoded = inpaint_pipeline.encode(context, vae)
+        resources.load_models_gpu([vae.patcher])
+
+        # Encode unmasked original → source_latent (KSampler noise init)
+        orig_pixels = numpy_to_pytorch(context.bb_image)
+        source_latent = encode_vae(vae=vae, pixels=orig_pixels)["samples"]
+
+        # Encode gray-masked → concat_latent (c_concat condition)
+        masked_pixels = numpy_to_pytorch(bb_image_for_concat)
+        concat_latent = encode_vae(vae=vae, pixels=masked_pixels)["samples"]
+
+        vae.patcher.detach()
+        resources.soft_empty_cache()
     finally:
         if vae is not None:
             _cleanup_model_patcher(vae.patcher)
         try:
-            from backend import resources
-
-            resources.soft_empty_cache()
+            from backend import resources as _res
+            _res.soft_empty_cache()
         except Exception:
             pass
     timings["ae_encode"] = time.perf_counter() - encode_start
 
-    source_latent = encoded.get("samples")
-    denoise_mask = encoded.get("noise_mask")
-    if not isinstance(source_latent, torch.Tensor):
-        raise FluxFillValidationError("Flux AE encode did not return tensor key 'samples'.")
-    if not isinstance(denoise_mask, torch.Tensor):
-        raise FluxFillValidationError("Flux AE encode did not return tensor key 'noise_mask'.")
-    if source_latent.ndim != 4 or int(source_latent.shape[1]) != 16:
-        raise FluxFillValidationError(f"Flux source latent must have shape [B, 16, H, W], got {list(source_latent.shape)}.")
+    # Build denoise_mask in latent space
+    mask_np = np.asarray(context.bb_mask)
+    if mask_np.ndim == 3:
+        mask_np = mask_np[:, :, 0]
+    mask_t = torch.from_numpy(mask_np).float() / 255.0
+    mask_t = mask_t[None, None, :, :]  # (1, 1, H, W)
+    denoise_mask = torch.nn.functional.max_pool2d(mask_t, kernel_size=8)
+    denoise_mask = (denoise_mask > 0.5).float()
+
+    if not isinstance(source_latent, torch.Tensor) or source_latent.ndim != 4 or int(source_latent.shape[1]) != 16:
+        raise FluxFillValidationError(f"Flux source latent must have shape [B, 16, H, W], got {list(source_latent.shape) if isinstance(source_latent, torch.Tensor) else 'non-tensor'}.")
     if denoise_mask.ndim != 4 or int(denoise_mask.shape[1]) != 1:
         raise FluxFillValidationError(f"Flux denoise mask must have shape [B, 1, H, W], got {list(denoise_mask.shape)}.")
     if tuple(source_latent.shape[0:1] + source_latent.shape[2:4]) != tuple(denoise_mask.shape[0:1] + denoise_mask.shape[2:4]):
@@ -429,6 +457,7 @@ def prepare_flux_fill_latent_source(
     return FluxFillLatentSource(
         context=context,
         source_latent=source_latent.detach().cpu(),
+        concat_latent=concat_latent.detach().cpu(),
         denoise_mask=denoise_mask.detach().cpu(),
         width=int(getattr(context, "target_w", source_latent.shape[-1] * 8)),
         height=int(getattr(context, "target_h", source_latent.shape[-2] * 8)),
@@ -514,11 +543,20 @@ def build_flux_fill_conditioning_payloads(
     source_latent: torch.Tensor,
     denoise_mask: torch.Tensor,
     *,
+    concat_latent: torch.Tensor | None = None,
     guidance: float = 15.0,
     batch_size: int | None = None,
     device: torch.device | str | None = None,
     dtype: torch.dtype | None = None,
 ) -> FluxFillConditioningPayloads:
+    """Build conditioning payloads matching ComfyUI InpaintModelConditioning protocol.
+
+    Args:
+        source_latent: VAE encode of UNMASKED original → KSampler latent_image.
+        concat_latent: VAE encode of gray-masked image → c_concat condition.
+                       If None, falls back to source_latent (legacy behavior).
+        denoise_mask: Binary mask in latent space (1=regenerate, 0=keep).
+    """
     if guidance <= 0:
         raise FluxFillValidationError(f"guidance must be > 0, got {guidance}.")
     if not isinstance(source_latent, torch.Tensor) or source_latent.ndim != 4 or int(source_latent.shape[1]) != 16:
@@ -530,14 +568,22 @@ def build_flux_fill_conditioning_payloads(
             f"denoise_mask shape {list(denoise_mask.shape)} does not match source_latent {list(source_latent.shape)}."
         )
 
+    # concat_latent for c_concat conditioning; falls back to source_latent
+    cond_image = concat_latent if concat_latent is not None else source_latent
+
     batch = int(batch_size or source_latent.shape[0])
     cross_attn, pooled_output = empty_conditioning.repeat(batch, device=device, dtype=dtype)
     source = source_latent.detach().to(device=device or source_latent.device, dtype=dtype or source_latent.dtype)
+    cond_img = cond_image.detach().to(device=device or cond_image.device, dtype=dtype or cond_image.dtype)
     mask = denoise_mask.detach().to(device=device or denoise_mask.device, dtype=dtype or denoise_mask.dtype)
     if int(source.shape[0]) != batch:
         if int(source.shape[0]) != 1:
             raise FluxFillValidationError(f"Cannot repeat source_latent batch {source.shape[0]} to {batch}.")
         source = source.repeat(batch, 1, 1, 1)
+    if int(cond_img.shape[0]) != batch:
+        if int(cond_img.shape[0]) != 1:
+            raise FluxFillValidationError(f"Cannot repeat concat_latent batch {cond_img.shape[0]} to {batch}.")
+        cond_img = cond_img.repeat(batch, 1, 1, 1)
     if int(mask.shape[0]) != batch:
         if int(mask.shape[0]) != 1:
             raise FluxFillValidationError(f"Cannot repeat denoise_mask batch {mask.shape[0]} to {batch}.")
@@ -546,7 +592,7 @@ def build_flux_fill_conditioning_payloads(
     payload = {
         "pooled_output": pooled_output,
         "guidance": float(guidance),
-        "concat_latent_image": source,
+        "concat_latent_image": cond_img,   # gray-masked latent for c_concat
         "denoise_mask": mask,
         "concat_mask": mask,
     }
@@ -555,7 +601,7 @@ def build_flux_fill_conditioning_payloads(
     return FluxFillConditioningPayloads(
         positive=positive,
         negative=negative,
-        latent_image=source,
+        latent_image=source,               # UNMASKED latent for KSampler
         denoise_mask=mask,
         guidance=float(guidance),
         batch_size=batch,
@@ -645,6 +691,7 @@ def denoise_flux_fill_latent(
     timings["unet_load"] = time.perf_counter() - unet_load_start
 
     source = latent_source.source_latent.detach().to(device=device, dtype=torch.float32)
+    concat = latent_source.concat_latent.detach().to(device=device, dtype=torch.float32)
     mask = latent_source.denoise_mask.detach().to(device=device, dtype=torch.float32)
     noise = create_flux_fill_noise(source, config.seed, device=device, dtype=source.dtype)
 
@@ -653,6 +700,7 @@ def denoise_flux_fill_latent(
         empty_conditioning,
         source,
         mask,
+        concat_latent=concat,
         guidance=config.guidance,
         batch_size=int(source.shape[0]),
         device=device,
