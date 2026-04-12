@@ -428,6 +428,7 @@ def prepare_flux_fill_latent_source(
         # Encode gray-masked → concat_latent (c_concat condition)
         # USER_REQUEST: Bypass encode.py to avoid double-normalization.
         # Flux.concat_cond (ldm_patched) will apply normalization itself.
+        resources.load_models_gpu([vae.patcher])
         pixels_for_vae = (numpy_to_pytorch(bb_image_for_concat).movedim(-1, 1) * 2.0) - 1.0
         if pixels_for_vae.ndim == 3:
             pixels_for_vae = pixels_for_vae.unsqueeze(0)
