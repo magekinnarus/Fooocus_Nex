@@ -630,6 +630,7 @@ class RemovalStage(PipelineStage):
                     mask_path=task_state.remove_mask_image,
                     seed=task_state.seed,
                     mask_dilate=task_state.objr_mask_dilate,
+                    engine=task_state.objr_engine,
                 )
                 objr_engine.unload_model()
                 if context.yield_result_callback is not None:

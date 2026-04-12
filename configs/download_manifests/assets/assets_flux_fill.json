@@ -11,10 +11,8 @@
       "loader_type": "flux_fill_unet",
       "artifact_type": "file",
       "destination": "unet",
-      "relative_path": "flux_fill/flux1-fill-dev-Q8_0.gguf",
+      "relative_path": "flux/flux1-fill-dev-Q8_0.gguf",
       "requires": [
-        "inpaint.flux_fill.text_encoder.t5xxl.q8_0",
-        "inpaint.flux_fill.text_encoder.clip_l",
         "inpaint.flux_fill.ae"
       ],
       "sources": [
@@ -33,10 +31,8 @@
       "loader_type": "flux_fill_unet",
       "artifact_type": "file",
       "destination": "unet",
-      "relative_path": "flux_fill/flux1-fill-dev-Q4_K_S.gguf",
+      "relative_path": "flux/flux1-fill-dev-Q4_K_S.gguf",
       "requires": [
-        "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m",
-        "inpaint.flux_fill.text_encoder.clip_l",
         "inpaint.flux_fill.ae"
       ],
       "sources": [
@@ -55,7 +51,7 @@
       "loader_type": "flux_fill_t5",
       "artifact_type": "file",
       "destination": "clip",
-      "relative_path": "flux_fill/t5-v1_1-xxl-encoder-Q8_0.gguf",
+      "relative_path": "flux/t5-v1_1-xxl-encoder-Q8_0.gguf",
       "sources": [
         {
           "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q8_0.gguf"
@@ -72,7 +68,7 @@
       "loader_type": "flux_fill_t5",
       "artifact_type": "file",
       "destination": "clip",
-      "relative_path": "flux_fill/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+      "relative_path": "flux/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
       "sources": [
         {
           "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/t5-v1_1-xxl-encoder-Q4_K_M.gguf"
@@ -89,7 +85,7 @@
       "loader_type": "flux_fill_clip_l",
       "artifact_type": "file",
       "destination": "clip",
-      "relative_path": "flux_fill/clip_l.safetensors",
+      "relative_path": "flux/clip_l.safetensors",
       "sources": [
         {
           "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/clip_l.safetensors"
@@ -106,7 +102,7 @@
       "loader_type": "flux_fill_ae",
       "artifact_type": "file",
       "destination": "vae",
-      "relative_path": "flux_fill/ae.safetensors",
+      "relative_path": "flux/ae.safetensors",
       "sources": [
         {
           "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/ae.safetensors"

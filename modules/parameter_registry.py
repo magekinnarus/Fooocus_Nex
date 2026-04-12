@@ -53,6 +53,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('remove_mask_image', 'remove_mask_image', None),
     ParamDef('remove_bg_enabled', 'remove_bg_enabled', False, bool),
     ParamDef('remove_obj_enabled', 'remove_obj_enabled', False, bool),
+    ParamDef('objr_engine', 'objr_engine', 'MAT (Local)', str),
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 0, int),
     ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
     ParamDef('bgr_jit', 'bgr_jit', True, bool),
@@ -149,5 +150,3 @@ def validate_ctrls(ctrls_dict: dict):
         
     if extra:
         print(f"[Parameter Registry] Warning: Unrecognized extra parameters in ctrls_dict: {extra}")
-
-

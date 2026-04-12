@@ -45,6 +45,7 @@ class TaskState:
     remove_base_image: Optional[np.ndarray] = None
     remove_bg_enabled: bool = False
     remove_obj_enabled: bool = False
+    objr_engine: str = "MAT (Local)"
     objr_mask_dilate: int = 0
     objr_model: str = "Places_512_FullData_G.pth"
     disable_preview: bool = False

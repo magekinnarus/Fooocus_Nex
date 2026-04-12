@@ -137,15 +137,16 @@ with shared.gradio_root:
                                     remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
                                     remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
                                 
+                                objr_engine = gr.Dropdown(label='Object Removal Engine', choices=['MAT (Local)', 'Flux Fill (Colab)'], value='MAT (Local)')
                                 gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
-                                        '* <b>Remove Object</b> uses MAT to clean the background defined by the mask.')
+                                        '* <b>Remove Object</b> uses the selected cleanup engine for the mask.')
 
                             with gr.Column():
                                 gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask'))
                                 remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
                                 bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
                                 bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
-                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='Expands the mask for Object Removal.')
+                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='MAT defaults to 0. Flux Fill switches this to 16; blur is handled internally.')
                                 objr_model = gr.Dropdown(label='OBJR Model', choices=['Places_512_FullData_G.pth'], value='Places_512_FullData_G.pth')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
@@ -586,6 +587,7 @@ with shared.gradio_root:
             'remove_mask_image': remove_mask_image,
             'remove_bg_enabled': remove_bg_enabled,
             'remove_obj_enabled': remove_obj_enabled,
+            'objr_engine': objr_engine,
             'objr_mask_dilate': objr_mask_dilate,
             'bgr_threshold': bgr_threshold,
             'bgr_jit': bgr_jit,
@@ -724,6 +726,3 @@ shared.gradio_root.launch(
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )
-
-
-

@@ -624,6 +624,11 @@ def outpaint_engine_state_change(outpaint_engine_version):
         outpaint_engine_version = modules.config.default_outpaint_engine_version
     return gr.update(value=outpaint_engine_version)
 
+def objr_engine_change(objr_engine_value):
+    if str(objr_engine_value or '').strip() == 'Flux Fill (Colab)':
+        return gr.update(value=16)
+    return gr.update(value=0)
+
 def parse_meta(raw_prompt_txt, is_generating):
     loaded_json = None
     if is_json(raw_prompt_txt):
@@ -793,6 +798,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     shared.gradio_root.load(outpaint_engine_state_change, inputs=[outpaint_engine_state], outputs=[
         outpaint_engine
     ], show_progress=False, queue=False)
+    objr_engine.change(objr_engine_change, inputs=objr_engine, outputs=objr_mask_dilate, queue=False, show_progress=False)
 
     prompt.input(parse_meta, inputs=[prompt, state_is_generating], outputs=[prompt, generate_button, load_parameter_button], queue=False, show_progress=False)
 
