@@ -27,7 +27,10 @@ class CONDRegular:
 
 class CONDNoiseShape(CONDRegular):
     def process_cond(self, batch_size, device, area, **kwargs):
-        data = self.cond[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
+        if area is None:
+            data = self.cond
+        else:
+            data = self.cond[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
         return self._copy_with(ldm_patched.modules.utils.repeat_to_batch_size(data, batch_size).to(device))
 
 
