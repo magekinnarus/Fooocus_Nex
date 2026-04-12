@@ -388,6 +388,13 @@ def prepare_flux_fill_latent_source(
     context = inpaint_pipeline.prepare(image, mask, extend_factor=extend_factor)
     timings["inpaint_prepare"] = time.perf_counter() - prepare_start
 
+    # Prevent object retention: Flux Fill must not see the original object 
+    # under the mask in its conditioning latent, otherwise it will modify 
+    # instead of cleanly removing. We zero it out before AE encoding.
+    bb_image_masked = context.bb_image.copy()
+    bb_image_masked[context.bb_mask > 127] = 0
+    context.bb_image = bb_image_masked
+
     vae = None
     encode_start = time.perf_counter()
     try:
