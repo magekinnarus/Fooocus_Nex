@@ -365,9 +365,17 @@ def _cleanup_model_patcher(model_patcher: Any) -> None:
             detach()
 
 
+import dataclasses
+import numpy as np
+
+@dataclasses.dataclass
+class SimpleFluxFillContext:
+    image: np.ndarray
+    mask: np.ndarray
+
 def prepare_flux_fill_latent_source(
-    image: Any,
-    mask: Any,
+    image: np.ndarray,
+    mask: np.ndarray,
     ae_path: Path | str,
     *,
     extend_factor: float = 1.2,
@@ -375,28 +383,25 @@ def prepare_flux_fill_latent_source(
     offload_device: torch.device | str | None = None,
     inpaint_pipeline: Any | None = None,
 ) -> FluxFillLatentSource:
-    _validate_image_mask_arrays(image, mask)
-    if extend_factor <= 0:
-        raise FluxFillValidationError(f"extend_factor must be > 0, got {extend_factor}.")
+    if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3:
+        raise FluxFillValidationError("image must be an RGB numpy array [H, W, 3].")
+    if not isinstance(mask, np.ndarray) or mask.ndim not in (2, 3):
+        raise FluxFillValidationError("mask must be a numpy array [H, W] or [H, W, C].")
 
-    if inpaint_pipeline is None:
-        from modules.pipeline.inpaint import InpaintPipeline
-
-        inpaint_pipeline = InpaintPipeline()
+    if image.shape[:2] != mask.shape[:2]:
+        raise FluxFillValidationError(f"Image shape {image.shape[:2]} and block mask shape {mask.shape[:2]} must match.")
 
     timings: dict[str, float] = {}
     prepare_start = time.perf_counter()
-    context = inpaint_pipeline.prepare(image, mask, extend_factor=extend_factor)
+    context = SimpleFluxFillContext(image=image, mask=mask)
     timings["inpaint_prepare"] = time.perf_counter() - prepare_start
 
-    # --- ComfyUI InpaintModelConditioning dual-latent protocol ---
-    # 1. concat_latent: gray-masked image (masked area = 0.5) VAE encode
-    #    → goes to c_concat conditioning so the UNet sees what's masked
-    # 2. source_latent: UNMASKED original image VAE encode
-    #    → goes to KSampler as noise starting point (preserves context)
-    import numpy as np
-    bb_image_for_concat = context.bb_image.copy().astype(np.float32) / 255.0
-    bb_mask_2d = context.bb_mask
+    # Base image for KSampler
+    bb_image_for_source = image.copy().astype(np.float32) / 255.0
+
+    # Gray-masked image for c_concat
+    bb_image_for_concat = image.copy().astype(np.float32) / 255.0
+    bb_mask_2d = mask
     if bb_mask_2d.ndim == 3:
         bb_mask_2d = bb_mask_2d[:, :, 0]
     mask_binary = (bb_mask_2d > 127).astype(np.float32)  # 1.0 = regenerate
@@ -417,7 +422,7 @@ def prepare_flux_fill_latent_source(
         resources.load_models_gpu([vae.patcher])
 
         # Encode unmasked original → source_latent (KSampler noise init)
-        orig_pixels = numpy_to_pytorch(context.bb_image)
+        orig_pixels = numpy_to_pytorch(image)
         source_latent = encode_vae(vae=vae, pixels=orig_pixels)["samples"]
 
         # Encode gray-masked → concat_latent (c_concat condition)
@@ -437,7 +442,7 @@ def prepare_flux_fill_latent_source(
     timings["ae_encode"] = time.perf_counter() - encode_start
 
     # Build denoise_mask in latent space
-    mask_np = np.asarray(context.bb_mask)
+    mask_np = np.asarray(mask)
     if mask_np.ndim == 3:
         mask_np = mask_np[:, :, 0]
     mask_t = torch.from_numpy(mask_np).float() / 255.0
@@ -459,8 +464,8 @@ def prepare_flux_fill_latent_source(
         source_latent=source_latent.detach().cpu(),
         concat_latent=concat_latent.detach().cpu(),
         denoise_mask=denoise_mask.detach().cpu(),
-        width=int(getattr(context, "target_w", source_latent.shape[-1] * 8)),
-        height=int(getattr(context, "target_h", source_latent.shape[-2] * 8)),
+        width=int(source_latent.shape[-1] * 8),
+        height=int(source_latent.shape[-2] * 8),
         timings=timings,
     )
 
@@ -526,13 +531,29 @@ def decode_flux_fill_latent(
 
     bb_image = decoded_images[0]
     stitched_image = None
-    if stitch:
+    if stitch and context is not None:
         stitch_start = time.perf_counter()
-        if inpaint_pipeline is None:
-            from modules.pipeline.inpaint import InpaintPipeline
+        import cv2
+        import numpy as np
 
-            inpaint_pipeline = InpaintPipeline()
-        stitched_image = inpaint_pipeline.stitch(context, bb_image)
+        canvas = context.image.copy().astype(np.float32)
+        generated = bb_image.astype(np.float32)
+
+        raw_mask = context.mask
+        if raw_mask.ndim == 3:
+            raw_mask = raw_mask[:, :, 0]
+        
+        # 1. Expand the mask slightly to ensure coverage of boundary
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        morph_mask = cv2.dilate(raw_mask, kernel, iterations=2)
+        
+        # 2. Heavy blur for smooth alpha blending transition
+        blur_mask = cv2.GaussianBlur(morph_mask, (63, 63), 0)
+        alpha = (blur_mask / 255.0)[..., np.newaxis]
+        
+        merged = (generated * alpha) + (canvas * (1.0 - alpha))
+        stitched_image = np.clip(merged, 0, 255).astype(np.uint8)
+
         timings["inpaint_stitch"] = time.perf_counter() - stitch_start
 
     return FluxFillDecodedImage(bb_image=bb_image, stitched_image=stitched_image, timings=timings)
