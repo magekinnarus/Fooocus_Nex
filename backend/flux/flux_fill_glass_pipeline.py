@@ -325,14 +325,40 @@ class FluxFillGlassPipeline:
             "full_image": True,
         }
 
-    def _encode_pixels(self, pixels: np.ndarray, ae_path: Path | str, *, stage_name: str) -> tuple[torch.Tensor, dict[str, Any]]:
-        import modules.core as core
+    def _pixels_to_torch(self, pixels: np.ndarray) -> torch.Tensor:
+        pixels_np = np.asarray(pixels, dtype=np.float32) / 255.0
+        pixels_np = np.ascontiguousarray(pixels_np[None].copy())
+        return torch.from_numpy(pixels_np).float()
 
+    def _encode_pixels(
+        self,
+        pixels: np.ndarray,
+        ae_path: Path | str,
+        *,
+        stage_name: str,
+        apply_latent_format: bool,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         vae = load_flux_ae(ae_path, load_device=self.device, offload_device=None)
         start = time.perf_counter()
         try:
             resources.load_models_gpu([vae.patcher])
-            latent = vae.encode(core.numpy_to_pytorch(pixels))["samples"]
+            pixels_tensor = self._pixels_to_torch(pixels)
+            if apply_latent_format:
+                latent = vae.encode(pixels_tensor)["samples"]
+            else:
+                vae_device = getattr(vae.patcher, "load_device", self.device)
+                first_stage_model = vae.first_stage_model
+                move_model = getattr(first_stage_model, "to", None)
+                if callable(move_model):
+                    move_model(device=vae_device, dtype=torch.float32)
+
+                pixels_for_vae = (pixels_tensor.movedim(-1, 1) * 2.0) - 1.0
+                if pixels_for_vae.ndim == 3:
+                    pixels_for_vae = pixels_for_vae.unsqueeze(0)
+                pixels_for_vae = pixels_for_vae.to(device=vae_device, dtype=torch.float32)
+                latent = first_stage_model.encode(pixels_for_vae)
+                if hasattr(latent, "sample"):
+                    latent = latent.sample()
         finally:
             try:
                 vae.patcher.detach()
@@ -343,14 +369,25 @@ class FluxFillGlassPipeline:
             "stage": stage_name,
             "latent": _tensor_summary(latent),
             "elapsed": elapsed,
+            "latent_format": "processed" if apply_latent_format else "raw_vae",
         }
         return latent.detach().cpu(), summary
 
     def encode_source_latent(self, source_pixels: np.ndarray) -> tuple[torch.Tensor, dict[str, Any]]:
-        return self._encode_pixels(source_pixels, self.config.ae_path, stage_name="encode_source_latent")
+        return self._encode_pixels(
+            source_pixels,
+            self.config.ae_path,
+            stage_name="encode_source_latent",
+            apply_latent_format=True,
+        )
 
     def encode_concat_latent(self, concat_pixels: np.ndarray) -> tuple[torch.Tensor, dict[str, Any]]:
-        return self._encode_pixels(concat_pixels, self.config.ae_path, stage_name="encode_concat_latent")
+        return self._encode_pixels(
+            concat_pixels,
+            self.config.ae_path,
+            stage_name="encode_concat_latent",
+            apply_latent_format=False,
+        )
 
     def prepare_denoise_mask(self, mask: np.ndarray, latent_shape: torch.Size | tuple[int, ...]) -> tuple[torch.Tensor, dict[str, Any]]:
         mask_binary = _binary_mask(mask)
