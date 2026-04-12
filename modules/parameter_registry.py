@@ -18,6 +18,13 @@ class ParamDef:
     transform: Optional[Callable] = None  # Optional transform (e.g., int, float)
 
 
+def _normalize_flux_fill_conditioning_value(value: Any) -> str:
+    normalized = str(value or 'empty').strip().lower().replace('-', '_').replace(' ', '_')
+    if normalized in {'background', 'background_conditioning', 'background_cond'}:
+        return 'background'
+    return 'empty'
+
+
 # Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
 # and are NOT listed as static ParamDefs here.
@@ -54,6 +61,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('remove_bg_enabled', 'remove_bg_enabled', False, bool),
     ParamDef('remove_obj_enabled', 'remove_obj_enabled', False, bool),
     ParamDef('objr_engine', 'objr_engine', 'MAT (Local)', str),
+    ParamDef('flux_fill_conditioning', 'flux_fill_conditioning', 'empty', _normalize_flux_fill_conditioning_value),
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 0, int),
     ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
     ParamDef('bgr_jit', 'bgr_jit', True, bool),

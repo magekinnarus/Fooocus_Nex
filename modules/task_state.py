@@ -46,6 +46,7 @@ class TaskState:
     remove_bg_enabled: bool = False
     remove_obj_enabled: bool = False
     objr_engine: str = "MAT (Local)"
+    flux_fill_conditioning: str = "empty"
     objr_mask_dilate: int = 0
     disable_preview: bool = False
     disable_intermediate_results: bool = False

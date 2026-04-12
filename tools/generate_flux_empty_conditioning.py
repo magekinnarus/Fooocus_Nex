@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -90,7 +90,8 @@ def _install_comfy_reference_stubs() -> None:
 def _load_flux_clip(comfy_root: Path, gguf_node_root: Path, clip_l_path: Path, t5_path: Path):
     if not comfy_root.exists():
         raise FileNotFoundError(f"ComfyUI reference root does not exist: {comfy_root}")
-    if not gguf_node_root.exists():
+    use_gguf_t5 = t5_path.suffix.lower() == ".gguf"
+    if use_gguf_t5 and not gguf_node_root.exists():
         raise FileNotFoundError(f"ComfyUI-GGUF reference root does not exist: {gguf_node_root}")
     if not clip_l_path.exists():
         raise FileNotFoundError(f"CLIP-L path does not exist: {clip_l_path}")
@@ -105,24 +106,32 @@ def _load_flux_clip(comfy_root: Path, gguf_node_root: Path, clip_l_path: Path, t
     import comfy.sd  # type: ignore
     import comfy.utils  # type: ignore
 
-    _, gguf_clip_loader, GGUFModelPatcher, GGMLOps = _load_gguf_support(gguf_node_root)
+    gguf_clip_loader = None
+    GGUFModelPatcher = None
+    GGMLOps = None
+    if use_gguf_t5:
+        _, gguf_clip_loader, GGUFModelPatcher, GGMLOps = _load_gguf_support(gguf_node_root)
 
     clip_l_sd = comfy.utils.load_torch_file(str(clip_l_path), safe_load=True)
-    if t5_path.suffix.lower() == ".gguf":
+    if use_gguf_t5:
         t5_sd = gguf_clip_loader(str(t5_path))
     else:
         t5_sd = comfy.utils.load_torch_file(str(t5_path), safe_load=True)
 
+    model_options = {
+        "initial_device": comfy.model_management.text_encoder_offload_device(),
+    }
+    if use_gguf_t5:
+        model_options["custom_operations"] = GGMLOps
+
     clip = comfy.sd.load_text_encoder_state_dicts(
         state_dicts=[clip_l_sd, t5_sd],
         clip_type=comfy.sd.CLIPType.FLUX,
-        model_options={
-            "custom_operations": GGMLOps,
-            "initial_device": comfy.model_management.text_encoder_offload_device(),
-        },
+        model_options=model_options,
         embedding_directory=None,
     )
-    clip.patcher = GGUFModelPatcher.clone(clip.patcher)
+    if use_gguf_t5:
+        clip.patcher = GGUFModelPatcher.clone(clip.patcher)
     return clip
 
 
@@ -147,11 +156,13 @@ def generate_empty_conditioning(args: argparse.Namespace) -> dict[str, Any]:
             "t5_path": str(t5_path),
             "comfy_root": str(comfy_root),
             "gguf_node_root": str(gguf_node_root),
+            "t5_format": "gguf" if t5_path.suffix.lower() == ".gguf" else "safetensors",
             "cross_attn_shape": list(cross_attn.shape),
             "pooled_output_shape": list(pooled_output.shape),
             "cross_attn_dtype": str(cross_attn.dtype),
             "pooled_output_dtype": str(pooled_output.dtype),
             "generator": "tools/generate_flux_empty_conditioning.py",
+            "conditioning_kind": "empty" if args.prompt == "" else "prompt",
         }
         conditioning = save_flux_empty_conditioning_cache(
             output_path,
@@ -185,12 +196,12 @@ def validate_existing(path: Path) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate or validate the true empty Flux conditioning cache for Flux Fill."
+        description="Generate or validate a Flux text-conditioning cache for Flux Fill."
     )
     parser.add_argument("--clip-l", default=r"models\clip\flux\clip_l.safetensors", help="Path to Flux CLIP-L weights.")
-    parser.add_argument("--t5", default=r"models\clip\flux\t5-v1_1-xxl-encoder-Q4_K_M.gguf", help="Path to Flux T5 encoder weights.")
+    parser.add_argument("--t5", default=r"models\clip\flux\t5xxl_fp16.safetensors", help="Path to Flux T5 encoder weights. Defaults to fp16 safetensors for reference-quality cache generation.")
     parser.add_argument("--output", default=r"models\clip\flux\flux_empty_conditioning.pt", help="Output cache path.")
-    parser.add_argument("--prompt", default="", help="Prompt text to encode. W01 expects the empty string.")
+    parser.add_argument("--prompt", default="", help="Prompt text to encode. Use an empty string for true empty conditioning.")
     parser.add_argument("--comfy-root", default=str(DEFAULT_COMFY_ROOT), help="Path to the local ComfyUI reference root.")
     parser.add_argument("--gguf-node-root", default=str(DEFAULT_GGUF_NODE_ROOT), help="Path to the ComfyUI-GGUF reference root.")
     parser.add_argument("--validate-existing", action="store_true", help="Validate an existing cache instead of generating one.")
@@ -201,8 +212,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        if args.prompt != "":
-            raise FluxFillValidationError("P4-M10-W01 empty-conditioning generation requires --prompt to be empty.")
         if args.validate_existing:
             result = validate_existing(Path(args.output))
         else:

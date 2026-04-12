@@ -138,6 +138,7 @@ with shared.gradio_root:
                                     remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
                                 
                                 objr_engine = gr.Dropdown(label='Object Removal Engine', choices=['MAT (Local)', 'Flux Fill (Colab)'], value='MAT (Local)')
+                                flux_fill_conditioning = gr.Dropdown(label='Flux Conditioning', choices=[('Empty', 'empty'), ('Background', 'background')], value='empty', info='Used only when Flux Fill is selected.')
                                 gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
                                         '* <b>Remove Object</b> uses the selected cleanup engine for the mask.')
 
@@ -587,6 +588,7 @@ with shared.gradio_root:
             'remove_bg_enabled': remove_bg_enabled,
             'remove_obj_enabled': remove_obj_enabled,
             'objr_engine': objr_engine,
+            'flux_fill_conditioning': flux_fill_conditioning,
             'objr_mask_dilate': objr_mask_dilate,
             'bgr_threshold': bgr_threshold,
             'bgr_jit': bgr_jit,

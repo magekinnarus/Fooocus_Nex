@@ -481,6 +481,7 @@ _persistent_asset_filenames = {
     },
     'clip': {
         'flux_empty_conditioning.pt',
+        'flux_background_conditioning.pt',
     },
 }
 

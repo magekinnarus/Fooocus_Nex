@@ -1,4 +1,5 @@
 import os
+import os
 from pathlib import Path
 import torch
 import numpy as np
@@ -29,6 +30,14 @@ FLUX_FILL_GUIDANCE_DEFAULT = 15.0
 FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 24 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 16 * 1024
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
+FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
+FLUX_FILL_BACKGROUND_CONDITIONING_ASSET_ID = "inpaint.flux_fill.background_conditioning"
+FLUX_FILL_CONDITIONING_EMPTY = "empty"
+FLUX_FILL_CONDITIONING_BACKGROUND = "background"
+FLUX_FILL_CONDITIONING_BY_KIND = {
+    FLUX_FILL_CONDITIONING_EMPTY: FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID,
+    FLUX_FILL_CONDITIONING_BACKGROUND: FLUX_FILL_BACKGROUND_CONDITIONING_ASSET_ID,
+}
 FLUX_FILL_MASK_GROW = 16
 FLUX_FILL_MASK_BLUR = 6
 FLUX_FILL_UNET_ASSET_BY_TIER = {
@@ -106,12 +115,40 @@ def _normalize_flux_fill_tier(tier: str | None) -> str:
     raise ValueError(f"Unsupported Flux Fill tier: {tier!r}. Expected q8_0 or q4_k_s.")
 
 
-def get_flux_empty_conditioning_cache_path() -> str:
-    return model_registry.ensure_asset("inpaint.flux_fill.empty_conditioning")
+def normalize_flux_fill_conditioning(conditioning: str | None) -> str:
+    if conditioning is None or str(conditioning).strip() == "":
+        return FLUX_FILL_CONDITIONING_EMPTY
+
+    value = str(conditioning).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {"empty", "empty_conditioning", "empty_cond"}:
+        return FLUX_FILL_CONDITIONING_EMPTY
+    if value in {"background", "background_conditioning", "background_cond"}:
+        return FLUX_FILL_CONDITIONING_BACKGROUND
+
+    raise ValueError(
+        "Unsupported Flux Fill conditioning: "
+        f"{conditioning!r}. Expected empty or background."
+    )
 
 
-def resolve_flux_fill_asset_paths(tier: str | None = None, *, progress: bool = True) -> dict[str, str]:
+def get_flux_fill_conditioning_cache_path(conditioning: str | None = None, *, progress: bool = True) -> str:
+    selected_conditioning = normalize_flux_fill_conditioning(conditioning)
+    asset_id = FLUX_FILL_CONDITIONING_BY_KIND[selected_conditioning]
+    return model_registry.ensure_asset(asset_id, progress=progress)
+
+
+def get_flux_empty_conditioning_cache_path(conditioning: str | None = None, *, progress: bool = True) -> str:
+    return get_flux_fill_conditioning_cache_path(conditioning, progress=progress)
+
+
+def resolve_flux_fill_asset_paths(
+    tier: str | None = None,
+    *,
+    conditioning: str | None = None,
+    progress: bool = True,
+) -> dict[str, str]:
     selected_tier = _normalize_flux_fill_tier(tier)
+    selected_conditioning = normalize_flux_fill_conditioning(conditioning)
     unet_asset_id = FLUX_FILL_UNET_ASSET_BY_TIER[selected_tier]
     unet_asset = model_registry.get_asset(unet_asset_id)
     if unet_asset is None:
@@ -127,6 +164,8 @@ def resolve_flux_fill_asset_paths(tier: str | None = None, *, progress: bool = T
 
     unet_path = model_registry.ensure_asset(unet_asset_id, progress=progress)
     ae_path = resolved_required_paths.get(FLUX_FILL_AE_ASSET_ID) or model_registry.ensure_asset(FLUX_FILL_AE_ASSET_ID, progress=progress)
+    conditioning_asset_id = FLUX_FILL_CONDITIONING_BY_KIND[selected_conditioning]
+    conditioning_cache_path = get_flux_empty_conditioning_cache_path(selected_conditioning, progress=progress)
 
     return {
         "tier": selected_tier,
@@ -134,8 +173,12 @@ def resolve_flux_fill_asset_paths(tier: str | None = None, *, progress: bool = T
         "unet_path": unet_path,
         "ae_asset_id": FLUX_FILL_AE_ASSET_ID,
         "ae_path": ae_path,
-        "conditioning_cache_path": get_flux_empty_conditioning_cache_path(),
+        "conditioning_kind": selected_conditioning,
+        "conditioning_asset_id": conditioning_asset_id,
+        "conditioning_cache_path": conditioning_cache_path,
     }
+
+
 
 
 def prepare_flux_fill_mask(mask: np.ndarray, *, grow: int = FLUX_FILL_MASK_GROW, blur: int = FLUX_FILL_MASK_BLUR) -> np.ndarray:
@@ -419,6 +462,7 @@ def remove_object_flux_fill(
     mask_dilate: int = 16,
     *,
     tier: str | None = None,
+    conditioning: str | None = None,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
     progress: bool = True,
     mode: str | None = None,
@@ -435,7 +479,7 @@ def remove_object_flux_fill(
     flux_mask = prepare_flux_fill_mask(np.asarray(mask))
     selected_mode = _select_flux_fill_mode(np.asarray(image), mode)
 
-    asset_paths = resolve_flux_fill_asset_paths(tier=tier, progress=progress)
+    asset_paths = resolve_flux_fill_asset_paths(tier=tier, conditioning=conditioning, progress=progress)
 
     from backend.flux import FluxFillGlassConfig, run_flux_fill_glass
 
@@ -460,10 +504,18 @@ def remove_object_with_engine(
     *,
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
+    flux_conditioning: str | None = None,
 ) -> np.ndarray:
     selected_engine = normalize_objr_engine(engine)
     if selected_engine == OBJR_ENGINE_FLUX_FILL:
-        return remove_object_flux_fill(image, mask, seed=seed, mask_dilate=mask_dilate, tier=flux_tier)
+        return remove_object_flux_fill(
+            image,
+            mask,
+            seed=seed,
+            mask_dilate=mask_dilate,
+            tier=flux_tier,
+            conditioning=flux_conditioning,
+        )
     return remove_object(image, mask, seed=seed, mask_dilate=mask_dilate)
 
 def remove_object_from_file(
@@ -474,6 +526,7 @@ def remove_object_from_file(
     *,
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
+    flux_conditioning: str | None = None,
 ) -> str:
     """Filepath invariant wrapper with explicit MAT/Flux dispatch."""
     with Image.open(image_path) as img:
@@ -488,6 +541,7 @@ def remove_object_from_file(
         mask_dilate=mask_dilate,
         engine=engine,
         flux_tier=flux_tier,
+        flux_conditioning=flux_conditioning,
     )
 
     return mask_processing.save_to_temp_png(res_np)

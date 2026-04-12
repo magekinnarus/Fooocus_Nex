@@ -631,6 +631,7 @@ class RemovalStage(PipelineStage):
                     seed=task_state.seed,
                     mask_dilate=task_state.objr_mask_dilate,
                     engine=task_state.objr_engine,
+                    flux_conditioning=task_state.flux_fill_conditioning,
                 )
                 objr_engine.unload_model()
                 if context.yield_result_callback is not None:

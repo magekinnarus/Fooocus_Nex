@@ -151,7 +151,7 @@ class FluxFillConfig:
             for label, value in (
                 ("UNet", self.unet_path),
                 ("AE", self.ae_path),
-                ("empty conditioning cache", self.conditioning_cache_path),
+                ("conditioning cache", self.conditioning_cache_path),
             ):
                 path = Path(value)
                 if not path.exists():

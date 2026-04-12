@@ -59,6 +59,23 @@
       ]
     },
     {
+      "id": "inpaint.flux_fill.text_encoder.t5xxl.fp16",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "t5xxl_fp16",
+      "internal_only": true,
+      "loader_type": "flux_fill_t5",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux/t5xxl_fp16.safetensors",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/t5xxl_fp16.safetensors"
+        }
+      ]
+    },
+    {
       "id": "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m",
       "kind": "text_encoder",
       "category": "inpaint",
@@ -123,6 +140,23 @@
       "sources": [
         {
           "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/flux_empty_conditioning.pt"
+        }
+      ]
+    },
+    {
+      "id": "inpaint.flux_fill.background_conditioning",
+      "kind": "text_encoder",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "background_cond",
+      "internal_only": true,
+      "loader_type": "flux_prompt_cond",
+      "artifact_type": "file",
+      "destination": "clip",
+      "relative_path": "flux/flux_background_conditioning.pt",
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/flux_background_conditioning.pt"
         }
       ]
     }

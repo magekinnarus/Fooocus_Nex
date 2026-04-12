@@ -115,7 +115,7 @@ class FluxFillGlassConfig:
         if self.target_megapixels <= 0:
             raise FluxFillValidationError(f"target_megapixels must be > 0, got {self.target_megapixels}.")
         if require_existing_assets:
-            for label, value in (("UNet", self.unet_path), ("AE", self.ae_path), ("empty conditioning cache", self.conditioning_cache_path)):
+            for label, value in (("UNet", self.unet_path), ("AE", self.ae_path), ("conditioning cache", self.conditioning_cache_path)):
                 path = Path(value)
                 if not path.exists():
                     raise FileNotFoundError(f"{label} path does not exist: {path}")
