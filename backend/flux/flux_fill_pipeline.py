@@ -426,8 +426,20 @@ def prepare_flux_fill_latent_source(
         source_latent = encode_vae(vae=vae, pixels=orig_pixels)["samples"]
 
         # Encode gray-masked → concat_latent (c_concat condition)
-        masked_pixels = numpy_to_pytorch(bb_image_for_concat)
-        concat_latent = encode_vae(vae=vae, pixels=masked_pixels)["samples"]
+        # USER_REQUEST: Bypass encode.py to avoid double-normalization.
+        # Flux.concat_cond (ldm_patched) will apply normalization itself.
+        pixels_for_vae = (numpy_to_pytorch(bb_image_for_concat).movedim(-1, 1) * 2.0) - 1.0
+        if pixels_for_vae.ndim == 3:
+            pixels_for_vae = pixels_for_vae.unsqueeze(0)
+        
+        pixels_for_vae = pixels_for_vae.to(device=vae.patcher.load_device, dtype=torch.float32)
+        
+        # We manually call the base VAE model to get RAW unscaled latents.
+        raw_latent = vae.first_stage_model.encode(pixels_for_vae)
+        if hasattr(raw_latent, "sample"):
+            raw_latent = raw_latent.sample()
+            
+        concat_latent = raw_latent.cpu()
 
         vae.patcher.detach()
         resources.soft_empty_cache()
