@@ -1,5 +1,11 @@
 ﻿"""Flux runtime helpers for Fooocus_Nex direct pipelines."""
 
+from .flux_fill_glass_pipeline import (
+    FluxFillGlassConfig,
+    FluxFillGlassPipeline,
+    FluxFillGlassResult,
+    run_flux_fill_glass,
+)
 from .flux_fill_pipeline import (
     EMPTY_FLUX_CROSS_ATTN_SHAPE,
     EMPTY_FLUX_POOLED_SHAPE,
@@ -38,6 +44,9 @@ __all__ = [
     "FluxFillConfig",
     "FluxFillDecodedImage",
     "FluxFillDenoiseResult",
+    "FluxFillGlassConfig",
+    "FluxFillGlassPipeline",
+    "FluxFillGlassResult",
     "FluxFillLatentSource",
     "FluxFillResult",
     "FluxFillUNetInfo",
@@ -54,6 +63,7 @@ __all__ = [
     "load_flux_fill_unet",
     "prepare_flux_fill_latent_source",
     "run_flux_fill",
+    "run_flux_fill_glass",
     "save_flux_empty_conditioning_cache",
     "validate_flux_fill_unet_config",
 ]
