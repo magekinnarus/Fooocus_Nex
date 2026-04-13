@@ -632,6 +632,10 @@ class RemovalStage(PipelineStage):
                     mask_dilate=task_state.objr_mask_dilate,
                     engine=task_state.objr_engine,
                     flux_conditioning=task_state.flux_fill_conditioning,
+                    flux_prompt=task_state.remove_prompt,
+                    flux_prompt_cache=task_state.flux_fill_prompt_cache,
+                    flux_mask_blur=task_state.objr_mask_blur,
+                    flux_blend_mode=task_state.objr_blend_mode,
                 )
                 objr_engine.unload_model()
                 if context.yield_result_callback is not None:

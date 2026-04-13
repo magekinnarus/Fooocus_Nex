@@ -1,6 +1,8 @@
 import os
-import os
+import argparse
+import hashlib
 from pathlib import Path
+import re
 import torch
 import numpy as np
 import gc
@@ -31,15 +33,19 @@ FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 24 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 16 * 1024
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
-FLUX_FILL_BACKGROUND_CONDITIONING_ASSET_ID = "inpaint.flux_fill.background_conditioning"
+FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
+FLUX_FILL_T5XXL_FP16_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.fp16"
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
-FLUX_FILL_CONDITIONING_BACKGROUND = "background"
+FLUX_FILL_CONDITIONING_PROMPT = "prompt"
 FLUX_FILL_CONDITIONING_BY_KIND = {
     FLUX_FILL_CONDITIONING_EMPTY: FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID,
-    FLUX_FILL_CONDITIONING_BACKGROUND: FLUX_FILL_BACKGROUND_CONDITIONING_ASSET_ID,
 }
+FLUX_FILL_PROMPT_CACHE_TEMP = "temp"
+FLUX_FILL_PROMPT_CACHE_PERMANENT = "permanent"
 FLUX_FILL_MASK_GROW = 16
 FLUX_FILL_MASK_BLUR = 6
+FLUX_FILL_BLEND_ALPHA = "alpha"
+FLUX_FILL_BLEND_MORPHOLOGICAL = "morphological"
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
     FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
@@ -122,14 +128,130 @@ def normalize_flux_fill_conditioning(conditioning: str | None) -> str:
     value = str(conditioning).strip().lower().replace("-", "_").replace(" ", "_")
     if value in {"empty", "empty_conditioning", "empty_cond"}:
         return FLUX_FILL_CONDITIONING_EMPTY
-    if value in {"background", "background_conditioning", "background_cond"}:
-        return FLUX_FILL_CONDITIONING_BACKGROUND
 
     raise ValueError(
         "Unsupported Flux Fill conditioning: "
-        f"{conditioning!r}. Expected empty or background."
+        f"{conditioning!r}. Expected empty conditioning. Non-empty prompts generate prompt conditioning at runtime."
     )
 
+
+def normalize_flux_fill_prompt_cache(cache_mode: str | None) -> str:
+    value = str(cache_mode or FLUX_FILL_PROMPT_CACHE_TEMP).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {"permanent", "persist", "persistent"}:
+        return FLUX_FILL_PROMPT_CACHE_PERMANENT
+    return FLUX_FILL_PROMPT_CACHE_TEMP
+
+
+def normalize_flux_fill_blend_mode(blend_mode: str | None) -> str:
+    value = str(blend_mode or FLUX_FILL_BLEND_ALPHA).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {"morphological", "morph", "fooocus"}:
+        return FLUX_FILL_BLEND_MORPHOLOGICAL
+    return FLUX_FILL_BLEND_ALPHA
+
+
+def _safe_prompt_slug(prompt: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", prompt.strip().lower()).strip("_")
+    return (slug or "prompt")[:48]
+
+
+def _primary_clip_root() -> Path:
+    roots = getattr(config, "paths_clips", None)
+    if isinstance(roots, (list, tuple)) and len(roots) > 0:
+        return Path(roots[0])
+    root = getattr(config, "path_clip", None)
+    if isinstance(root, (list, tuple)) and len(root) > 0:
+        return Path(root[0])
+    if root:
+        return Path(root)
+    return Path("models") / "clip"
+
+
+def _flux_fill_prompt_cache_path(prompt: str, clip_l_path: str, t5_path: str, cache_mode: str | None) -> Path:
+    payload = "\n".join([prompt, str(clip_l_path), str(t5_path)]).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()[:16]
+    filename = f"{_safe_prompt_slug(prompt)}_{digest}.pt"
+    if normalize_flux_fill_prompt_cache(cache_mode) == FLUX_FILL_PROMPT_CACHE_PERMANENT:
+        return _primary_clip_root() / "flux" / "generated_conditioning" / filename
+    return Path(config.path_temp_outputs) / "flux_conditioning" / filename
+
+
+def _first_existing_path(*candidates: Path | str | None) -> Path:
+    fallback = None
+    for candidate in candidates:
+        if candidate is None or str(candidate).strip() == "":
+            continue
+        path = Path(candidate)
+        if fallback is None:
+            fallback = path
+        if path.exists():
+            return path
+    if fallback is None:
+        raise ValueError("At least one candidate path is required.")
+    return fallback
+
+
+def _resolve_flux_fill_comfy_roots(default_comfy_root: Path, default_gguf_node_root: Path) -> tuple[Path, Path]:
+    comfy_root = _first_existing_path(
+        os.environ.get("FOOOCUS_NEX_COMFY_ROOT"),
+        default_comfy_root,
+        Path.cwd() / "ComfyUI_reference",
+        Path.cwd().parent / "ComfyUI_reference",
+        Path("/content/ComfyUI_reference"),
+        Path("/content/ComfyUI"),
+    )
+    gguf_node_root = _first_existing_path(
+        os.environ.get("FOOOCUS_NEX_GGUF_NODE_ROOT"),
+        comfy_root / "custom_nodes" / "ComfyUI-GGUF",
+        default_gguf_node_root,
+        Path("/content/ComfyUI_reference/custom_nodes/ComfyUI-GGUF"),
+        Path("/content/ComfyUI/custom_nodes/ComfyUI-GGUF"),
+    )
+    return comfy_root, gguf_node_root
+
+def generate_flux_fill_prompt_conditioning_cache(
+    prompt: str,
+    *,
+    cache_mode: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    progress: bool = True,
+) -> str:
+    prompt_text = str(prompt or "").strip()
+    if prompt_text == "":
+        raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
+
+    clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
+    t5_path = model_registry.ensure_asset(FLUX_FILL_T5XXL_FP16_ASSET_ID, progress=progress)
+    output_path = _flux_fill_prompt_cache_path(prompt_text, clip_l_path, t5_path, cache_mode)
+    if output_path.exists():
+        return str(output_path)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from tools.generate_flux_empty_conditioning import (
+            DEFAULT_COMFY_ROOT,
+            DEFAULT_GGUF_NODE_ROOT,
+            generate_empty_conditioning,
+        )
+
+        comfy_root, gguf_node_root = _resolve_flux_fill_comfy_roots(DEFAULT_COMFY_ROOT, DEFAULT_GGUF_NODE_ROOT)
+        generate_empty_conditioning(
+            argparse.Namespace(
+                clip_l=str(clip_l_path),
+                t5=str(t5_path),
+                output=str(output_path),
+                prompt=prompt_text,
+                comfy_root=str(comfy_root),
+                gguf_node_root=str(gguf_node_root),
+                validate_existing=False,
+                traceback=False,
+            )
+        )
+        return str(output_path)
+    finally:
+        gc.collect()
+        try:
+            resources.soft_empty_cache()
+        except Exception:
+            pass
 
 def get_flux_fill_conditioning_cache_path(conditioning: str | None = None, *, progress: bool = True) -> str:
     selected_conditioning = normalize_flux_fill_conditioning(conditioning)
@@ -145,10 +267,11 @@ def resolve_flux_fill_asset_paths(
     tier: str | None = None,
     *,
     conditioning: str | None = None,
+    conditioning_cache_path: str | None = None,
     progress: bool = True,
 ) -> dict[str, str]:
     selected_tier = _normalize_flux_fill_tier(tier)
-    selected_conditioning = normalize_flux_fill_conditioning(conditioning)
+    selected_conditioning = "prompt" if conditioning_cache_path else normalize_flux_fill_conditioning(conditioning)
     unet_asset_id = FLUX_FILL_UNET_ASSET_BY_TIER[selected_tier]
     unet_asset = model_registry.get_asset(unet_asset_id)
     if unet_asset is None:
@@ -164,8 +287,12 @@ def resolve_flux_fill_asset_paths(
 
     unet_path = model_registry.ensure_asset(unet_asset_id, progress=progress)
     ae_path = resolved_required_paths.get(FLUX_FILL_AE_ASSET_ID) or model_registry.ensure_asset(FLUX_FILL_AE_ASSET_ID, progress=progress)
-    conditioning_asset_id = FLUX_FILL_CONDITIONING_BY_KIND[selected_conditioning]
-    conditioning_cache_path = get_flux_empty_conditioning_cache_path(selected_conditioning, progress=progress)
+    conditioning_asset_id = None
+    if conditioning_cache_path:
+        resolved_conditioning_cache_path = str(conditioning_cache_path)
+    else:
+        conditioning_asset_id = FLUX_FILL_CONDITIONING_BY_KIND[selected_conditioning]
+        resolved_conditioning_cache_path = get_flux_empty_conditioning_cache_path(selected_conditioning, progress=progress)
 
     return {
         "tier": selected_tier,
@@ -175,7 +302,7 @@ def resolve_flux_fill_asset_paths(
         "ae_path": ae_path,
         "conditioning_kind": selected_conditioning,
         "conditioning_asset_id": conditioning_asset_id,
-        "conditioning_cache_path": conditioning_cache_path,
+        "conditioning_cache_path": resolved_conditioning_cache_path,
     }
 
 
@@ -459,10 +586,14 @@ def remove_object_flux_fill(
     image: np.ndarray,
     mask: np.ndarray,
     seed: int = 0,
-    mask_dilate: int = 16,
+    mask_dilate: int = FLUX_FILL_MASK_GROW,
     *,
+    mask_blur: int = FLUX_FILL_MASK_BLUR,
     tier: str | None = None,
     conditioning: str | None = None,
+    prompt: str | None = None,
+    prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
     progress: bool = True,
     mode: str | None = None,
@@ -476,10 +607,24 @@ def remove_object_flux_fill(
     if mask.shape[:2] != image.shape[:2]:
         raise ValueError(f"Flux Fill mask shape {mask.shape[:2]} does not match image shape {image.shape[:2]}.")
 
-    flux_mask = prepare_flux_fill_mask(np.asarray(mask))
+    flux_mask = prepare_flux_fill_mask(np.asarray(mask), grow=int(mask_dilate), blur=int(mask_blur))
     selected_mode = _select_flux_fill_mode(np.asarray(image), mode)
+    selected_blend_mode = normalize_flux_fill_blend_mode(blend_mode)
 
-    asset_paths = resolve_flux_fill_asset_paths(tier=tier, conditioning=conditioning, progress=progress)
+    prompt_cache_path = None
+    if str(prompt or "").strip():
+        prompt_cache_path = generate_flux_fill_prompt_conditioning_cache(
+            str(prompt or ""),
+            cache_mode=prompt_cache,
+            progress=progress,
+        )
+
+    asset_paths = resolve_flux_fill_asset_paths(
+        tier=tier,
+        conditioning=conditioning,
+        conditioning_cache_path=prompt_cache_path,
+        progress=progress,
+    )
 
     from backend.flux import FluxFillGlassConfig, run_flux_fill_glass
 
@@ -491,6 +636,7 @@ def remove_object_flux_fill(
         seed=int(seed),
         guidance=float(guidance),
         mode=selected_mode,
+        blend_mode=selected_blend_mode,
     )
     result = run_flux_fill_glass(flux_config, HWC3(image), flux_mask, disable_pbar=True)
     return HWC3(np.asarray(result.output_image))
@@ -505,6 +651,10 @@ def remove_object_with_engine(
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
     flux_conditioning: str | None = None,
+    flux_prompt: str | None = None,
+    flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
+    flux_blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
 ) -> np.ndarray:
     selected_engine = normalize_objr_engine(engine)
     if selected_engine == OBJR_ENGINE_FLUX_FILL:
@@ -513,8 +663,12 @@ def remove_object_with_engine(
             mask,
             seed=seed,
             mask_dilate=mask_dilate,
+            mask_blur=flux_mask_blur,
             tier=flux_tier,
             conditioning=flux_conditioning,
+            prompt=flux_prompt,
+            prompt_cache=flux_prompt_cache,
+            blend_mode=flux_blend_mode,
         )
     return remove_object(image, mask, seed=seed, mask_dilate=mask_dilate)
 
@@ -527,6 +681,10 @@ def remove_object_from_file(
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
     flux_conditioning: str | None = None,
+    flux_prompt: str | None = None,
+    flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
+    flux_blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
 ) -> str:
     """Filepath invariant wrapper with explicit MAT/Flux dispatch."""
     with Image.open(image_path) as img:
@@ -542,6 +700,10 @@ def remove_object_from_file(
         engine=engine,
         flux_tier=flux_tier,
         flux_conditioning=flux_conditioning,
+        flux_prompt=flux_prompt,
+        flux_prompt_cache=flux_prompt_cache,
+        flux_mask_blur=flux_mask_blur,
+        flux_blend_mode=flux_blend_mode,
     )
 
     return mask_processing.save_to_temp_png(res_np)

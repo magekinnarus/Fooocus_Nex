@@ -30,6 +30,15 @@
             capturedStatus: 'Step 2 BB mask captured.',
             clearedStatus: 'Step 2 BB mask cleared.',
         },
+        remove: {
+            rootId: 'remove_base_image_slot',
+            fieldId: 'remove_mask_data',
+            canvasId: 'remove-mask-overlay',
+            statusId: 'remove-mask-status',
+            emptyStatus: 'Load a base image, then paint the Remove mask.',
+            capturedStatus: 'Remove mask captured.',
+            clearedStatus: 'Remove mask cleared.',
+        },
     };
 
     const state = {
@@ -42,22 +51,26 @@
         enabledModes: {
             context: false,
             bb: false,
-            outpaint_bb: false
+            outpaint_bb: false,
+            remove: false
         },
         retries: {
             context: 0,
             bb: 0,
-            outpaint_bb: 0
+            outpaint_bb: 0,
+            remove: 0
         },
         refreshPending: {
             context: false,
             bb: false,
-            outpaint_bb: false
+            outpaint_bb: false,
+            remove: false
         },
         surfaces: {
             context: createSurface('context'),
             bb: createSurface('bb'),
             outpaint_bb: createSurface('outpaint_bb'),
+            remove: createSurface('remove'),
         },
     };
 
@@ -123,20 +136,24 @@
         const outpaintBtn = document.getElementById('outpaint-mask-mode-bb');
         const inpaintDisableBtn = document.getElementById('inpaint-mask-mode-disable');
         const outpaintDisableBtn = document.getElementById('outpaint-mask-mode-disable');
+        const removeBtn = document.getElementById('remove-mask-mode-bb');
+        const removeDisableBtn = document.getElementById('remove-mask-mode-disable');
 
         if (contextBtn) contextBtn.classList.toggle('active', state.enabledModes.context);
         if (bbBtn) bbBtn.classList.toggle('active', state.enabledModes.bb);
         if (outpaintBtn) outpaintBtn.classList.toggle('active', state.enabledModes.outpaint_bb);
+        if (removeBtn) removeBtn.classList.toggle('active', state.enabledModes.remove);
         
         if (inpaintDisableBtn) inpaintDisableBtn.classList.toggle('active', !state.enabledModes.context && !state.enabledModes.bb);
         if (outpaintDisableBtn) outpaintDisableBtn.classList.toggle('active', !state.enabledModes.outpaint_bb);
+        if (removeDisableBtn) removeDisableBtn.classList.toggle('active', !state.enabledModes.remove);
     }
     function updateToolButtons() {
-        ['inpaint-mask-brush', 'inpaint-context-brush', 'inpaint-bb-brush', 'outpaint-mask-brush'].forEach((id) => {
+        ['inpaint-mask-brush', 'inpaint-context-brush', 'inpaint-bb-brush', 'outpaint-mask-brush', 'remove-mask-brush'].forEach((id) => {
             const button = document.getElementById(id);
             if (button) button.classList.toggle('active', state.tool === 'brush');
         });
-        ['inpaint-mask-erase', 'inpaint-context-erase', 'inpaint-bb-erase', 'outpaint-mask-erase'].forEach((id) => {
+        ['inpaint-mask-erase', 'inpaint-context-erase', 'inpaint-bb-erase', 'outpaint-mask-erase', 'remove-mask-erase'].forEach((id) => {
             const button = document.getElementById(id);
             if (button) button.classList.toggle('active', state.tool === 'erase');
         });
@@ -146,6 +163,7 @@
         if (state.activeMode === 'context') return 'Context mask';
         if (state.activeMode === 'bb') return 'Inpaint BB mask';
         if (state.activeMode === 'outpaint_bb') return 'Outpaint BB mask';
+        if (state.activeMode === 'remove') return 'Remove mask';
         return 'Mask';
     }
 
@@ -164,9 +182,9 @@
     }
 
     function getBrushSizeInput(mode = state.activeMode) {
-        return mode === 'outpaint_bb'
-            ? document.getElementById('outpaint-mask-size')
-            : document.getElementById('inpaint-mask-size');
+        if (mode === 'outpaint_bb') return document.getElementById('outpaint-mask-size');
+        if (mode === 'remove') return document.getElementById('remove-mask-size');
+        return document.getElementById('inpaint-mask-size');
     }
 
     function setBrushSize(nextSize, mode = state.activeMode) {
@@ -228,6 +246,8 @@
             state.enabledModes.bb = true;
         } else if (mode === 'outpaint_bb') {
             state.enabledModes.outpaint_bb = true;
+        } else if (mode === 'remove') {
+            state.enabledModes.remove = true;
         }
 
         state.activeMode = mode;
@@ -242,7 +262,8 @@
             return;
         }
         setStatus(mode === 'context' ? 'Step 1 context mask ready.' :
-            mode === 'bb' ? 'Step 2 Inpaint BB mask ready.' : 'Step 2 Outpaint BB mask ready.');
+            mode === 'bb' ? 'Step 2 Inpaint BB mask ready.' :
+            mode === 'outpaint_bb' ? 'Step 2 Outpaint BB mask ready.' : 'Remove mask ready.');
     }
 
     function disableMasking(group) {
@@ -251,10 +272,12 @@
             state.enabledModes.bb = false;
         } else if (group === 'outpaint') {
             state.enabledModes.outpaint_bb = false;
+        } else if (group === 'remove') {
+            state.enabledModes.remove = false;
         }
         updateModeButtons();
         refreshAll();
-        setStatus(group === 'inpaint' ? 'Inpaint masking disabled.' : 'Outpaint masking disabled.');
+        setStatus(group === 'inpaint' ? 'Inpaint masking disabled.' : group === 'outpaint' ? 'Outpaint masking disabled.' : 'Remove masking disabled.');
     }
 
     function hasPaint(surface) {
@@ -590,6 +613,12 @@
         const outpaintSizeInput = document.getElementById('outpaint-mask-size');
         const outpaintModeBtn = document.getElementById('outpaint-mask-mode-bb');
         const outpaintDisableBtn = document.getElementById('outpaint-mask-mode-disable');
+        const removeBrushBtn = document.getElementById('remove-mask-brush');
+        const removeEraseBtn = document.getElementById('remove-mask-erase');
+        const removeClearBtn = document.getElementById('remove-mask-clear');
+        const removeSizeInput = document.getElementById('remove-mask-size');
+        const removeModeBtn = document.getElementById('remove-mask-mode-bb');
+        const removeDisableBtn = document.getElementById('remove-mask-mode-disable');
 
         if (outpaintBrushBtn && !outpaintBrushBtn.dataset.bound) {
             outpaintBrushBtn.dataset.bound = '1';
@@ -626,6 +655,41 @@
             outpaintDisableBtn.dataset.bound = '1';
             outpaintDisableBtn.addEventListener('click', () => disableMasking('outpaint'));
         }
+        if (removeBrushBtn && !removeBrushBtn.dataset.bound) {
+            removeBrushBtn.dataset.bound = '1';
+            removeBrushBtn.addEventListener('click', () => {
+                setActiveMode('remove');
+                setTool('brush');
+            });
+        }
+        if (removeEraseBtn && !removeEraseBtn.dataset.bound) {
+            removeEraseBtn.dataset.bound = '1';
+            removeEraseBtn.addEventListener('click', () => {
+                setActiveMode('remove');
+                setTool('erase');
+            });
+        }
+        if (removeClearBtn && !removeClearBtn.dataset.bound) {
+            removeClearBtn.dataset.bound = '1';
+            removeClearBtn.addEventListener('click', () => {
+                setActiveMode('remove');
+                clearMask('remove');
+            });
+        }
+        if (removeSizeInput && !removeSizeInput.dataset.bound) {
+            removeSizeInput.dataset.bound = '1';
+            removeSizeInput.addEventListener('input', () => {
+                state.brushSize = parseInt(removeSizeInput.value, 10) || 36;
+            });
+        }
+        if (removeModeBtn && !removeModeBtn.dataset.bound) {
+            removeModeBtn.dataset.bound = '1';
+            removeModeBtn.addEventListener('click', () => setActiveMode('remove'));
+        }
+        if (removeDisableBtn && !removeDisableBtn.dataset.bound) {
+            removeDisableBtn.dataset.bound = '1';
+            removeDisableBtn.addEventListener('click', () => disableMasking('remove'));
+        }
 
         updateModeButtons();
         if (!state.shortcutsBound) {
@@ -636,7 +700,7 @@
         updateToolButtons();
         
         // Mark as initialized if we found the main controls
-        if (brushBtn && outpaintBrushBtn) {
+        if (brushBtn && outpaintBrushBtn && removeBrushBtn) {
             state.initialized = true;
         }
     }
@@ -702,6 +766,7 @@
         refreshMode('context');
         refreshMode('bb');
         refreshMode('outpaint_bb');
+        refreshMode('remove');
     }
 
     function start() {

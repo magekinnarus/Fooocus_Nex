@@ -129,7 +129,7 @@ with shared.gradio_root:
                     with gr.Tab(label='Remove', id='remove_tab') as remove_tab:
                         with gr.Row():
                             with gr.Column():
-                                gr.HTML(make_nex_image_slot('remove_base_image_slot', 'remove_base_image_bridge', 'Base Image', 'data-upload-mode="api" data-path-field-id="remove_base_image_path" data-workspace-field-id="remove_base_workspace_id"'))
+                                gr.HTML(make_nex_image_slot('remove_base_image_slot', 'remove_base_image_bridge', 'Base Image', 'data-upload-mode="api" data-path-field-id="remove_base_image_path" data-workspace-field-id="remove_base_workspace_id" data-tool-group="remove"'))
                                 remove_base_image = gr.Image(label='Base Image', sources='upload', type='filepath', height=500, show_label=False, elem_id='remove_base_image_bridge', elem_classes=['nex-image-slot-bridge'])
                                 remove_base_image_path = gr.Textbox(value='', visible=True, elem_id='remove_base_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 remove_base_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_base_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
@@ -138,16 +138,41 @@ with shared.gradio_root:
                                     remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
                                 
                                 objr_engine = gr.Dropdown(label='Object Removal Engine', choices=['MAT (Local)', 'Flux Fill (Colab)'], value='MAT (Local)')
-                                flux_fill_conditioning = gr.Dropdown(label='Flux Conditioning', choices=[('Empty', 'empty'), ('Background', 'background')], value='empty', info='Used only when Flux Fill is selected.')
+                                remove_prompt = gr.Textbox(placeholder='Optional Flux Fill prompt. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
+                                flux_fill_conditioning = gr.Textbox(value='empty', visible=False, elem_id='flux_fill_conditioning', show_label=False, container=False)
+                                flux_fill_prompt_cache = gr.Textbox(value='temp', visible=False, elem_id='flux_fill_prompt_cache', show_label=False, container=False)
+                                objr_blend_mode = gr.Dropdown(label='Flux Blend', choices=[('Alpha', 'alpha'), ('Morphological', 'morphological')], value='alpha', info='Morphological uses the Fooocus-style blend curve.')
                                 gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
                                         '* <b>Remove Object</b> uses the selected cleanup engine for the mask.')
 
                             with gr.Column():
-                                gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask'))
+                                gr.HTML("""
+<div id="remove-mask-tools" class="mask-workflow-toolbar" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
+  <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
+    <span style="font-size:0.9rem; font-weight:700; color:var(--body-text-color); margin-right:4px;">REMOVE MASK</span>
+    <div style="display:flex; gap:8px; padding:2px; background:rgba(0,0,0,0.1); border-radius:8px;">
+      <button type="button" class="mask-tool-btn" id="remove-mask-mode-bb" title="Enable Remove Mask">Mask</button>
+      <button type="button" class="mask-tool-btn active" id="remove-mask-mode-disable" title="Disable Masking">Disable</button>
+    </div>
+  </div>
+  <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
+    <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
+      <span style="white-space:nowrap; opacity:0.8;">Brush Size</span>
+      <input id="remove-mask-size" type="range" min="8" max="160" step="1" value="36" style="flex-grow:1; accent-color:var(--button-primary-background-fill);">
+    </label>
+    <span id="remove-mask-status" style="font-size:0.85rem; opacity:0.6; font-style:italic; min-width:120px; text-align:right;">Ready</span>
+  </div>
+</div>
+""")
+                                remove_mask_data = gr.Textbox(value='', visible=True, elem_id='remove_mask_data', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask', 'data-upload-mode="api" data-path-field-id="remove_mask_image_path" data-workspace-field-id="remove_mask_workspace_id"'))
                                 remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                remove_mask_image_path = gr.Textbox(value='', visible=True, elem_id='remove_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                remove_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
                                 bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
-                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='MAT defaults to 0. Flux Fill switches this to 16; blur is handled internally.')
+                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='MAT defaults to 0. Flux Fill switches this to 16.')
+                                objr_mask_blur = gr.Slider(label='Flux Mask Blur', minimum=0, maximum=64, step=1, value=6, info='Flux-only softening around the mask edge. Lower keeps refinement sharper.')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
                         cn_image_paths = []
@@ -584,12 +609,17 @@ with shared.gradio_root:
             'outpaint_bb_image': outpaint_bb_image_path,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
             'remove_base_image': remove_base_image_path,
-            'remove_mask_image': remove_mask_image,
+            'remove_prompt': remove_prompt,
+            'remove_mask_image': remove_mask_image_path,
+            'remove_mask_data': remove_mask_data,
             'remove_bg_enabled': remove_bg_enabled,
             'remove_obj_enabled': remove_obj_enabled,
             'objr_engine': objr_engine,
             'flux_fill_conditioning': flux_fill_conditioning,
+            'flux_fill_prompt_cache': flux_fill_prompt_cache,
             'objr_mask_dilate': objr_mask_dilate,
+            'objr_mask_blur': objr_mask_blur,
+            'objr_blend_mode': objr_blend_mode,
             'bgr_threshold': bgr_threshold,
             'bgr_jit': bgr_jit,
         })
@@ -661,6 +691,9 @@ with shared.gradio_root:
             'inpaint_mask_image_path': inpaint_mask_image_path,
             'inpaint_mask_workspace_id': inpaint_mask_workspace_id,
             'outpaint_bb_mask_data': outpaint_bb_mask_data,
+            'remove_mask_data': remove_mask_data,
+            'remove_mask_image_path': remove_mask_image_path,
+            'remove_mask_workspace_id': remove_mask_workspace_id,
             'outpaint_input_workspace_id': outpaint_input_workspace_id,
             'outpaint_mask_image_path': outpaint_mask_image_path,
             'outpaint_mask_workspace_id': outpaint_mask_workspace_id,

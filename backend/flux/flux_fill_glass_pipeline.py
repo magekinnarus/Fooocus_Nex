@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import time
@@ -9,6 +9,8 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image
+
+import modules.blending as blending
 
 from backend import resources
 from backend.flux.flux_fill_pipeline import (
@@ -28,6 +30,8 @@ from backend.flux.flux_fill_pipeline import (
 
 FLUX_FILL_GLASS_MODES = ("baseline", "debug", "scaled")
 FLUX_FILL_GLASS_DEFAULT_MODE = "baseline"
+FLUX_FILL_GLASS_BLEND_MODES = ("alpha", "morphological")
+FLUX_FILL_GLASS_DEFAULT_BLEND_MODE = "alpha"
 
 
 def _normalize_glass_mode(mode: str | None) -> str:
@@ -38,6 +42,16 @@ def _normalize_glass_mode(mode: str | None) -> str:
         f"Unsupported Flux Fill glass mode: {mode!r}. Expected one of {list(FLUX_FILL_GLASS_MODES)}."
     )
 
+
+def _normalize_blend_mode(blend_mode: str | None) -> str:
+    value = str(blend_mode or FLUX_FILL_GLASS_DEFAULT_BLEND_MODE).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {"morph", "fooocus"}:
+        value = "morphological"
+    if value in FLUX_FILL_GLASS_BLEND_MODES:
+        return value
+    raise FluxFillValidationError(
+        f"Unsupported Flux Fill glass blend mode: {blend_mode!r}. Expected one of {list(FLUX_FILL_GLASS_BLEND_MODES)}."
+    )
 
 def _round_down_to_multiple(value: int, multiple: int) -> int:
     if multiple < 1:
@@ -92,6 +106,7 @@ class FluxFillGlassConfig:
     device: str | None = None
     debug_output_dir: Path | str | None = None
     mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
+    blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE
     target_megapixels: float = 1.0
     verify_c_concat: bool = True
     capture_artifacts: bool = False
@@ -100,6 +115,7 @@ class FluxFillGlassConfig:
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
         self.mode = _normalize_glass_mode(self.mode)
+        self.blend_mode = _normalize_blend_mode(self.blend_mode)
         if self.steps < 1:
             raise FluxFillValidationError(f"steps must be >= 1, got {self.steps}.")
         if self.cfg != 1.0:
@@ -195,6 +211,21 @@ def _mask_2d(mask: np.ndarray) -> np.ndarray:
 def _binary_mask(mask: np.ndarray) -> np.ndarray:
     return (_mask_2d(mask) > 127).astype(np.uint8)
 
+
+def _max_filter_opencv(x: np.ndarray, ksize: int = 3) -> np.ndarray:
+    import cv2
+
+    return cv2.dilate(x, np.ones((ksize, ksize), dtype=np.int16))
+
+
+def _morphological_blend_mask(mask: np.ndarray) -> np.ndarray:
+    mask_binary = _binary_mask(mask)
+    x_int16 = np.zeros_like(mask_binary, dtype=np.int16)
+    x_int16[mask_binary > 0] = 256
+    for _ in range(32):
+        maxed = _max_filter_opencv(x_int16, ksize=3) - 8
+        x_int16 = np.maximum(maxed, x_int16)
+    return np.clip(x_int16, 0, 255).astype(np.uint8)
 
 def _ensure_uint8_rgb(image: np.ndarray) -> np.ndarray:
     image_np = np.asarray(image)
@@ -486,9 +517,15 @@ class FluxFillGlassPipeline:
         return composite, {"stage": "compose_debug", "enabled": True, "composite": _array_summary(composite)}
 
     def compose_output(self, original_image: np.ndarray, mask: np.ndarray, decoded_image: np.ndarray) -> np.ndarray:
-        mask_alpha = _mask_2d(mask).astype(np.float32)[..., None] / 255.0
+        original_rgb = _ensure_uint8_rgb(original_image).astype(np.float32)
+        decoded_rgb = _ensure_uint8_rgb(decoded_image).astype(np.float32)
+        if self.config.blend_mode == "morphological":
+            mask_alpha = _morphological_blend_mask(mask).astype(np.float32)[..., None] / 255.0
+            mask_alpha = blending.apply_sin2_curve(mask_alpha)
+        else:
+            mask_alpha = _mask_2d(mask).astype(np.float32)[..., None] / 255.0
         composite = np.clip(
-            decoded_image.astype(np.float32) * mask_alpha + _ensure_uint8_rgb(original_image).astype(np.float32) * (1.0 - mask_alpha),
+            decoded_rgb * mask_alpha + original_rgb * (1.0 - mask_alpha),
             0,
             255,
         ).astype(np.uint8)
@@ -647,6 +684,7 @@ class FluxFillGlassPipeline:
         metadata = {
             "tier": self.config.tier,
             "mode": mode,
+            "blend_mode": self.config.blend_mode,
             "target_megapixels": float(self.config.target_megapixels),
             "unet_path": str(self.config.unet_path),
             "ae_path": str(self.config.ae_path),
@@ -681,4 +719,3 @@ class FluxFillGlassPipeline:
 
 def run_flux_fill_glass(config: FluxFillGlassConfig, image: np.ndarray, mask: np.ndarray, *, disable_pbar: bool = True) -> FluxFillGlassResult:
     return FluxFillGlassPipeline(config).run(image, mask, disable_pbar=disable_pbar)
-

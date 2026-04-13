@@ -737,3 +737,20 @@ def compute_outpaint_step2_mask(workspace_id, mask_b64):
         prefix='outpaint_mask'
     )
     return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
+
+
+def compute_remove_mask(workspace_id, mask_b64):
+    if not mask_b64:
+        return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
+
+    remove_mask = ensure_numpy(mask_b64, mode='L')
+    if remove_mask is None:
+        return gr.update(), gr.update(value=workspace_id or ""), gr.update()
+
+    remove_mask_path, resolved_workspace_id = save_to_workspace_png(
+        remove_mask,
+        workspace_id=workspace_id,
+        filename=f'remove_mask_{uuid.uuid4().hex}.png',
+        prefix='remove_mask'
+    )
+    return gr.update(value=remove_mask_path), gr.update(value=resolved_workspace_id), gr.update()

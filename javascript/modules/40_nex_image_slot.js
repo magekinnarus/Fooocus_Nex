@@ -76,6 +76,13 @@
                     '  <button type="button" class="nex-slot__tool mask-tool-btn nex-slot__tool--subtle" id="outpaint-mask-clear">Clear Mask</button>',
                     '</div>'
                 ].join(''),
+                remove: [
+                    '<div class="nex-slot__tools" role="group" aria-label="Remove mask tools">',
+                    '  <button type="button" class="nex-slot__tool mask-tool-btn" id="remove-mask-brush">Brush</button>',
+                    '  <button type="button" class="nex-slot__tool mask-tool-btn" id="remove-mask-erase">Erase</button>',
+                    '  <button type="button" class="nex-slot__tool mask-tool-btn nex-slot__tool--subtle" id="remove-mask-clear">Clear Mask</button>',
+                    '</div>'
+                ].join(''),
                 'inpaint-base': [
                     '<div class="nex-slot__tools" role="group" aria-label="Inpaint context mask tools">',
                     '  <button type="button" class="nex-slot__tool mask-tool-btn" id="inpaint-context-brush">Brush</button>',
@@ -634,6 +641,3 @@
         customElements.define('nex-image-slot', NexImageSlot);
     }
 })();
-
-
-

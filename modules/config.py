@@ -481,7 +481,6 @@ _persistent_asset_filenames = {
     },
     'clip': {
         'flux_empty_conditioning.pt',
-        'flux_background_conditioning.pt',
     },
 }
 
@@ -1219,11 +1218,3 @@ def downloading_ip_adapters(v):
         results += [os.path.join(path_controlnet[0], 'ip-adapter-plus-face_sdxl_vit-h.bin')]
 
     return results
-
-
-
-
-
-
-
-

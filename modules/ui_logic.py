@@ -858,6 +858,14 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         show_progress=False
     )
 
+    remove_mask_data.change(
+        mask_proc.compute_remove_mask,
+        inputs=[remove_mask_workspace_id, remove_mask_data],
+        outputs=[remove_mask_image_path, remove_mask_workspace_id, remove_mask_data],
+        queue=False,
+        show_progress=False
+    )
+
     generate_button.click(
         lambda disable_preview_value: (
             gr.update(visible=True, interactive=True),

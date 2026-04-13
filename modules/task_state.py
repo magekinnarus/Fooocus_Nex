@@ -43,11 +43,16 @@ class TaskState:
     inpaint_mask_image: Optional[np.ndarray] = None
     inpaint_bb_image: Optional[np.ndarray] = None
     remove_base_image: Optional[np.ndarray] = None
+    remove_prompt: str = ""
+    remove_mask_data: str = ""
     remove_bg_enabled: bool = False
     remove_obj_enabled: bool = False
     objr_engine: str = "MAT (Local)"
     flux_fill_conditioning: str = "empty"
+    flux_fill_prompt_cache: str = "temp"
     objr_mask_dilate: int = 0
+    objr_mask_blur: int = 6
+    objr_blend_mode: str = "alpha"
     disable_preview: bool = False
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False
