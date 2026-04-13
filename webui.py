@@ -136,7 +136,7 @@ with shared.gradio_root:
                                 with gr.Row():
                                     remove_bg_enabled = gr.Checkbox(label='Background pass', value=False, elem_id='remove_bg_enabled')
                                     remove_obj_enabled = gr.Checkbox(label='Object pass', value=False, elem_id='remove_obj_enabled')
-                                
+
                                 objr_engine = gr.Dropdown(label='Removal Pass', choices=[('MAT512 initial removal pass', 'MAT512 (initial removal pass)'), ('Flux Fill refinement pass', 'Flux Fill (refinement pass)')], value='MAT512 (initial removal pass)')
                                 remove_prompt = gr.Textbox(placeholder='Optional prompt for the Flux Fill refinement pass. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
                                 flux_fill_conditioning = gr.Textbox(value='empty', visible=False, elem_id='flux_fill_conditioning', show_label=False, container=False)
@@ -145,6 +145,7 @@ with shared.gradio_root:
                                 gr.HTML('* <b>Background pass</b> extracts the person.<br>'
                                         '* <b>Object pass</b> runs MAT512 first, then Flux Fill refinement. Morphological blending is fixed on.')
 
+                            with gr.Column():
                                 remove_mask_data = gr.Textbox(value='', visible=True, elem_id='remove_mask_data', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask', 'data-upload-mode="api" data-path-field-id="remove_mask_image_path" data-workspace-field-id="remove_mask_workspace_id"'))
                                 remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
