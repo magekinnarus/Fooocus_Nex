@@ -47,12 +47,12 @@ class TaskState:
     remove_mask_data: str = ""
     remove_bg_enabled: bool = False
     remove_obj_enabled: bool = False
-    objr_engine: str = "MAT (Local)"
+    objr_engine: str = "MAT512 (initial removal pass)"
     flux_fill_conditioning: str = "empty"
     flux_fill_prompt_cache: str = "temp"
-    objr_mask_dilate: int = 0
+    objr_mask_dilate: int = 16
     objr_mask_blur: int = 6
-    objr_blend_mode: str = "alpha"
+    objr_blend_mode: str = "morphological"
     disable_preview: bool = False
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False

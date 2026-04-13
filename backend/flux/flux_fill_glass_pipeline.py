@@ -31,7 +31,7 @@ from backend.flux.flux_fill_pipeline import (
 FLUX_FILL_GLASS_MODES = ("baseline", "debug", "scaled")
 FLUX_FILL_GLASS_DEFAULT_MODE = "baseline"
 FLUX_FILL_GLASS_BLEND_MODES = ("alpha", "morphological")
-FLUX_FILL_GLASS_DEFAULT_BLEND_MODE = "alpha"
+FLUX_FILL_GLASS_DEFAULT_BLEND_MODE = "morphological"
 
 
 def _normalize_glass_mode(mode: str | None) -> str:

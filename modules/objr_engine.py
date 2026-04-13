@@ -22,8 +22,8 @@ from modules.util import HWC3
 logger = logging.getLogger(__name__)
 
 _model_instance = None
-OBJR_ENGINE_MAT = "MAT (Local)"
-OBJR_ENGINE_FLUX_FILL = "Flux Fill (Colab)"
+OBJR_ENGINE_MAT = "MAT512 (initial removal pass)"
+OBJR_ENGINE_FLUX_FILL = "Flux Fill (refinement pass)"
 OBJR_ENGINE_CHOICES = (OBJR_ENGINE_MAT, OBJR_ENGINE_FLUX_FILL)
 
 FLUX_FILL_TIER_Q8 = "q8_0"
@@ -64,11 +64,14 @@ def normalize_objr_engine(engine: str | None) -> str:
     aliases = {
         "mat": OBJR_ENGINE_MAT,
         "mat local": OBJR_ENGINE_MAT,
+        "mat512": OBJR_ENGINE_MAT,
+        "mat512 initial removal pass": OBJR_ENGINE_MAT,
         "places_512_fulldata_g.pth": OBJR_ENGINE_MAT,
         "places512": OBJR_ENGINE_MAT,
         "flux": OBJR_ENGINE_FLUX_FILL,
         "flux fill": OBJR_ENGINE_FLUX_FILL,
         "flux fill colab": OBJR_ENGINE_FLUX_FILL,
+        "flux fill refinement pass": OBJR_ENGINE_FLUX_FILL,
     }
     normalized = value.lower().replace("(", "").replace(")", "").strip()
     if normalized in aliases:
@@ -143,7 +146,7 @@ def normalize_flux_fill_prompt_cache(cache_mode: str | None) -> str:
 
 
 def normalize_flux_fill_blend_mode(blend_mode: str | None) -> str:
-    value = str(blend_mode or FLUX_FILL_BLEND_ALPHA).strip().lower().replace("-", "_").replace(" ", "_")
+    value = str(blend_mode or FLUX_FILL_BLEND_MORPHOLOGICAL).strip().lower().replace("-", "_").replace(" ", "_")
     if value in {"morphological", "morph", "fooocus"}:
         return FLUX_FILL_BLEND_MORPHOLOGICAL
     return FLUX_FILL_BLEND_ALPHA
@@ -469,7 +472,7 @@ def unload_model():
         resources.soft_empty_cache()
 
 @torch.inference_mode()
-def remove_object(image: np.ndarray, mask: np.ndarray, seed: int = 0, mask_dilate: int = 0) -> np.ndarray:
+def remove_object(image: np.ndarray, mask: np.ndarray, seed: int = 0, mask_dilate: int = FLUX_FILL_MASK_GROW) -> np.ndarray:
     """
     Remove objects defined by mask.
     image: HWC uint8
@@ -593,7 +596,7 @@ def remove_object_flux_fill(
     conditioning: str | None = None,
     prompt: str | None = None,
     prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
-    blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
+    blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
     progress: bool = True,
     mode: str | None = None,
@@ -646,7 +649,7 @@ def remove_object_with_engine(
     image: np.ndarray,
     mask: np.ndarray,
     seed: int = 0,
-    mask_dilate: int = 0,
+    mask_dilate: int = FLUX_FILL_MASK_GROW,
     *,
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
@@ -654,7 +657,7 @@ def remove_object_with_engine(
     flux_prompt: str | None = None,
     flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
-    flux_blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
+    flux_blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
 ) -> np.ndarray:
     selected_engine = normalize_objr_engine(engine)
     if selected_engine == OBJR_ENGINE_FLUX_FILL:
@@ -676,7 +679,7 @@ def remove_object_from_file(
     image_path: str,
     mask_path: str,
     seed: int = 0,
-    mask_dilate: int = 0,
+    mask_dilate: int = FLUX_FILL_MASK_GROW,
     *,
     engine: str | None = OBJR_ENGINE_MAT,
     flux_tier: str | None = None,
@@ -684,7 +687,7 @@ def remove_object_from_file(
     flux_prompt: str | None = None,
     flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
-    flux_blend_mode: str | None = FLUX_FILL_BLEND_ALPHA,
+    flux_blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
 ) -> str:
     """Filepath invariant wrapper with explicit MAT/Flux dispatch."""
     with Image.open(image_path) as img:

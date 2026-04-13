@@ -134,18 +134,22 @@ with shared.gradio_root:
                                 remove_base_image_path = gr.Textbox(value='', visible=True, elem_id='remove_base_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 remove_base_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_base_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 with gr.Row():
-                                    remove_bg_enabled = gr.Checkbox(label='Remove Background', value=False, elem_id='remove_bg_enabled')
-                                    remove_obj_enabled = gr.Checkbox(label='Remove Object', value=False, elem_id='remove_obj_enabled')
+                                    remove_bg_enabled = gr.Checkbox(label='Background pass', value=False, elem_id='remove_bg_enabled')
+                                    remove_obj_enabled = gr.Checkbox(label='Object pass', value=False, elem_id='remove_obj_enabled')
                                 
-                                objr_engine = gr.Dropdown(label='Object Removal Engine', choices=['MAT (Local)', 'Flux Fill (Colab)'], value='MAT (Local)')
-                                remove_prompt = gr.Textbox(placeholder='Optional Flux Fill prompt. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
+                                objr_engine = gr.Dropdown(label='Removal Pass', choices=[('MAT512 initial removal pass', objr_engine.OBJR_ENGINE_MAT), ('Flux Fill refinement pass', objr_engine.OBJR_ENGINE_FLUX_FILL)], value=objr_engine.OBJR_ENGINE_MAT)
+                                remove_prompt = gr.Textbox(placeholder='Optional prompt for the Flux Fill refinement pass. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
                                 flux_fill_conditioning = gr.Textbox(value='empty', visible=False, elem_id='flux_fill_conditioning', show_label=False, container=False)
                                 flux_fill_prompt_cache = gr.Textbox(value='temp', visible=False, elem_id='flux_fill_prompt_cache', show_label=False, container=False)
-                                objr_blend_mode = gr.Dropdown(label='Flux Blend', choices=[('Alpha', 'alpha'), ('Morphological', 'morphological')], value='alpha', info='Morphological uses the Fooocus-style blend curve.')
-                                gr.HTML('* <b>Remove Background</b> uses InSpireNet to extract the character.<br>'
-                                        '* <b>Remove Object</b> uses the selected cleanup engine for the mask.')
+                                objr_blend_mode = gr.Textbox(value='morphological', visible=False, elem_id='objr_blend_mode', show_label=False, container=False)
+                                gr.HTML('* <b>Background pass</b> extracts the person.<br>'
+                                        '* <b>Object pass</b> runs MAT512 first, then Flux Fill refinement. Morphological blending is fixed on.')
 
-                            with gr.Column():
+                                remove_mask_data = gr.Textbox(value='', visible=True, elem_id='remove_mask_data', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask', 'data-upload-mode="api" data-path-field-id="remove_mask_image_path" data-workspace-field-id="remove_mask_workspace_id"'))
+                                remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
+                                remove_mask_image_path = gr.Textbox(value='', visible=True, elem_id='remove_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                                remove_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 gr.HTML("""
 <div id="remove-mask-tools" class="mask-workflow-toolbar" style="display:flex; flex-direction:column; gap:14px; margin:8px 0 16px; padding:14px; border:1px solid rgba(128,128,128,0.2); border-radius:12px; background:rgba(128,128,128,0.03);">
   <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
@@ -164,15 +168,10 @@ with shared.gradio_root:
   </div>
 </div>
 """)
-                                remove_mask_data = gr.Textbox(value='', visible=True, elem_id='remove_mask_data', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
-                                gr.HTML(make_nex_image_slot('remove_mask_image_slot', 'remove_mask_image_bridge', 'Mask', 'data-upload-mode="api" data-path-field-id="remove_mask_image_path" data-workspace-field-id="remove_mask_workspace_id"'))
-                                remove_mask_image = gr.Image(label='Mask', sources='upload', type='filepath', height=500, elem_id='remove_mask_image_bridge', elem_classes=['nex-image-slot-bridge'])
-                                remove_mask_image_path = gr.Textbox(value='', visible=True, elem_id='remove_mask_image_path', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
-                                remove_mask_workspace_id = gr.Textbox(value='', visible=True, elem_id='remove_mask_workspace_id', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
                                 bgr_threshold = gr.Slider(label='BGR Threshold', minimum=0.0, maximum=1.0, step=0.01, value=0.5, info='Higher = tighter cutout; Lower = keep softer edges.')
                                 bgr_jit = gr.Checkbox(label='Use JIT (Optimized)', value=True)
-                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=0, info='MAT defaults to 0. Flux Fill switches this to 16.')
-                                objr_mask_blur = gr.Slider(label='Flux Mask Blur', minimum=0, maximum=64, step=1, value=6, info='Flux-only softening around the mask edge. Lower keeps refinement sharper.')
+                                objr_mask_dilate = gr.Slider(label='Mask Dilate', minimum=0, maximum=128, step=1, value=16, info='Shared default for MAT512 and Flux Fill.')
+                                objr_mask_blur = gr.Slider(label='Flux Mask Blur', minimum=0, maximum=64, step=1, value=6, info='Lower keeps refinement sharper; higher softens the edge more.')
                     with gr.Tab(label='Controlnet', id='ip_tab') as ip_tab:
                         ip_images = []
                         cn_image_paths = []

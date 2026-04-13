@@ -30,11 +30,10 @@ def _normalize_flux_fill_prompt_cache_value(value: Any) -> str:
 
 
 def _normalize_objr_blend_mode_value(value: Any) -> str:
-    normalized = str(value or 'alpha').strip().lower().replace('-', '_').replace(' ', '_')
+    normalized = str(value or 'morphological').strip().lower().replace('-', '_').replace(' ', '_')
     if normalized in {'morphological', 'morph', 'fooocus'}:
         return 'morphological'
-    return 'alpha'
-
+    return 'morphological'
 
 # Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
@@ -73,12 +72,12 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('remove_mask_data', 'remove_mask_data', '', str),
     ParamDef('remove_bg_enabled', 'remove_bg_enabled', False, bool),
     ParamDef('remove_obj_enabled', 'remove_obj_enabled', False, bool),
-    ParamDef('objr_engine', 'objr_engine', 'MAT (Local)', str),
+    ParamDef('objr_engine', 'objr_engine', 'MAT512 (initial removal pass)', str),
     ParamDef('flux_fill_conditioning', 'flux_fill_conditioning', 'empty', _normalize_flux_fill_conditioning_value),
     ParamDef('flux_fill_prompt_cache', 'flux_fill_prompt_cache', 'temp', _normalize_flux_fill_prompt_cache_value),
-    ParamDef('objr_mask_dilate', 'objr_mask_dilate', 0, int),
+    ParamDef('objr_mask_dilate', 'objr_mask_dilate', 16, int),
     ParamDef('objr_mask_blur', 'objr_mask_blur', 6, int),
-    ParamDef('objr_blend_mode', 'objr_blend_mode', 'alpha', _normalize_objr_blend_mode_value),
+    ParamDef('objr_blend_mode', 'objr_blend_mode', 'morphological', _normalize_objr_blend_mode_value),
     ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
     ParamDef('bgr_jit', 'bgr_jit', True, bool),
 
