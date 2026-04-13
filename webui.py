@@ -137,7 +137,7 @@ with shared.gradio_root:
                                     remove_bg_enabled = gr.Checkbox(label='Background pass', value=False, elem_id='remove_bg_enabled')
                                     remove_obj_enabled = gr.Checkbox(label='Object pass', value=False, elem_id='remove_obj_enabled')
                                 
-                                objr_engine = gr.Dropdown(label='Removal Pass', choices=[('MAT512 initial removal pass', objr_engine.OBJR_ENGINE_MAT), ('Flux Fill refinement pass', objr_engine.OBJR_ENGINE_FLUX_FILL)], value=objr_engine.OBJR_ENGINE_MAT)
+                                objr_engine = gr.Dropdown(label='Removal Pass', choices=[('MAT512 initial removal pass', 'MAT512 (initial removal pass)'), ('Flux Fill refinement pass', 'Flux Fill (refinement pass)')], value='MAT512 (initial removal pass)')
                                 remove_prompt = gr.Textbox(placeholder='Optional prompt for the Flux Fill refinement pass. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
                                 flux_fill_conditioning = gr.Textbox(value='empty', visible=False, elem_id='flux_fill_conditioning', show_label=False, container=False)
                                 flux_fill_prompt_cache = gr.Textbox(value='temp', visible=False, elem_id='flux_fill_prompt_cache', show_label=False, container=False)
