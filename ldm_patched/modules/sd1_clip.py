@@ -285,40 +285,70 @@ def safe_load_embed_zip(embed_path):
                 del embed
                 return out
 
+import time
+_directory_list_cache = {}
+
 def expand_directory_list(directories):
+    global _directory_list_cache
+    if not isinstance(directories, list):
+        directories = list(directories)
+    cache_key = tuple(directories)
+    current_time = time.time()
+    if cache_key in _directory_list_cache:
+        cached_time, cached_dirs = _directory_list_cache[cache_key]
+        if (current_time - cached_time) < 5.0:
+            return cached_dirs
     dirs = set()
     for x in directories:
         dirs.add(x)
         for root, subdir, file in os.walk(x, followlinks=True):
             dirs.add(root)
-    return list(dirs)
+    result = list(dirs)
+    _directory_list_cache[cache_key] = (current_time, result)
+    return result
+
+load_embed_callback = None
+
 
 def load_embed(embedding_name, embedding_directory, embedding_size, embed_key=None):
+    valid_file = None
+    if load_embed_callback is not None:
+        callback_result = load_embed_callback(embedding_name, embedding_directory, embedding_size, embed_key)
+        if callback_result is not None:
+            if os.path.isfile(callback_result):
+                valid_file = callback_result
+                # Proceed to loading logic below - we skip the directory scan loop
+                embedding_directory = []
+            else:
+                # Callback returned a path that doesn't exist? Fallback to scan.
+                print(f"Embedding callback returned non-existent path: {callback_result}")
+
     if isinstance(embedding_directory, str):
         embedding_directory = [embedding_directory]
 
-    embedding_directory = expand_directory_list(embedding_directory)
+    if len(embedding_directory) > 0:
+        embedding_directory = expand_directory_list(embedding_directory)
 
-    valid_file = None
-    for embed_dir in embedding_directory:
-        embed_path = os.path.abspath(os.path.join(embed_dir, embedding_name))
-        embed_dir = os.path.abspath(embed_dir)
-        try:
-            if os.path.commonpath((embed_dir, embed_path)) != embed_dir:
+    if valid_file is None:
+        for embed_dir in embedding_directory:
+            embed_path = os.path.abspath(os.path.join(embed_dir, embedding_name))
+            embed_dir = os.path.abspath(embed_dir)
+            try:
+                if os.path.commonpath((embed_dir, embed_path)) != embed_dir:
+                    continue
+            except:
                 continue
-        except:
-            continue
-        if not os.path.isfile(embed_path):
-            extensions = ['.safetensors', '.pt', '.bin']
-            for x in extensions:
-                t = embed_path + x
-                if os.path.isfile(t):
-                    valid_file = t
-                    break
-        else:
-            valid_file = embed_path
-        if valid_file is not None:
-            break
+            if not os.path.isfile(embed_path):
+                extensions = ['.safetensors', '.pt', '.bin']
+                for x in extensions:
+                    t = embed_path + x
+                    if os.path.isfile(t):
+                        valid_file = t
+                        break
+            else:
+                valid_file = embed_path
+            if valid_file is not None:
+                break
 
     if valid_file is None:
         return None

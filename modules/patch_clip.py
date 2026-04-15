@@ -196,10 +196,27 @@ def patched_ClipVisionModel_encode_image(self, image):
     return outputs
 
 
+def load_embed_catalog_lookup(embedding_name, embedding_directory, embedding_size, embed_key=None):
+    try:
+        import modules.config as config
+        entry = config.resolve_model_catalog_entry(embedding_name, root_keys=['embeddings'])
+        if entry is not None:
+            root_path = config.get_asset_root_path(entry.root_key)
+            full_path = os.path.join(root_path, entry.relative_path)
+            if os.path.isfile(full_path):
+                return full_path
+    except Exception as e:
+        print(f'Error in load_embed_catalog_lookup: {e}')
+    return None
+
+
 def patch_all_clip():
     ldm_patched.modules.sd1_clip.ClipTokenWeightEncoder.encode_token_weights = patched_encode_token_weights
     ldm_patched.modules.sd1_clip.SDClipModel.__init__ = patched_SDClipModel__init__
     ldm_patched.modules.sd1_clip.SDClipModel.forward = patched_SDClipModel_forward
     ldm_patched.modules.clip_vision.ClipVisionModel.__init__ = patched_ClipVisionModel__init__
     ldm_patched.modules.clip_vision.ClipVisionModel.encode_image = patched_ClipVisionModel_encode_image
+
+    # Add callback for optimized embedding resolution
+    ldm_patched.modules.sd1_clip.load_embed_callback = load_embed_catalog_lookup
     return
