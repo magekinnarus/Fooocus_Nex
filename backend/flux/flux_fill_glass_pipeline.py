@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ import torch
 from PIL import Image
 
 import modules.blending as blending
+import modules.flags as flags
 
 from backend import resources
 from backend.flux.flux_fill_pipeline import (
@@ -28,10 +30,14 @@ from backend.flux.flux_fill_pipeline import (
     load_flux_fill_unet,
 )
 
-FLUX_FILL_GLASS_MODES = ("baseline", "debug", "scaled")
+FLUX_FILL_GLASS_MODES = ("baseline", "context_crop", "debug", "scaled")
 FLUX_FILL_GLASS_DEFAULT_MODE = "baseline"
 FLUX_FILL_GLASS_BLEND_MODES = ("alpha", "morphological")
 FLUX_FILL_GLASS_DEFAULT_BLEND_MODE = "morphological"
+
+_SDXL_BUCKETS: tuple[tuple[int, int], ...] = tuple(
+    (int(value.split("*")[0]), int(value.split("*")[1])) for value in flags.sdxl_aspect_ratios
+)
 
 
 def _normalize_glass_mode(mode: str | None) -> str:
@@ -85,6 +91,365 @@ def _resize_uint8_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
     mask_2d = _mask_2d(np.asarray(mask))
     resized = Image.fromarray(np.asarray(mask_2d, dtype=np.uint8)).resize((int(width), int(height)), resample=Image.Resampling.NEAREST)
     return np.asarray(resized, dtype=np.uint8)
+
+
+def _sdxl_bucket_aspect(bucket: tuple[int, int]) -> float:
+    return float(bucket[0]) / float(bucket[1])
+
+
+def _reduce_aspect_pair(width: int, height: int) -> tuple[int, int]:
+    divisor = math.gcd(int(width), int(height))
+    divisor = max(divisor, 1)
+    return int(width) // divisor, int(height) // divisor
+
+
+def _clamp(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
+
+
+def is_native_sdxl_dimensions(width: int, height: int) -> bool:
+    return (int(width), int(height)) in _SDXL_BUCKETS
+
+
+def select_sdxl_bucket_for_aspect(aspect: float) -> tuple[int, int]:
+    if aspect <= 0:
+        raise ValueError(f"aspect must be > 0, got {aspect}.")
+    return min(_SDXL_BUCKETS, key=lambda bucket: (abs(_sdxl_bucket_aspect(bucket) - float(aspect)), bucket[0] * bucket[1]))
+
+
+def _mask_bbox_from_binary(mask_binary: np.ndarray, *, image_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    ys, xs = np.where(mask_binary > 0)
+    if ys.size == 0 or xs.size == 0:
+        height, width = image_shape
+        return 0, int(height), 0, int(width)
+    y1 = int(ys.min())
+    y2 = int(ys.max()) + 1
+    x1 = int(xs.min())
+    x2 = int(xs.max()) + 1
+    return y1, y2, x1, x2
+
+
+def _pad_to_aspect(
+    image: np.ndarray,
+    mask: np.ndarray,
+    target_aspect: float,
+) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
+    image_np = _ensure_uint8_rgb(image)
+    mask_np = _mask_2d(_ensure_mask_shape(image_np, mask))
+    height, width = image_np.shape[:2]
+    current_aspect = float(width) / float(height)
+    if abs(current_aspect - target_aspect) <= 1e-6:
+        return image_np, mask_np, (0, 0, 0, 0)
+
+    if current_aspect > target_aspect:
+        padded_height = int(math.ceil(float(width) / float(target_aspect)))
+        pad_total = max(0, padded_height - height)
+        pad_top = pad_total // 2
+        pad_bottom = pad_total - pad_top
+        pad_left = pad_right = 0
+    else:
+        padded_width = int(math.ceil(float(height) * float(target_aspect)))
+        pad_total = max(0, padded_width - width)
+        pad_left = pad_total // 2
+        pad_right = pad_total - pad_left
+        pad_top = pad_bottom = 0
+
+    padded_image = np.pad(image_np, ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)), mode="edge")
+    padded_mask = np.pad(mask_np, ((pad_top, pad_bottom), (pad_left, pad_right)), mode="constant", constant_values=0)
+    return padded_image.astype(np.uint8, copy=False), padded_mask.astype(np.uint8, copy=False), (pad_top, pad_bottom, pad_left, pad_right)
+
+
+def _crop_box_to_slice(crop_box: tuple[int, int, int, int]) -> tuple[slice, slice]:
+    y1, y2, x1, x2 = crop_box
+    return slice(int(y1), int(y2)), slice(int(x1), int(x2))
+
+
+def _crop_image_and_mask(image: np.ndarray, mask: np.ndarray, crop_box: tuple[int, int, int, int]) -> tuple[np.ndarray, np.ndarray]:
+    y_slice, x_slice = _crop_box_to_slice(crop_box)
+    image_crop = np.asarray(image)[y_slice, x_slice]
+    mask_crop = np.asarray(mask)[y_slice, x_slice]
+    return _ensure_uint8_rgb(image_crop), _mask_2d(_ensure_mask_shape(image_crop, mask_crop))
+
+
+@dataclass(frozen=True)
+class FluxFillGlassCropPlan:
+    mode: str
+    crop_box: tuple[int, int, int, int]
+    bucket: tuple[int, int]
+    bucket_aspect: float
+    crop_width: int
+    crop_height: int
+    normalized_width: int
+    normalized_height: int
+    target_width: int
+    target_height: int
+    scale_to_bucket: float
+    mask_bbox: tuple[int, int, int, int]
+    mask_bbox_width_ratio: float
+    mask_bbox_height_ratio: float
+    mask_area_ratio: float
+    full_image_crop: bool
+    large_mask_full_context: bool
+    context_limited_by_bounds: bool
+    crop_aspect: float
+    pad: tuple[int, int, int, int] = (0, 0, 0, 0)
+    source_image_width: int = 0
+    source_image_height: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "crop_box": [int(v) for v in self.crop_box],
+            "bucket": [int(v) for v in self.bucket],
+            "bucket_aspect": float(self.bucket_aspect),
+            "crop_width": int(self.crop_width),
+            "crop_height": int(self.crop_height),
+            "normalized_width": int(self.normalized_width),
+            "normalized_height": int(self.normalized_height),
+            "target_width": int(self.target_width),
+            "target_height": int(self.target_height),
+            "scale_to_bucket": float(self.scale_to_bucket),
+            "mask_bbox": [int(v) for v in self.mask_bbox],
+            "mask_bbox_width_ratio": float(self.mask_bbox_width_ratio),
+            "mask_bbox_height_ratio": float(self.mask_bbox_height_ratio),
+            "mask_area_ratio": float(self.mask_area_ratio),
+            "full_image_crop": bool(self.full_image_crop),
+            "large_mask_full_context": bool(self.large_mask_full_context),
+            "context_limited_by_bounds": bool(self.context_limited_by_bounds),
+            "crop_aspect": float(self.crop_aspect),
+            "pad": [int(v) for v in self.pad],
+            "source_image_width": int(self.source_image_width),
+            "source_image_height": int(self.source_image_height),
+        }
+
+
+def _select_context_crop_plan(
+    image: np.ndarray,
+    mask: np.ndarray,
+    *,
+    mode: str = "context_crop",
+) -> FluxFillGlassCropPlan:
+    image_np = _ensure_uint8_rgb(image)
+    mask_np = _ensure_mask_shape(image_np, mask)
+    mask_binary = _binary_mask(mask_np)
+    height, width = image_np.shape[:2]
+    image_area = max(1, int(height * width))
+    mask_area = int(mask_binary.sum())
+    mask_bbox = _mask_bbox_from_binary(mask_binary, image_shape=(height, width))
+    bbox_y1, bbox_y2, bbox_x1, bbox_x2 = mask_bbox
+    bbox_height = max(1, int(bbox_y2 - bbox_y1))
+    bbox_width = max(1, int(bbox_x2 - bbox_x1))
+    bbox_area = max(1, int(mask_area))
+    source_aspect = float(width) / float(height)
+    bbox_aspect = float(bbox_width) / float(bbox_height)
+    center_y = int(round((bbox_y1 + bbox_y2) / 2.0))
+    center_x = int(round((bbox_x1 + bbox_x2) / 2.0))
+    large_mask_full_context = (float(mask_area) / float(image_area)) > (1.0 / 6.0)
+
+    def _build_candidate(bucket: tuple[int, int]) -> dict[str, Any] | None:
+        bucket_w, bucket_h = bucket
+        bucket_aspect = _sdxl_bucket_aspect(bucket)
+        reduced_w, reduced_h = _reduce_aspect_pair(bucket_w, bucket_h)
+        min_scale = max(
+            1.0,
+            float(bbox_width) / max(reduced_w, 1) / 0.5,
+            float(bbox_height) / max(reduced_h, 1) / (1.0 / 3.0),
+            math.sqrt(float(bbox_area) / max(reduced_w * reduced_h, 1) * 6.0),
+        )
+        scale_units = max(1, int(math.ceil(min_scale)))
+        crop_width = reduced_w * scale_units
+        crop_height = reduced_h * scale_units
+        if crop_width > width or crop_height > height:
+            return None
+
+        valid_x1_min = max(0, bbox_x2 - crop_width)
+        valid_x1_max = min(bbox_x1, width - crop_width)
+        valid_y1_min = max(0, bbox_y2 - crop_height)
+        valid_y1_max = min(bbox_y1, height - crop_height)
+        if valid_x1_min > valid_x1_max or valid_y1_min > valid_y1_max:
+            return None
+
+        x1 = _clamp(int(round(center_x - crop_width / 2.0)), valid_x1_min, valid_x1_max)
+        y1 = _clamp(int(round(center_y - crop_height / 2.0)), valid_y1_min, valid_y1_max)
+        x2 = x1 + crop_width
+        y2 = y1 + crop_height
+        crop_area = max(1, int(crop_width * crop_height))
+        return {
+            "bucket": bucket,
+            "bucket_aspect": bucket_aspect,
+            "crop_box": (int(y1), int(y2), int(x1), int(x2)),
+            "crop_width": int(crop_width),
+            "crop_height": int(crop_height),
+            "crop_aspect": float(crop_width) / float(crop_height),
+            "scale_to_bucket": float(bucket_w) / float(crop_width),
+            "mask_bbox_width_ratio": float(bbox_width) / float(crop_width),
+            "mask_bbox_height_ratio": float(bbox_height) / float(crop_height),
+            "mask_area_ratio": float(mask_area) / float(crop_area),
+            "area": int(crop_area),
+            "full_image_crop": bool(crop_width == width and crop_height == height),
+        }
+
+    if large_mask_full_context:
+        bucket = select_sdxl_bucket_for_aspect(source_aspect)
+        bucket_aspect = _sdxl_bucket_aspect(bucket)
+        normalized_image, normalized_mask, pad = _pad_to_aspect(image_np, mask_np, bucket_aspect)
+        normalized_height, normalized_width = normalized_image.shape[:2]
+        return FluxFillGlassCropPlan(
+            mode=mode,
+            crop_box=(0, int(height), 0, int(width)),
+            bucket=bucket,
+            bucket_aspect=bucket_aspect,
+            crop_width=int(width),
+            crop_height=int(height),
+            normalized_width=int(normalized_width),
+            normalized_height=int(normalized_height),
+            target_width=int(bucket[0]),
+            target_height=int(bucket[1]),
+            scale_to_bucket=float(bucket[0]) / float(max(normalized_width, 1)),
+            mask_bbox=mask_bbox,
+            mask_bbox_width_ratio=float(bbox_width) / float(width),
+            mask_bbox_height_ratio=float(bbox_height) / float(height),
+            mask_area_ratio=float(mask_area) / float(image_area),
+            full_image_crop=True,
+            large_mask_full_context=True,
+            context_limited_by_bounds=bool(pad != (0, 0, 0, 0)),
+            crop_aspect=source_aspect,
+            pad=pad,
+            source_image_width=int(width),
+            source_image_height=int(height),
+        )
+
+    candidates = [candidate for bucket in _SDXL_BUCKETS if (candidate := _build_candidate(bucket)) is not None]
+    if candidates:
+        best = min(
+            candidates,
+            key=lambda candidate: (
+                int(candidate["area"]),
+                abs(float(candidate["crop_aspect"]) - source_aspect),
+                abs(float(candidate["crop_aspect"]) - bbox_aspect),
+            ),
+        )
+        crop_box = best["crop_box"]
+        crop_width = int(best["crop_width"])
+        crop_height = int(best["crop_height"])
+        bucket = tuple(int(v) for v in best["bucket"])
+        bucket_aspect = float(best["bucket_aspect"])
+        return FluxFillGlassCropPlan(
+            mode=mode,
+            crop_box=crop_box,
+            bucket=bucket,
+            bucket_aspect=bucket_aspect,
+            crop_width=crop_width,
+            crop_height=crop_height,
+            normalized_width=crop_width,
+            normalized_height=crop_height,
+            target_width=int(bucket[0]),
+            target_height=int(bucket[1]),
+            scale_to_bucket=float(best["scale_to_bucket"]),
+            mask_bbox=mask_bbox,
+            mask_bbox_width_ratio=float(best["mask_bbox_width_ratio"]),
+            mask_bbox_height_ratio=float(best["mask_bbox_height_ratio"]),
+            mask_area_ratio=float(best["mask_area_ratio"]),
+            full_image_crop=bool(best["full_image_crop"]),
+            large_mask_full_context=False,
+            context_limited_by_bounds=False,
+            crop_aspect=float(best["crop_aspect"]),
+            pad=(0, 0, 0, 0),
+            source_image_width=int(width),
+            source_image_height=int(height),
+        )
+
+    bucket = select_sdxl_bucket_for_aspect(source_aspect)
+    bucket_aspect = _sdxl_bucket_aspect(bucket)
+    normalized_image, normalized_mask, pad = _pad_to_aspect(image_np, mask_np, bucket_aspect)
+    normalized_height, normalized_width = normalized_image.shape[:2]
+    return FluxFillGlassCropPlan(
+        mode=mode,
+        crop_box=(0, int(height), 0, int(width)),
+        bucket=bucket,
+        bucket_aspect=bucket_aspect,
+        crop_width=int(width),
+        crop_height=int(height),
+        normalized_width=int(normalized_width),
+        normalized_height=int(normalized_height),
+        target_width=int(bucket[0]),
+        target_height=int(bucket[1]),
+        scale_to_bucket=float(bucket[0]) / float(max(normalized_width, 1)),
+        mask_bbox=mask_bbox,
+        mask_bbox_width_ratio=float(bbox_width) / float(width),
+        mask_bbox_height_ratio=float(bbox_height) / float(height),
+        mask_area_ratio=float(mask_area) / float(image_area),
+        full_image_crop=True,
+        large_mask_full_context=large_mask_full_context,
+        context_limited_by_bounds=True,
+        crop_aspect=source_aspect,
+        pad=pad,
+        source_image_width=int(width),
+        source_image_height=int(height),
+    )
+
+
+select_flux_fill_glass_context_crop_plan = _select_context_crop_plan
+
+
+def prepare_flux_fill_glass_context_crop(
+    image: np.ndarray,
+    mask: np.ndarray,
+    plan: FluxFillGlassCropPlan,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    image_np = _ensure_uint8_rgb(image)
+    mask_np = _ensure_mask_shape(image_np, mask)
+    crop_image, crop_mask = _crop_image_and_mask(image_np, mask_np, plan.crop_box)
+    if plan.pad != (0, 0, 0, 0):
+        crop_image, crop_mask, _ = _pad_to_aspect(crop_image, crop_mask, plan.bucket_aspect)
+    normalized_image = _resize_uint8_rgb(crop_image, plan.target_width, plan.target_height, resample=Image.Resampling.LANCZOS)
+    normalized_mask = _resize_uint8_mask(crop_mask, plan.target_width, plan.target_height)
+    return normalized_image, normalized_mask, {
+        "plan": plan.to_dict(),
+        "crop_image": crop_image,
+        "crop_mask": crop_mask,
+        "normalized_image": normalized_image,
+        "normalized_mask": normalized_mask,
+    }
+
+
+def restore_flux_fill_glass_context_crop(decoded_bucket_image: np.ndarray, plan: FluxFillGlassCropPlan) -> np.ndarray:
+    bucket_image = _ensure_uint8_rgb(decoded_bucket_image)
+    restored = _resize_uint8_rgb(bucket_image, plan.normalized_width, plan.normalized_height, resample=Image.Resampling.LANCZOS)
+    if plan.pad != (0, 0, 0, 0):
+        pad_top, pad_bottom, pad_left, pad_right = plan.pad
+        y_end = restored.shape[0] - int(pad_bottom)
+        x_end = restored.shape[1] - int(pad_right)
+        restored = restored[int(pad_top):y_end, int(pad_left):x_end]
+    if restored.shape[:2] != (plan.crop_height, plan.crop_width):
+        restored = _resize_uint8_rgb(restored, plan.crop_width, plan.crop_height, resample=Image.Resampling.LANCZOS)
+    return restored
+
+
+def stitch_flux_fill_glass_context_crop(
+    original_image: np.ndarray,
+    mask: np.ndarray,
+    plan: FluxFillGlassCropPlan,
+    decoded_crop: np.ndarray,
+    *,
+    blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE,
+) -> np.ndarray:
+    original_rgb = _ensure_uint8_rgb(original_image)
+    canvas = original_rgb.copy()
+    y1, y2, x1, x2 = plan.crop_box
+    crop_rgb = _ensure_uint8_rgb(decoded_crop)
+    canvas[int(y1):int(y2), int(x1):int(x2)] = crop_rgb
+    if blend_mode == "morphological":
+        alpha = _morphological_blend_mask(mask).astype(np.float32)[..., None] / 255.0
+        alpha = blending.apply_sin2_curve(alpha)
+    else:
+        alpha = _mask_2d(mask).astype(np.float32)[..., None] / 255.0
+    composite = np.clip(
+        canvas.astype(np.float32) * alpha + original_rgb.astype(np.float32) * (1.0 - alpha),
+        0,
+        255,
+    ).astype(np.uint8)
+    return composite
 
 
 @dataclass
@@ -298,6 +663,7 @@ class FluxFillGlassPipeline:
     route_label = "flux_fill_glass"
     stage_order = (
         "validate_contract",
+        "select_working_geometry",
         "prepare_source_pixels",
         "prepare_concat_pixels",
         "encode_source_latent",
@@ -314,12 +680,23 @@ class FluxFillGlassPipeline:
         self.config = config
         self.device = device or (torch.device(config.device) if config.device else resources.get_torch_device())
 
+    def _resolve_effective_mode(self, image: np.ndarray, mode: str) -> str:
+        normalized_mode = _normalize_glass_mode(mode)
+        if normalized_mode == "debug":
+            width = int(image.shape[1])
+            height = int(image.shape[0])
+            if is_native_sdxl_dimensions(width, height) and width % 8 == 0 and height % 8 == 0:
+                return "baseline"
+            return "context_crop"
+        return normalized_mode
+
     def validate_input_contract(self, image: np.ndarray, mask: np.ndarray, *, mode: str) -> dict[str, Any]:
         image_np = _ensure_uint8_rgb(image)
         mask_np = _ensure_mask_shape(image_np, mask)
         height, width = image_np.shape[:2]
         normalized_mode = _normalize_glass_mode(mode)
-        if normalized_mode != "scaled" and (height % 8 != 0 or width % 8 != 0):
+        effective_mode = self._resolve_effective_mode(image_np, normalized_mode)
+        if effective_mode == "baseline" and (height % 8 != 0 or width % 8 != 0):
             raise FluxFillValidationError(
                 f"W04 glass baseline does not scale or crop; image dimensions must be multiples of 8 (preferably 16). Got {width}x{height}."
             )
@@ -327,7 +704,9 @@ class FluxFillGlassPipeline:
             "image": _array_summary(image_np),
             "mask": _array_summary(mask_np),
             "mode": normalized_mode,
-            "no_bb": True,
+            "effective_mode": effective_mode,
+            "native_sdxl": bool(is_native_sdxl_dimensions(width, height)),
+            "no_bb": effective_mode != "context_crop",
             "no_scale": normalized_mode != "scaled",
             "multiple_of_8": (height % 8 == 0 and width % 8 == 0),
             "prefer_multiple_of_16": (height % 16 == 0 and width % 16 == 0),
@@ -562,12 +941,79 @@ class FluxFillGlassPipeline:
 
         image_np = _ensure_uint8_rgb(image)
         mask_np = _ensure_mask_shape(image_np, mask)
+        mask_binary = _binary_mask(mask_np)
+        mask_bbox = _mask_bbox_from_binary(mask_binary, image_shape=image_np.shape[:2])
+        bbox_y1, bbox_y2, bbox_x1, bbox_x2 = mask_bbox
+        bbox_height = max(1, int(bbox_y2 - bbox_y1))
+        bbox_width = max(1, int(bbox_x2 - bbox_x1))
+        mask_area = int(mask_binary.sum())
+        image_area = max(1, int(image_np.shape[0] * image_np.shape[1]))
+        effective_mode = self._resolve_effective_mode(image_np, mode)
+
+        def _full_geometry(target_width: int, target_height: int, scale_factor: float, scaled_flag: bool) -> dict[str, Any]:
+            return {
+                "mode": mode,
+                "effective_mode": effective_mode,
+                "crop_box": [0, int(image_np.shape[0]), 0, int(image_np.shape[1])],
+                "bucket": [int(target_width), int(target_height)],
+                "bucket_aspect": float(target_width) / float(max(target_height, 1)),
+                "crop_width": int(image_np.shape[1]),
+                "crop_height": int(image_np.shape[0]),
+                "normalized_width": int(image_np.shape[1]),
+                "normalized_height": int(image_np.shape[0]),
+                "target_width": int(target_width),
+                "target_height": int(target_height),
+                "scale_to_bucket": float(scale_factor),
+                "mask_bbox": [int(v) for v in mask_bbox],
+                "mask_bbox_width_ratio": float(bbox_width) / float(max(image_np.shape[1], 1)),
+                "mask_bbox_height_ratio": float(bbox_height) / float(max(image_np.shape[0], 1)),
+                "mask_area_ratio": float(mask_area) / float(image_area),
+                "full_image_crop": True,
+                "large_mask_full_context": False,
+                "context_limited_by_bounds": False,
+                "crop_aspect": float(image_np.shape[1]) / float(max(image_np.shape[0], 1)),
+                "pad": [0, 0, 0, 0],
+                "source_image_width": int(image_np.shape[1]),
+                "source_image_height": int(image_np.shape[0]),
+                "scaled": bool(scaled_flag),
+            }
+
+        crop_plan: FluxFillGlassCropPlan | None = None
+        crop_working_summary: dict[str, Any] = {}
         if mode == "scaled":
             working_image, working_mask, scale_summary = _prepare_scaled_inputs(
                 image_np,
                 mask_np,
                 target_megapixels=self.config.target_megapixels,
             )
+            geometry_summary = _full_geometry(
+                working_image.shape[1],
+                working_image.shape[0],
+                float(scale_summary["scale_factor"]),
+                True,
+            )
+            geometry_summary["normalized_width"] = int(image_np.shape[1])
+            geometry_summary["normalized_height"] = int(image_np.shape[0])
+        elif effective_mode == "context_crop":
+            crop_plan = _select_context_crop_plan(image_np, mask_np, mode=mode)
+            working_image, working_mask, crop_working_summary = prepare_flux_fill_glass_context_crop(image_np, mask_np, crop_plan)
+            scale_summary = {
+                "original_width": int(image_np.shape[1]),
+                "original_height": int(image_np.shape[0]),
+                "working_width": int(working_image.shape[1]),
+                "working_height": int(working_image.shape[0]),
+                "scale_factor": float(crop_plan.scale_to_bucket),
+                "scale_to_bucket": float(crop_plan.scale_to_bucket),
+                "scaled": False,
+                "crop_width": int(crop_plan.crop_width),
+                "crop_height": int(crop_plan.crop_height),
+                "normalized_width": int(crop_plan.normalized_width),
+                "normalized_height": int(crop_plan.normalized_height),
+                "target_width": int(crop_plan.target_width),
+                "target_height": int(crop_plan.target_height),
+            }
+            geometry_summary = crop_plan.to_dict()
+            geometry_summary["effective_mode"] = effective_mode
         else:
             working_image = image_np
             working_mask = mask_np
@@ -579,14 +1025,26 @@ class FluxFillGlassPipeline:
                 "scale_factor": 1.0,
                 "scaled": False,
             }
-        debug_summary["scale"] = scale_summary
+            geometry_summary = _full_geometry(image_np.shape[1], image_np.shape[0], 1.0, False)
+        debug_summary["scale"] = dict(scale_summary)
+        debug_summary["geometry"] = dict(geometry_summary)
+        debug_summary["effective_mode"] = effective_mode
+        if crop_working_summary:
+            debug_summary["crop_working"] = {
+                "crop_image": _array_summary(crop_working_summary.get("crop_image")),
+                "crop_mask": _array_summary(crop_working_summary.get("crop_mask")),
+                "normalized_image": _array_summary(crop_working_summary.get("normalized_image")),
+                "normalized_mask": _array_summary(crop_working_summary.get("normalized_mask")),
+            }
 
         stage_start = time.perf_counter()
         contract = self.validate_input_contract(image_np, mask_np, mode=mode)
         timings["validate_contract"] = time.perf_counter() - stage_start
         contract["scale"] = dict(scale_summary)
+        contract["geometry"] = dict(geometry_summary)
         debug_summary["contract"] = contract
         debug_summary["stages"]["validate_contract"] = contract
+        debug_summary["stages"]["select_working_geometry"] = dict(geometry_summary)
 
         stage_start = time.perf_counter()
         source_pixels, source_pixels_summary = self.prepare_source_pixels(working_image)
@@ -651,10 +1109,27 @@ class FluxFillGlassPipeline:
         debug_summary["stages"]["decode"] = decode_summary
 
         raw_output_image = np.asarray(decoded.bb_image, dtype=np.uint8)
+        restored_crop_image: np.ndarray | None = None
         if mode == "scaled":
             resized_raw = _resize_uint8_rgb(raw_output_image, image_np.shape[1], image_np.shape[0], resample=Image.Resampling.LANCZOS)
             final_output_image = self.compose_output(image_np, mask_np, resized_raw)
             composite_summary = {"stage": "compose_debug", "enabled": True, "composite": _array_summary(final_output_image), "mode": mode}
+        elif effective_mode == "context_crop" and crop_plan is not None:
+            restored_crop_image = restore_flux_fill_glass_context_crop(raw_output_image, crop_plan)
+            final_output_image = stitch_flux_fill_glass_context_crop(
+                image_np,
+                mask_np,
+                crop_plan,
+                restored_crop_image,
+                blend_mode=self.config.blend_mode,
+            )
+            composite_summary = {
+                "stage": "compose_context_crop",
+                "enabled": True,
+                "plan": dict(geometry_summary),
+                "restored_crop": _array_summary(restored_crop_image),
+                "composite": _array_summary(final_output_image),
+            }
         else:
             composite, composite_summary = self.compose_debug(image_np, mask_np, raw_output_image)
             final_output_image = composite if composite is not None else raw_output_image
@@ -669,6 +1144,13 @@ class FluxFillGlassPipeline:
                 artifact_paths["concat_pixels"] = self._write_artifact(root, "concat_pixels", concat_pixels)
                 artifact_paths["mask"] = self._write_artifact(root, "mask", np.repeat(_mask_2d(working_mask)[:, :, None], 3, axis=2))
                 artifact_paths["decoded_raw"] = self._write_artifact(root, "decoded_raw", raw_output_image)
+                if effective_mode == "context_crop" and crop_working_summary:
+                    artifact_paths["crop_source"] = self._write_artifact(root, "crop_source", crop_working_summary["crop_image"])
+                    artifact_paths["crop_mask"] = self._write_artifact(root, "crop_mask", np.repeat(_mask_2d(crop_working_summary["crop_mask"])[:, :, None], 3, axis=2))
+                    artifact_paths["normalized_image"] = self._write_artifact(root, "normalized_image", working_image)
+                    artifact_paths["normalized_mask"] = self._write_artifact(root, "normalized_mask", np.repeat(_mask_2d(working_mask)[:, :, None], 3, axis=2))
+                    if restored_crop_image is not None:
+                        artifact_paths["decoded_restored_crop"] = self._write_artifact(root, "decoded_restored_crop", restored_crop_image)
                 artifact_paths["decoded_final"] = self._write_artifact(root, "decoded_final", final_output_image)
             if self.config.capture_tensors or mode == "debug":
                 artifact_paths["source_latent"] = self._write_tensor_artifact(root, "source_latent", source_latent)
@@ -681,23 +1163,42 @@ class FluxFillGlassPipeline:
                 debug_summary["artifacts"] = artifact_paths
                 debug_summary["debug_output_dir"] = str(root)
 
+        geometry_for_metadata = geometry_summary
         metadata = {
             "tier": self.config.tier,
             "mode": mode,
+            "effective_mode": effective_mode,
             "blend_mode": self.config.blend_mode,
             "target_megapixels": float(self.config.target_megapixels),
             "unet_path": str(self.config.unet_path),
             "ae_path": str(self.config.ae_path),
             "conditioning_cache_path": str(self.config.conditioning_cache_path),
-            "no_bb": True,
+            "no_bb": effective_mode != "context_crop",
             "no_scale": mode != "scaled",
             "verify_c_concat": bool(self.config.verify_c_concat),
             "original_width": int(image_np.shape[1]),
             "original_height": int(image_np.shape[0]),
             "working_width": int(working_image.shape[1]),
             "working_height": int(working_image.shape[0]),
-            "scale_factor": float(scale_summary["scale_factor"]),
-            "scaled": bool(scale_summary["scaled"]),
+            "scale_factor": float(scale_summary.get("scale_factor", 1.0)),
+            "scale_to_bucket": float(geometry_for_metadata.get("scale_to_bucket", scale_summary.get("scale_factor", 1.0))),
+            "scaled": bool(scale_summary.get("scaled", False)),
+            "crop_box": [int(v) for v in geometry_for_metadata.get("crop_box", [0, image_np.shape[0], 0, image_np.shape[1]])],
+            "crop_width": int(geometry_for_metadata.get("crop_width", image_np.shape[1])),
+            "crop_height": int(geometry_for_metadata.get("crop_height", image_np.shape[0])),
+            "normalized_width": int(geometry_for_metadata.get("normalized_width", image_np.shape[1])),
+            "normalized_height": int(geometry_for_metadata.get("normalized_height", image_np.shape[0])),
+            "target_width": int(geometry_for_metadata.get("target_width", working_image.shape[1])),
+            "target_height": int(geometry_for_metadata.get("target_height", working_image.shape[0])),
+            "bucket": [int(v) for v in geometry_for_metadata.get("bucket", [working_image.shape[1], working_image.shape[0]])],
+            "bucket_aspect": float(geometry_for_metadata.get("bucket_aspect", float(working_image.shape[1]) / float(max(working_image.shape[0], 1)))),
+            "full_image_crop": bool(geometry_for_metadata.get("full_image_crop", True)),
+            "large_mask_full_context": bool(geometry_for_metadata.get("large_mask_full_context", False)),
+            "context_limited_by_bounds": bool(geometry_for_metadata.get("context_limited_by_bounds", False)),
+            "mask_bbox": [int(v) for v in geometry_for_metadata.get("mask_bbox", [bbox_y1, bbox_y2, bbox_x1, bbox_x2])],
+            "mask_bbox_width_ratio": float(geometry_for_metadata.get("mask_bbox_width_ratio", float(bbox_width) / float(max(image_np.shape[1], 1)))),
+            "mask_bbox_height_ratio": float(geometry_for_metadata.get("mask_bbox_height_ratio", float(bbox_height) / float(max(image_np.shape[0], 1)))),
+            "mask_area_ratio": float(geometry_for_metadata.get("mask_area_ratio", float(mask_area) / float(image_area))),
             "source_latent_shape": [int(dim) for dim in source_latent.shape],
             "concat_latent_shape": [int(dim) for dim in concat_latent.shape],
             "denoise_mask_shape": [int(dim) for dim in denoise_mask.shape],

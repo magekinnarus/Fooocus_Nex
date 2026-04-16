@@ -573,15 +573,20 @@ def remove_object(image: np.ndarray, mask: np.ndarray, seed: int = 0, mask_dilat
 def _select_flux_fill_mode(image: np.ndarray, requested_mode: str | None = None) -> str:
     value = str(requested_mode or "").strip().lower()
     if value:
-        if value in {"baseline", "debug", "scaled"}:
+        if value in {"baseline", "context_crop", "debug", "scaled"}:
             return value
-        raise ValueError(f"Unsupported Flux Fill glass mode: {requested_mode!r}. Expected baseline, debug, or scaled.")
+        raise ValueError(f"Unsupported Flux Fill glass mode: {requested_mode!r}. Expected baseline, context_crop, debug, or scaled.")
 
     height, width = image.shape[:2]
-    megapixels = float(width * height) / 1_000_000.0
-    if height % 8 == 0 and width % 8 == 0 and megapixels <= 1.0:
-        return "baseline"
-    return "scaled"
+    if width % 8 == 0 and height % 8 == 0:
+        try:
+            from backend.flux.flux_fill_glass_pipeline import is_native_sdxl_dimensions
+
+            if is_native_sdxl_dimensions(width, height):
+                return "baseline"
+        except Exception:
+            pass
+    return "context_crop"
 
 
 @torch.inference_mode()

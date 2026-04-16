@@ -2,8 +2,15 @@
 
 from .flux_fill_glass_pipeline import (
     FluxFillGlassConfig,
+    FluxFillGlassCropPlan,
     FluxFillGlassPipeline,
     FluxFillGlassResult,
+    is_native_sdxl_dimensions,
+    prepare_flux_fill_glass_context_crop,
+    restore_flux_fill_glass_context_crop,
+    select_flux_fill_glass_context_crop_plan,
+    select_sdxl_bucket_for_aspect,
+    stitch_flux_fill_glass_context_crop,
     run_flux_fill_glass,
 )
 from .flux_fill_pipeline import (
@@ -45,8 +52,15 @@ __all__ = [
     "FluxFillDecodedImage",
     "FluxFillDenoiseResult",
     "FluxFillGlassConfig",
+    "FluxFillGlassCropPlan",
     "FluxFillGlassPipeline",
     "FluxFillGlassResult",
+    "is_native_sdxl_dimensions",
+    "prepare_flux_fill_glass_context_crop",
+    "restore_flux_fill_glass_context_crop",
+    "select_flux_fill_glass_context_crop_plan",
+    "select_sdxl_bucket_for_aspect",
+    "stitch_flux_fill_glass_context_crop",
     "FluxFillLatentSource",
     "FluxFillResult",
     "FluxFillUNetInfo",
@@ -67,3 +81,4 @@ __all__ = [
     "save_flux_empty_conditioning_cache",
     "validate_flux_fill_unet_config",
 ]
+

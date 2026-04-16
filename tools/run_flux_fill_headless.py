@@ -68,13 +68,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask", required=True, help="Input mask path. White/regenerate, black/keep.")
     parser.add_argument("--output", required=True, help="Output PNG path.")
     parser.add_argument("--metadata-output", default=None, help="Optional JSON metadata output path.")
-    parser.add_argument("--mode", default="baseline", choices=("baseline", "debug", "scaled"), help="Flux Fill glass mode.")
+    parser.add_argument("--mode", default="baseline", choices=("baseline", "context_crop", "debug", "scaled"), help="Flux Fill glass mode.")
     parser.add_argument("--target-megapixels", type=float, default=1.0, help="Target working megapixels when scaled mode is selected.")
     parser.add_argument("--debug-output-dir", default=None, help="Optional directory for debug artifacts.")
     parser.add_argument("--capture-artifacts", action="store_true", help="Write debug PNG artifacts.")
     parser.add_argument("--capture-tensors", action="store_true", help="Write debug tensor artifacts.")
     parser.add_argument("--save-composite", action="store_true", help="Write a masked composite debug artifact.")
     parser.add_argument("--no-verify-c-concat", action="store_true", help="Skip c_concat verification preview.")
+    parser.add_argument("--raw-mask", action="store_true", help="Use the input mask as-is instead of Flux mask prep (diagnostic mode).")
     parser.add_argument("--unet", default=None, help="Flux Fill GGUF UNet path. Overrides --tier.")
     parser.add_argument("--tier", default="q8_0", choices=sorted(DEFAULT_UNET_BY_TIER), help="Known Flux Fill model tier.")
     parser.add_argument("--ae", default=str(DEFAULT_AE_PATH), help="Flux AE path.")
@@ -97,6 +98,11 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
     image = _load_rgb_image(image_path)
     mask = _load_mask(mask_path)
+    mask_prepared = not bool(getattr(args, "raw_mask", False))
+    if mask_prepared:
+        from modules.objr_engine import prepare_flux_fill_mask
+
+        mask = prepare_flux_fill_mask(mask)
     config = FluxFillGlassConfig(
         unet_path=unet_path,
         ae_path=Path(args.ae),
@@ -130,6 +136,8 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "output": str(output_path),
         "image": str(image_path),
         "mask": str(mask_path),
+        "mask_prepared": mask_prepared,
+        "mask_prep": None if not mask_prepared else {"grow": 16, "blur": 6},
         "width": result.width,
         "height": result.height,
         "seed": result.seed,
