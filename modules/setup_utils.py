@@ -69,11 +69,14 @@ def _resolve_startup_download_url(url: str) -> str:
 
 def _download_checkpoint_targets(checkpoint_downloads):
     for file_name, url in checkpoint_downloads.items():
-        download_file(
-            url=_resolve_startup_download_url(url),
-            model_dir=config.get_preferred_asset_root_path('checkpoints', file_name=file_name),
-            file_name=file_name,
-        )
+        try:
+            download_file(
+                url=_resolve_startup_download_url(url),
+                model_dir=config.get_preferred_asset_root_path('checkpoints', file_name=file_name),
+                file_name=file_name,
+            )
+        except Exception as e:
+            print(f'[Startup] Error downloading checkpoint {file_name}: {e}')
 
 
 def download_models(default_model, checkpoint_downloads, embeddings_downloads, lora_downloads, vae_downloads, upscale_downloads):
@@ -82,7 +85,10 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
     overall_start = time.perf_counter()
 
     for file_name, url in vae_approx_filenames:
-        download_file(url=url, model_dir=config.path_vae_approx, file_name=file_name)
+        try:
+            download_file(url=url, model_dir=config.path_vae_approx, file_name=file_name)
+        except Exception as e:
+            print(f'[Startup] Error downloading vae_approx {file_name}: {e}')
 
     if checkpoint_downloads:
         checkpoint_start = time.perf_counter()
@@ -103,7 +109,10 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
 
     # Embeddings, Loras, VAE downloads (optional, kept if explicitly in config)
     for file_name, url in embeddings_downloads.items():
-        download_file(url=url, model_dir=config.path_embeddings, file_name=file_name)
+        try:
+            download_file(url=url, model_dir=config.path_embeddings, file_name=file_name)
+        except Exception as e:
+            print(f'[Startup] Error downloading embedding {file_name}: {e}')
     lora_download_roots = {
         'sdxl_lcm_lora.safetensors': config.path_loras_lcm,
         'sdxl_lightning_4step_lora.safetensors': config.path_loras_lightning,
@@ -120,16 +129,25 @@ def download_models(default_model, checkpoint_downloads, embeddings_downloads, l
         existing_path = get_file_from_folder_list(file_name, [preferred_root] + [p for p in lora_lookup_paths if p != preferred_root])
         if os.path.exists(existing_path):
             continue
-        download_file(url=url, model_dir=preferred_root, file_name=file_name)
+        try:
+            download_file(url=url, model_dir=preferred_root, file_name=file_name)
+        except Exception as e:
+            print(f'[Startup] Error downloading LoRA {file_name}: {e}')
     for file_name, url in vae_downloads.items():
-        download_file(url=url, model_dir=config.get_preferred_asset_root_path('vae', file_name=file_name), file_name=file_name)
+        try:
+            download_file(url=url, model_dir=config.get_preferred_asset_root_path('vae', file_name=file_name), file_name=file_name)
+        except Exception as e:
+            print(f'[Startup] Error downloading VAE {file_name}: {e}')
 
     # Front-load all support-model assets so the UI does not need to trigger them later.
     _ensure_startup_support_assets(progress=False)
 
     # Keep preset/config-defined entries as additive custom downloads rather than the source of truth.
     for file_name, url in upscale_downloads.items():
-        download_file(url=url, model_dir=config.get_preferred_asset_root_path('upscale_models', file_name=file_name), file_name=file_name)
+        try:
+            download_file(url=url, model_dir=config.get_preferred_asset_root_path('upscale_models', file_name=file_name), file_name=file_name)
+        except Exception as e:
+            print(f'[Startup] Error downloading upscale model {file_name}: {e}')
 
     print(f'[Startup] download_models work completed in {time.perf_counter() - overall_start:.2f}s')
     return default_model, checkpoint_downloads

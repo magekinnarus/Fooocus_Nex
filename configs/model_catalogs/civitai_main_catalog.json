@@ -870,10 +870,32 @@
       "registration_state": "sourced_registered"
     },
     {
+      "id": "civitai.checkpoint.sdxl.illustrious.beretmix11",
+      "alias": "beretmix11",
+      "name": "beretMixReal_v110.safetensors",
+      "display_name": "beretMixReal v11",
+      "model_type": "checkpoint",
+      "architecture": "sdxl",
+      "sub_architecture": "illustrious",
+      "root_key": "checkpoints",
+      "asset_group_key": "illustrious.beretmix11",
+      "thumbnail_library_relative": "thumbnails/checkpoints/sdxl/illustrious/sdxl_illustrious_checkpoint_beretmix11.png",
+      "source_provider": "civitai",
+      "source_version_id": "2619644",
+      "visibility": "generic",
+      "preset_managed": false,
+      "token_required": true,
+      "source": {
+        "url": "https://civitai.com/api/download/models/2619644",
+        "token_env": "CIVITAI_TOKEN"
+      },
+      "registration_state": "sourced_registered"
+    },
+    {
       "id": "civitai.checkpoint.sdxl.illustrious.beretmix10",
       "alias": "beretmix10",
       "name": "beretMixReal_v100.safetensors",
-      "display_name": "beretMixReal v100",
+      "display_name": "beretMixReal v10",
       "model_type": "checkpoint",
       "architecture": "sdxl",
       "sub_architecture": "illustrious",

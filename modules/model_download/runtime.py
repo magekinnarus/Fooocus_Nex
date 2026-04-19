@@ -63,16 +63,36 @@ def _is_civitai_api_download_url(url: str) -> bool:
 
 
 def _resolve_civitai_direct_url(url: str, headers: Iterable[tuple[str, str]] = ()) -> str:
-    if requests is not None:
-        response = requests.head(url, headers={key: value for key, value in headers}, allow_redirects=True, timeout=10)
-        response.raise_for_status()
-        return response.url
+    # Use headers for resolution to ensure UA is set
+    request_headers = {key: value for key, value in headers}
+    if 'User-Agent' not in request_headers:
+        request_headers['User-Agent'] = _CIVITAI_ARIA2_USER_AGENT
 
-    import urllib.request
+    def _do_resolve(target_url):
+        if requests is not None:
+            response = requests.head(target_url, headers=request_headers, allow_redirects=True, timeout=10)
+            response.raise_for_status()
+            return response.url
 
-    request = urllib.request.Request(url, headers={key: value for key, value in headers}, method='HEAD')
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return response.geturl()
+        import urllib.request
+        request = urllib.request.Request(target_url, headers=request_headers, method='HEAD')
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.geturl()
+
+    try:
+        return _do_resolve(url)
+    except Exception as e:
+        # Fallback to .red if .com fails for CivitAI URLs
+        parsed = urlparse(url)
+        if parsed.netloc.lower() == 'civitai.com':
+            red_url = url.replace('civitai.com', 'civitai.red', 1)
+            print(f"CivitAI .com resolution failed for {url}: {e}. Retrying via .red ...")
+            try:
+                return _do_resolve(red_url)
+            except Exception as red_e:
+                print(f"CivitAI .red resolution also failed: {red_e}")
+                raise e # Raise original error if fallback also fails
+        raise e
 
 
 def _build_generic_aria2_command(
