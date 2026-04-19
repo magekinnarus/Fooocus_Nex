@@ -407,9 +407,10 @@ def update_model_dependent_choices(base_model_name, current_aspect_ratio, curren
 def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
     modules.config.update_files()
     try:
+        default_model_manager.refresh_catalog_index(force_refresh=True)
         default_model_manager.refresh_installed_index()
     except Exception as exc:
-        print(f'Failed to refresh installed model index: {exc}')
+        print(f'Failed to refresh model index: {exc}')
 
     base_model_choices, base_model_value = _get_base_model_dropdown_state(current_base_model)
 

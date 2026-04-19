@@ -13,7 +13,7 @@ try:
 except ImportError:  # pragma: no cover - fallback path only matters if requests is missing.
     requests = None
 
-_CIVITAI_ARIA2_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+_CIVITAI_ARIA2_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
 
 
 def download_file(
@@ -69,30 +69,42 @@ def _resolve_civitai_direct_url(url: str, headers: Iterable[tuple[str, str]] = (
         request_headers['User-Agent'] = _CIVITAI_ARIA2_USER_AGENT
 
     def _do_resolve(target_url):
-        if requests is not None:
-            response = requests.head(target_url, headers=request_headers, allow_redirects=True, timeout=10)
-            response.raise_for_status()
-            return response.url
+        try:
+            if requests is not None:
+                # Try HEAD first as it's the most efficient
+                try:
+                    response = requests.head(target_url, headers=request_headers, allow_redirects=True, timeout=10)
+                    response.raise_for_status()
+                    return response.url
+                except Exception as head_exc:
+                    # Fallback to GET with stream=True if HEAD is forbidden or not allowed
+                    status_code = getattr(getattr(head_exc, 'response', None), 'status_code', None)
+                    if status_code in (403, 405) or "403" in str(head_exc) or "405" in str(head_exc):
+                        with requests.get(target_url, headers=request_headers, allow_redirects=True, timeout=10, stream=True) as response:
+                            response.raise_for_status()
+                            return response.url
+                    raise head_exc
 
-        import urllib.request
-        request = urllib.request.Request(target_url, headers=request_headers, method='HEAD')
-        with urllib.request.urlopen(request, timeout=10) as response:
-            return response.geturl()
-
-    try:
-        return _do_resolve(url)
-    except Exception as e:
-        # Fallback to .red if .com fails for CivitAI URLs
-        parsed = urlparse(url)
-        if parsed.netloc.lower() == 'civitai.com':
-            red_url = url.replace('civitai.com', 'civitai.red', 1)
-            print(f"CivitAI .com resolution failed for {url}: {e}. Retrying via .red ...")
+            import urllib.request
+            request = urllib.request.Request(target_url, headers=request_headers, method='HEAD')
             try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.geturl()
+            except Exception:
+                # Basic urllib fallback to GET
+                request.method = 'GET'
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return response.geturl()
+        except Exception as e:
+            # Fallback to .red if .com fails for CivitAI URLs
+            parsed = urlparse(target_url)
+            if parsed.netloc.lower() == 'civitai.com':
+                red_url = target_url.replace('civitai.com', 'civitai.red', 1)
+                print(f"CivitAI .com resolution failed for {target_url}: {e}. Retrying via .red ...")
                 return _do_resolve(red_url)
-            except Exception as red_e:
-                print(f"CivitAI .red resolution also failed: {red_e}")
-                raise e # Raise original error if fallback also fails
-        raise e
+            raise e
+
+    return _do_resolve(url)
 
 
 def _build_generic_aria2_command(
