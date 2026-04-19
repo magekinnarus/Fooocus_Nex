@@ -641,6 +641,90 @@
                                        "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sd15/realcartoon3d_v18.safetensors"
                                    },
                         "registration_state":  "sourced_registered"
+                    },
+                    {
+                        "id": "huggingface.lora.sdxl.base.doll45",
+                        "alias": "doll45",
+                        "name": "Dollxl45.safetensors",
+                        "display_name": "Dollxl45",
+                        "model_type": "lora",
+                        "architecture": "sdxl",
+                        "sub_architecture": "base",
+                        "root_key": "loras",
+                        "asset_group_key": "base.doll45",
+                        "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_doll45.png",
+                        "source_provider": "huggingface",
+                        "source_version_id": null,
+                        "visibility": "generic",
+                        "preset_managed": false,
+                        "token_required": false,
+                        "source": {
+                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/Dollxl45.safetensors"
+                        },
+                        "registration_state": "sourced_registered"
+                    },
+                    {
+                        "id": "huggingface.lora.sdxl.base.doll43",
+                        "alias": "doll43",
+                        "name": "Dollxl43.safetensors",
+                        "display_name": "Dollxl43",
+                        "model_type": "lora",
+                        "architecture": "sdxl",
+                        "sub_architecture": "base",
+                        "root_key": "loras",
+                        "asset_group_key": "base.doll43",
+                        "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_doll43.png",
+                        "source_provider": "huggingface",
+                        "source_version_id": null,
+                        "visibility": "generic",
+                        "preset_managed": false,
+                        "token_required": false,
+                        "source": {
+                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/Dollxl43.safetensors"
+                        },
+                        "registration_state": "sourced_registered"
+                    },
+                    {
+                        "id": "huggingface.lora.sdxl.pony.face_round",
+                        "alias": "face_round",
+                        "name": "face_shapes_round.safetensors",
+                        "display_name": "Face Shapes Round",
+                        "model_type": "lora",
+                        "architecture": "sdxl",
+                        "sub_architecture": "pony",
+                        "root_key": "loras",
+                        "asset_group_key": "pony.face_round",
+                        "thumbnail_library_relative": "thumbnails/loras/sdxl/pony/sdxl_pony_lora_face_round.png",
+                        "source_provider": "huggingface",
+                        "source_version_id": null,
+                        "visibility": "generic",
+                        "preset_managed": false,
+                        "token_required": false,
+                        "source": {
+                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/face_shapes_round.safetensors"
+                        },
+                        "registration_state": "sourced_registered"
+                    },
+                    {
+                        "id": "huggingface.lora.sdxl.base.sinful_stylishxl",
+                        "alias": "sinful_stylishXL",
+                        "name": "sinfully_stylish.safetensors",
+                        "display_name": "Sinfully Stylish XL",
+                        "model_type": "lora",
+                        "architecture": "sdxl",
+                        "sub_architecture": "base",
+                        "root_key": "loras",
+                        "asset_group_key": "base.sinful_stylishxl",
+                        "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_sinful_stylishXL.png",
+                        "source_provider": "huggingface",
+                        "source_version_id": null,
+                        "visibility": "generic",
+                        "preset_managed": false,
+                        "token_required": false,
+                        "source": {
+                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/sinfully_stylish.safetensors"
+                        },
+                        "registration_state": "sourced_registered"
                     }
                 ]
 }

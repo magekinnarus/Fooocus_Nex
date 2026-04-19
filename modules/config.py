@@ -1098,10 +1098,12 @@ def update_files():
 
     model_start = time.perf_counter()
     model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
+    model_filenames = [x for x in model_filenames if not x.replace('\\', '/').lower().startswith('flux/')]
     model_elapsed = time.perf_counter() - model_start
 
     clip_start = time.perf_counter()
     clip_filenames = sorted(list(set(get_model_filenames(paths_clips))))
+    clip_filenames = [x for x in clip_filenames if not x.replace('\\', '/').lower().startswith('flux/')]
     clip_elapsed = time.perf_counter() - clip_start
 
     lora_start = time.perf_counter()
@@ -1110,6 +1112,7 @@ def update_files():
 
     vae_start = time.perf_counter()
     vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
+    vae_filenames = [x for x in vae_filenames if not x.replace('\\', '/').lower().startswith('flux/')]
     vae_elapsed = time.perf_counter() - vae_start
 
     preset_start = time.perf_counter()

@@ -1596,28 +1596,6 @@
       "registration_state": "sourced_registered"
     },
     {
-      "id": "civitai.lora.sdxl.base.sinful_stylishxl",
-      "alias": "sinful_stylishXL",
-      "name": "Sinfully_Stylish.safetensors",
-      "display_name": "Sinfully Stylish XL",
-      "model_type": "lora",
-      "architecture": "sdxl",
-      "sub_architecture": "base",
-      "root_key": "loras",
-      "asset_group_key": "base.sinful_stylishxl",
-      "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_sinful_stylishXL.png",
-      "source_provider": "civitai",
-      "source_version_id": "1279193",
-      "visibility": "generic",
-      "preset_managed": false,
-      "token_required": true,
-      "source": {
-        "url": "https://civitai.com/api/download/models/1279193",
-        "token_env": "CIVITAI_TOKEN"
-      },
-      "registration_state": "sourced_registered"
-    },
-    {
       "id": "civitai.lora.sdxl.base.zoom_slider",
       "alias": "zoom_slider",
       "name": "EnvyZoomSlider.safetensors",
@@ -2432,50 +2410,6 @@
       "registration_state": "sourced_registered"
     },
     {
-      "id": "civitai.lora.sdxl.base.doll45",
-      "alias": "doll45",
-      "name": "Dollxl45.safetensors",
-      "display_name": "Dollxl45",
-      "model_type": "lora",
-      "architecture": "sdxl",
-      "sub_architecture": "base",
-      "root_key": "loras",
-      "asset_group_key": "base.doll45",
-      "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_doll45.png",
-      "source_provider": "civitai",
-      "source_version_id": "2602122",
-      "visibility": "generic",
-      "preset_managed": false,
-      "token_required": true,
-      "source": {
-        "url": "https://civitai.com/api/download/models/2602122",
-        "token_env": "CIVITAI_TOKEN"
-      },
-      "registration_state": "sourced_registered"
-    },
-    {
-      "id": "civitai.lora.sdxl.base.doll43",
-      "alias": "doll43",
-      "name": "Dollxl43.safetensors",
-      "display_name": "Dollxl43",
-      "model_type": "lora",
-      "architecture": "sdxl",
-      "sub_architecture": "base",
-      "root_key": "loras",
-      "asset_group_key": "base.doll43",
-      "thumbnail_library_relative": "thumbnails/loras/sdxl/base/sdxl_base_lora_doll43.png",
-      "source_provider": "civitai",
-      "source_version_id": "2576872",
-      "visibility": "generic",
-      "preset_managed": false,
-      "token_required": true,
-      "source": {
-        "url": "https://civitai.com/api/download/models/2576872",
-        "token_env": "CIVITAI_TOKEN"
-      },
-      "registration_state": "sourced_registered"
-    },
-    {
       "id": "civitai.lora.sdxl.base.maw_face",
       "alias": "MAW_Face",
       "name": "MAWXL.safetensors",
@@ -2823,28 +2757,6 @@
       "token_required": true,
       "source": {
         "url": "https://civitai.com/api/download/models/475845",
-        "token_env": "CIVITAI_TOKEN"
-      },
-      "registration_state": "sourced_registered"
-    },
-    {
-      "id": "civitai.lora.sdxl.pony.face_round",
-      "alias": "face_round",
-      "name": "Face_Shapes_Round.safetensors",
-      "display_name": "Face Shapes Round",
-      "model_type": "lora",
-      "architecture": "sdxl",
-      "sub_architecture": "pony",
-      "root_key": "loras",
-      "asset_group_key": "pony.face_round",
-      "thumbnail_library_relative": "thumbnails/loras/sdxl/pony/sdxl_pony_lora_face_round.png",
-      "source_provider": "civitai",
-      "source_version_id": "926087",
-      "visibility": "generic",
-      "preset_managed": false,
-      "token_required": true,
-      "source": {
-        "url": "https://civitai.com/api/download/models/926087",
         "token_env": "CIVITAI_TOKEN"
       },
       "registration_state": "sourced_registered"
