@@ -275,11 +275,20 @@ def _open_source_image(source: str | os.PathLike[str] | Image.Image | Any) -> Im
         return image.copy()
 
 
-def _center_crop_square(image: Image.Image) -> Image.Image:
-    side = min(image.width, image.height)
-    left = (image.width - side) // 2
-    top = (image.height - side) // 2
-    return image.crop((left, top, left + side, top + side))
+def _center_crop(image: Image.Image, ratio: float = 1.6) -> Image.Image:
+    width, height = image.width, image.height
+    current_ratio = width / height
+
+    if current_ratio > ratio:
+        # Image is wider than target ratio
+        new_width = int(ratio * height)
+        offset = (width - new_width) // 2
+        return image.crop((offset, 0, offset + new_width, height))
+    else:
+        # Image is taller than target ratio
+        new_height = int(width / ratio)
+        offset = (height - new_height) // 2
+        return image.crop((0, offset, width, offset + new_height))
 
 
 def persist_thumbnail_image(
@@ -299,14 +308,15 @@ def persist_thumbnail_image(
     if normalized_relative is None:
         raise ValueError('Thumbnail target path is required')
 
-    output_size = int(size or get_thumbnail_size())
+    output_width = int(size or get_thumbnail_size())
+    output_height = int(output_width / 1.6)
     output_path = resolve_thumbnail_absolute_path(normalized_relative)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_image = _open_source_image(source)
     try:
-        processed = _center_crop_square(source_image.convert('RGBA')).resize(
-            (output_size, output_size),
+        processed = _center_crop(source_image.convert('RGBA'), ratio=1.6).resize(
+            (output_width, output_height),
             resample=LANCZOS,
         )
         processed.save(output_path, format='PNG')

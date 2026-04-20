@@ -649,7 +649,7 @@ class RemovalStage(PipelineStage):
 def build_generation_route(task_state) -> PipelineRoute:
     expects_controlnet = _expects_controlnet_extension(task_state)
 
-    if flags.remove_bg in task_state.goals or flags.remove_obj in task_state.goals:
+    if task_state.input_image_checkbox and (flags.remove_bg in task_state.goals or flags.remove_obj in task_state.goals):
         return PipelineRoute(
             route_id='removal',
             family='removal',

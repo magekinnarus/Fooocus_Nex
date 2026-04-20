@@ -600,6 +600,27 @@
                                    },
                         "registration_state":  "sourced_registered"
                     },
+					{
+                        "id":  "huggingface.lora.sdxl.illustrious.enchantingeyes",
+                        "alias":  "enchantingeyes",
+                        "name":  "enchantingeyes.safetensors",
+                        "display_name":  "Enchanting Eyes",
+                        "model_type":  "lora",
+                        "architecture":  "sdxl",
+                        "sub_architecture":  "illustrious",
+                        "root_key":  "loras",
+                        "asset_group_key":  "illustrious.enchantingeyes",
+                        "thumbnail_library_relative":  "thumbnails/loras/sdxl/illustrious/sdxl_illustrious_lora_enchantingeyes.png",
+                        "source_provider":  "huggingface",
+                        "source_version_id":  null,
+                        "visibility":  "generic",
+                        "preset_managed":  false,
+                        "token_required":  false,
+                        "source":  {
+                                       "url":  "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/enchantingeyes.safetensors"
+                                   },
+                        "registration_state":  "sourced_registered"
+                    },
                     {
                         "id":  "huggingface.lora.sdxl.base.sdxl_enhance",
                         "alias":  "sdxl_enhance",

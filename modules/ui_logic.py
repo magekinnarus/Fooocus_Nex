@@ -883,11 +883,11 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
         .then(fn=get_task, inputs=ctrls, outputs=currentTask) \
-        .then(fn=lambda t, tab, rbg, robj: (
-            t.state.goals.append('remove_bg') if tab == 'remove' and rbg else None,
-            t.state.goals.append('remove_obj') if tab == 'remove' and robj else None,
+        .then(fn=lambda t, use_img, tab, rbg, robj: (
+            t.state.goals.append('remove_bg') if use_img and tab == 'remove' and rbg else None,
+            t.state.goals.append('remove_obj') if use_img and tab == 'remove' and robj else None,
             t
-        )[-1], inputs=[currentTask, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=currentTask) \
+        )[-1], inputs=[currentTask, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=currentTask) \
         .then(fn=generate_clicked, inputs=[currentTask, image_number, disable_preview],
               outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]) \
         .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),

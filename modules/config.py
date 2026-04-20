@@ -420,7 +420,7 @@ def get_default_thumbnail_relative_path():
 def get_model_thumbnail_size():
     return int(get_config_item_or_set_default(
         'model_thumbnail_size',
-        512,
+        400,
         lambda value: isinstance(value, int) and value > 0,
         expected_type=int,
     ))
