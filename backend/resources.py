@@ -736,7 +736,16 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             models_to_load.append(loaded_model)
     
     load_device = get_torch_device()
-    models_to_load = [m for m in models_to_load if m.model.current_loaded_device() != load_device or force_patch_weights]
+
+    def _needs_patching(m_wrapper):
+        patcher = m_wrapper.model
+        model_obj = getattr(patcher, "model", None)
+        if model_obj is None:
+            return False
+        current_uuid = getattr(model_obj, "current_weight_patches_uuid", None)
+        return patcher.patches_uuid != current_uuid
+
+    models_to_load = [m for m in models_to_load if m.model.current_loaded_device() != load_device or force_patch_weights or _needs_patching(m)]
     
     if len(models_to_load) == 0:
         return
@@ -748,7 +757,11 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             if loaded_model.model.is_clone(current_loaded_models[i].model):
                 to_unload = [i] + to_unload
         for i in to_unload:
-            current_loaded_models.pop(i).model.detach(unpatch_all=False)
+            old_p = current_loaded_models.pop(i).model
+            # We want to unpatch if the model is currently using this patcher's weights
+            model_obj = getattr(old_p, "model", None)
+            is_current = model_obj is not None and old_p.patches_uuid == getattr(model_obj, "current_weight_patches_uuid", None)
+            old_p.detach(unpatch_all=is_current)
 
     total_memory_required = {}
     for loaded_model in models_to_load:
@@ -1285,5 +1298,3 @@ def throw_exception_if_processing_interrupted():
         if interrupt_processing:
             interrupt_processing = False
             raise InterruptProcessingException()
-
-
