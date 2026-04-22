@@ -70,13 +70,107 @@
   border: none;
   color: #aaa;
   cursor: pointer;
-  font-size: 1.1rem;
-  padding: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 4px 6px;
+  border-radius: 6px;
   transition: color 0.2s;
 }
 
 .panel-controls button:hover {
   color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.panel-controls button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.panel-controls button:disabled:hover {
+  color: #aaa;
+  background: transparent;
+}
+
+.staging-panel-action {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 999px !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)) !important;
+  color: #e7ecf5 !important;
+  font-size: 0.74rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    color 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.staging-panel-action:hover:not(:disabled) {
+  color: #ffffff !important;
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 6px 14px rgba(0, 0, 0, 0.2);
+}
+
+.staging-panel-action--compare {
+  border-color: rgba(236, 175, 92, 0.36) !important;
+  background: linear-gradient(180deg, rgba(236, 175, 92, 0.22), rgba(236, 175, 92, 0.08)) !important;
+  color: #fff0db !important;
+}
+
+.staging-panel-action--compare:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(236, 175, 92, 0.32), rgba(236, 175, 92, 0.14)) !important;
+}
+
+.staging-panel-action--refresh {
+  border-color: rgba(118, 183, 255, 0.3) !important;
+  background: linear-gradient(180deg, rgba(118, 183, 255, 0.18), rgba(118, 183, 255, 0.06)) !important;
+  color: #dceeff !important;
+}
+
+.staging-panel-action--refresh:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(118, 183, 255, 0.28), rgba(118, 183, 255, 0.12)) !important;
+}
+
+.staging-panel-action--clear {
+  border-color: rgba(255, 108, 108, 0.3) !important;
+  background: linear-gradient(180deg, rgba(255, 108, 108, 0.16), rgba(255, 108, 108, 0.05)) !important;
+  color: #ffd7d7 !important;
+}
+
+.staging-panel-action--clear:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 108, 108, 0.26), rgba(255, 108, 108, 0.1)) !important;
+}
+
+.staging-panel-action:disabled {
+  opacity: 0.42 !important;
+  box-shadow: none;
+}
+
+.staging-panel-action:disabled:hover {
+  transform: none;
+}
+
+.panel-window-btn {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  color: rgba(233, 238, 247, 0.74) !important;
+  font-size: 0.95rem !important;
+  line-height: 1;
+}
+
+.panel-window-btn:hover {
+  color: #fff !important;
 }
 
 .panel-content {

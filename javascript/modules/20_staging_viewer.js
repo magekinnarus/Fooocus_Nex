@@ -12,6 +12,7 @@
     let latestImages = [];
     let activeImageDragCount = 0;
     let renderPendingAfterDrag = false;
+    let selectedCompareNames = new Set();
 
     function escapeSelector(value) {
         if (window.CSS && typeof window.CSS.escape === 'function') {
@@ -30,10 +31,11 @@
             <div class="panel-header" id="staging-panel-header">
                 <span class="panel-title">Staging Area</span>
                 <div class="panel-controls">
-                    <button id="staging-panel-refresh" title="Refresh Now">Refresh</button>
-                    <button id="staging-panel-clear" title="Clear All Staging" style="color: #ff4d4d;">Clear</button>
-                    <button id="staging-panel-toggle" title="Minimize">-</button>
-                    <button id="staging-panel-close" title="Close Palette">x</button>
+                    <button id="staging-panel-compare" class="staging-panel-action staging-panel-action--compare" title="Compare selected images" disabled>Compare</button>
+                    <button id="staging-panel-refresh" class="staging-panel-action staging-panel-action--refresh" title="Refresh Now">Refresh</button>
+                    <button id="staging-panel-clear" class="staging-panel-action staging-panel-action--clear" title="Clear All Staging">Clear</button>
+                    <button id="staging-panel-toggle" class="panel-window-btn" title="Minimize">-</button>
+                    <button id="staging-panel-close" class="panel-window-btn" title="Close Palette">x</button>
                 </div>
             </div>
             <div class="panel-content">
@@ -71,6 +73,7 @@
         resizeHandle.addEventListener('mousedown', startResizing);
 
         // Controls
+        panel.querySelector('#staging-panel-compare').addEventListener('click', openCompareFromSelection);
         panel.querySelector('#staging-panel-refresh').addEventListener('click', fetchImages);
         panel.querySelector('#staging-panel-clear').addEventListener('click', clearStaging);
 
@@ -106,6 +109,7 @@
 
         fetchImages();
         pollInterval = setInterval(fetchImages, 3000);
+        updateCompareButtonState();
     }
 
     function openPanel() {
@@ -235,14 +239,78 @@
                     badge.className = 'staging-compare-badge';
                     item.appendChild(badge);
                 }
-                badge.textContent = `${compareBadge} in Compare`;
+                badge.textContent = compareBadge;
             } else if (badge) {
                 badge.remove();
             }
         });
     }
 
+    function syncSelectedCompareNames(images) {
+        const names = new Set((images || []).map((img) => img.name));
+        const nextSelected = new Set();
+        selectedCompareNames.forEach((name) => {
+            if (names.has(name)) {
+                nextSelected.add(name);
+            }
+        });
+        selectedCompareNames = nextSelected;
+        updateCompareButtonState();
+    }
+
+    function updateCompareButtonState() {
+        const button = panel ? panel.querySelector('#staging-panel-compare') : null;
+        if (!button) {
+            return;
+        }
+        const count = selectedCompareNames.size;
+        button.disabled = count === 0;
+        button.textContent = count > 0 ? `Compare ${count}` : 'Compare';
+        button.title = count > 0 ? `Open compare viewer for ${count} selected image${count === 1 ? '' : 's'}` : 'Select staged images to compare';
+    }
+
+    function toggleCompareSelection(name) {
+        if (!name) {
+            return;
+        }
+        if (selectedCompareNames.has(name)) {
+            selectedCompareNames.delete(name);
+        } else {
+            if (selectedCompareNames.size >= 4) {
+                return;
+            }
+            selectedCompareNames.add(name);
+        }
+        panel?.querySelector(`.staging-item[data-image-name="${escapeSelector(name)}"]`)?.classList.toggle('is-selected', selectedCompareNames.has(name));
+        updateCompareButtonState();
+    }
+
+    function getSelectedCompareItems() {
+        const selectedNames = Array.from(selectedCompareNames);
+        return selectedNames
+            .map((name) => latestImages.find((img) => img.name === name))
+            .filter(Boolean)
+            .slice(0, 4)
+            .map((img) => ({
+                stagingName: img.name,
+                relativeUrl: img.url,
+                absoluteUrl: window.location.origin + img.url,
+                filename: img.name,
+            }));
+    }
+
+    function openCompareFromSelection() {
+        const items = getSelectedCompareItems();
+        if (!items.length) {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('nex-compare:open', {
+            detail: { items },
+        }));
+    }
+
     function renderImages(images) {
+        syncSelectedCompareNames(images);
         if (images.length === 0) {
             imagesContainer.innerHTML = '<div class="empty-msg">Drop images here to stage</div>';
             return;
@@ -253,6 +321,7 @@
             const item = document.createElement('div');
             item.className = 'staging-item';
             item.dataset.imageName = img.name;
+            item.classList.toggle('is-selected', selectedCompareNames.has(img.name));
             if (currentGimpQueue.includes(img.name)) {
                 item.classList.add('gimp-targeted');
             }
@@ -296,7 +365,7 @@
             if (compareBadge) {
                 const badge = document.createElement('div');
                 badge.className = 'staging-compare-badge';
-                badge.textContent = `${compareBadge} in Compare`;
+                badge.textContent = compareBadge;
                 item.appendChild(badge);
             }
 
@@ -346,6 +415,12 @@
             actionsContainer.appendChild(delBtn);
 
             item.appendChild(actionsContainer);
+            item.addEventListener('click', (event) => {
+                if (event.target.closest('.item-actions')) {
+                    return;
+                }
+                toggleCompareSelection(img.name);
+            });
 
             imagesContainer.appendChild(item);
         });
@@ -353,6 +428,7 @@
         if (pendingRevealName) {
             flashRevealTarget(pendingRevealName);
         }
+        updateCompareButtonState();
     }
 
     function flashRevealTarget(name) {
@@ -377,6 +453,8 @@
             });
             const result = await res.json();
             if (result.status === 'success') {
+                selectedCompareNames.delete(name);
+                updateCompareButtonState();
                 fetchImages();
             }
         } catch (e) {
@@ -392,6 +470,9 @@
             });
             const result = await res.json();
             if (result.status === 'success') {
+                selectedCompareNames = new Set();
+                window.dispatchEvent(new CustomEvent('nex-compare:close-request'));
+                updateCompareButtonState();
                 fetchImages();
             }
         } catch (e) {
