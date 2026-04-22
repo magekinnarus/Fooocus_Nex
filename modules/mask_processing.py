@@ -531,7 +531,6 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
     )
     prepared_bb_path, resolved_bb_workspace_id = save_to_workspace_png(
         ctx.bb_image,
-        workspace_id=bb_workspace_id,
         filename=bb_filename,
         prefix='outpaint_bb'
     )
@@ -546,9 +545,7 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
         gr.update(value=""),
         gr.update(value=""),
         gr.update(value=True),
-        gr.update(value=notice),
-        gr.update(value=prepared_base_path),
-        gr.update(value=resolved_base_workspace_id)
+        gr.update(value=notice)
     )
 
 def core_compute_inpaint_step1_context(original_image, context_mask):
@@ -704,23 +701,6 @@ def compute_inpaint_step2_mask(workspace_id, mask_b64):
     return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
 
 
-def compute_inpaint_step2_mask(workspace_id, mask_b64):
-    if not mask_b64:
-        return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
-
-    bb_mask = ensure_numpy(mask_b64, mode='L')
-    if bb_mask is None:
-        return gr.update(), gr.update(value=workspace_id or ""), gr.update()
-
-    bb_mask_path, resolved_workspace_id = save_to_workspace_png(
-        bb_mask,
-        workspace_id=workspace_id,
-        filename=f'bb_mask_{uuid.uuid4().hex}.png',
-        prefix='inpaint_mask'
-    )
-    return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
-
-
 def compute_outpaint_step2_mask(workspace_id, mask_b64):
     if not mask_b64:
         return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
@@ -737,8 +717,6 @@ def compute_outpaint_step2_mask(workspace_id, mask_b64):
         prefix='outpaint_mask'
     )
     return gr.update(value=bb_mask_path), gr.update(value=resolved_workspace_id), gr.update()
-
-
 def compute_remove_mask(workspace_id, mask_b64):
     if not mask_b64:
         return gr.update(value=""), gr.update(value=workspace_id or ""), gr.update(value="")
