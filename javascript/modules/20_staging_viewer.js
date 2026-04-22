@@ -7,6 +7,16 @@
     let pollInterval = null;
     let currentGimpQueue = [];
     let selectedImage = null;
+    let currentCompareMap = {};
+    let pendingRevealName = '';
+    let latestImages = [];
+
+    function escapeSelector(value) {
+        if (window.CSS && typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(value);
+        }
+        return String(value).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
+    }
 
     function createPanel() {
         if (panel) return;
@@ -96,6 +106,14 @@
         pollInterval = setInterval(fetchImages, 3000);
     }
 
+    function openPanel() {
+        if (!panel) {
+            return;
+        }
+        panel.style.display = 'flex';
+        panel.classList.remove('minimized');
+    }
+
     function startDragging(e) {
         if (e.target.tagName === 'BUTTON') return;
         isDragging = true;
@@ -171,11 +189,12 @@
             const res = await fetch('/staging_api/images');
             const data = await res.json();
             currentGimpQueue = Array.isArray(data.gimp_queue) ? data.gimp_queue : [];
+            latestImages = Array.isArray(data.images) ? data.images : [];
             const json = JSON.stringify({ images: data.images, gimp_queue: currentGimpQueue });
             if (json === lastImagesJson) return; // No change
             lastImagesJson = json;
 
-            renderImages(data.images);
+            renderImages(latestImages);
         } catch (e) {
             console.error('[Staging] Fetch error:', e);
         }
@@ -195,6 +214,11 @@
             if (currentGimpQueue.includes(img.name)) {
                 item.classList.add('gimp-targeted');
             }
+            const compareBadge = currentCompareMap[img.name];
+            if (compareBadge) {
+                item.classList.add('is-in-compare');
+                item.dataset.compareSlot = compareBadge;
+            }
 
             // Standard img with draggable=true for Fooocus slots
             const imgEl = document.createElement('img');
@@ -206,13 +230,28 @@
             // Critical for dragging into Gradio slots: set absolute URL in dataTransfer
             imgEl.addEventListener('dragstart', (e) => {
                 const absoluteUrl = window.location.origin + img.url;
+                const payload = JSON.stringify({
+                    kind: 'nex-image-source',
+                    sourceKind: 'staging',
+                    absoluteUrl: absoluteUrl,
+                    relativeUrl: img.url,
+                    stagingName: img.name,
+                });
                 e.dataTransfer.setData('text/plain', absoluteUrl);
                 e.dataTransfer.setData('text/uri-list', absoluteUrl);
+                e.dataTransfer.setData('application/json', payload);
                 e.dataTransfer.setData('fooocus/staging-internal', 'true'); // Flag to prevent self-drop
                 console.log('[Staging] Drag start:', absoluteUrl);
             });
 
             item.appendChild(imgEl);
+
+            if (compareBadge) {
+                const badge = document.createElement('div');
+                badge.className = 'staging-compare-badge';
+                badge.textContent = `${compareBadge} in Compare`;
+                item.appendChild(badge);
+            }
 
             // Action buttons container
             const actionsContainer = document.createElement('div');
@@ -263,6 +302,24 @@
 
             imagesContainer.appendChild(item);
         });
+
+        if (pendingRevealName) {
+            flashRevealTarget(pendingRevealName);
+        }
+    }
+
+    function flashRevealTarget(name) {
+        if (!panel || !name) {
+            return;
+        }
+        const target = panel.querySelector(`.staging-item[data-image-name="${escapeSelector(name)}"]`);
+        if (!target) {
+            return;
+        }
+        pendingRevealName = '';
+        target.classList.add('is-revealed');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        window.setTimeout(() => target.classList.remove('is-revealed'), 1800);
     }
 
     async function deleteImage(name) {
@@ -369,12 +426,35 @@
         if (window.gradioApp) {
             createPanel();
 
+            window.addEventListener('nex-compare:state-change', (event) => {
+                currentCompareMap = (event && event.detail && event.detail.stagingMap) || {};
+                if (latestImages.length > 0) {
+                    renderImages(latestImages);
+                } else {
+                    fetchImages();
+                }
+            });
+
+            window.addEventListener('nex-staging:open-request', () => {
+                openPanel();
+            });
+
+            window.addEventListener('nex-staging:reveal-request', (event) => {
+                const name = event && event.detail && event.detail.name;
+                if (!name) {
+                    return;
+                }
+                pendingRevealName = name;
+                openPanel();
+                fetchImages();
+                window.setTimeout(() => flashRevealTarget(name), 180);
+            });
+
             // Global listener for the launcher button (survives Gradio DOM swaps)
             document.addEventListener('click', (e) => {
                 const launcher = e.target.closest('#staging-panel-launcher');
                 if (launcher && panel) {
-                    panel.style.display = 'flex';
-                    panel.classList.remove('minimized');
+                    openPanel();
                     panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     // Pop effect
                     panel.style.transform = 'scale(1.05)';

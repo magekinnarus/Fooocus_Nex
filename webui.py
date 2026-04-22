@@ -83,6 +83,14 @@ with shared.gradio_root:
                         """
                     )
                     model_browser_apply_data = gr.Textbox(value='', visible=True, elem_id='model_browser_apply_data_bridge', elem_classes=['inpaint-hidden-mask-field'], show_label=False, container=False)
+                with gr.Tab(label='Compare', id='compare_workspace'):
+                    gr.HTML(
+                        """
+<div id="nex-image-compare-panel" class="nex-image-compare-panel">
+  <nex-image-compare id="image_compare_viewer"></nex-image-compare>
+</div>
+                        """
+                    )
             progress_html = gr.HTML(value=modules.html.make_progress_html(32, 'Progress 32%'), visible=False,
                                     elem_id='progress-bar', elem_classes='progress-bar')
             with gr.Row():
