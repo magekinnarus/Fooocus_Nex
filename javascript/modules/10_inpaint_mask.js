@@ -709,11 +709,6 @@
         const root = getRoot(mode);
         // --- Auto-Disable if Tab is Hidden ---
         if (root && root.offsetParent === null) {
-            if (state.enabledModes[mode]) {
-                console.log(`[Masking] Auto-disabling hidden mode: ${mode}`);
-                state.enabledModes[mode] = false;
-                updateModeButtons();
-            }
             const surface = getSurface(mode);
             if (surface.canvas) surface.canvas.style.display = 'none';
             return;

@@ -879,7 +879,18 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
             gr.update(visible=disable_preview_value)
         ),
         inputs=[disable_preview],
-        outputs=[stop_button, skip_button, generate_button, gallery, state_is_generating, preview_column, gallery_column]
+        outputs=[stop_button, skip_button, generate_button, gallery, state_is_generating, preview_column, gallery_column],
+        js="""
+        () => {
+            ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
+                const el = document.querySelector(`#${id} textarea`);
+                if (el) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }
+        """
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
         .then(fn=get_task, inputs=ctrls, outputs=currentTask) \

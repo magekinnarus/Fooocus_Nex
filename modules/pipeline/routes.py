@@ -27,6 +27,8 @@ def _estimated_megapixels(task_state) -> float:
 
 
 def _expects_controlnet_extension(task_state) -> bool:
+    if not getattr(task_state, 'input_image_checkbox', False):
+        return False
     if task_state.current_tab == 'ip':
         return True
     if getattr(task_state, 'mixing_image_prompt_and_inpaint', False):
@@ -37,6 +39,8 @@ def _expects_controlnet_extension(task_state) -> bool:
 
 
 def _has_outpaint_request(task_state) -> bool:
+    if not getattr(task_state, 'input_image_checkbox', False):
+        return False
     mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
     has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (
         getattr(task_state, 'outpaint_step2_checkbox', False)
@@ -47,6 +51,8 @@ def _has_outpaint_request(task_state) -> bool:
 
 
 def _has_inpaint_request(task_state) -> bool:
+    if not getattr(task_state, 'input_image_checkbox', False):
+        return False
     mixed_cn_inpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_inpaint', False)
     mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
     has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (

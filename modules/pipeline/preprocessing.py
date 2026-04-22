@@ -82,6 +82,10 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     elif 'outpaint' in task_state.goals and getattr(task_state, 'outpaint_additional_prompt', '') != '':
         edit_additional_prompt = task_state.outpaint_additional_prompt
 
+    if 'inpaint' in task_state.goals or 'outpaint' in task_state.goals:
+        print(f'[Prompt Debug] inpaint_additional_prompt = {task_state.inpaint_additional_prompt!r}')
+        print(f'[Prompt Debug] outpaint_additional_prompt = {getattr(task_state, "outpaint_additional_prompt", "")!r}')
+
     if edit_additional_prompt != '':
         if prompt == '':
             prompt = edit_additional_prompt
