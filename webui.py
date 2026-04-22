@@ -167,7 +167,7 @@ with shared.gradio_root:
       <button type="button" class="mask-tool-btn" id="remove-mask-mode-bb" title="Enable Remove Mask">Mask</button>
       <button type="button" class="mask-tool-btn active" id="remove-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
-    <button type="button" class="mask-tool-btn" id="remove-mask-reset" title="Recover masking system if tools stop responding" style="border-color:rgba(255,0,0,0.4); color:rgba(255,0,0,0.8); margin-left:auto;">Reset</button>
+    <button type="button" class="mask-tool-btn" id="remove-mask-reset" title="Refresh masking controls if tools stop responding" style="border-color:rgba(255,160,64,0.45); color:rgba(255,180,96,0.95); margin-left:auto;">Refresh</button>
   </div>
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
     <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
@@ -363,7 +363,7 @@ with shared.gradio_root:
       <button type="button" class="mask-tool-btn" id="outpaint-mask-mode-bb" title="Enable BB Mask">BB Mask</button>
       <button type="button" class="mask-tool-btn active" id="outpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
-    <button type="button" class="mask-tool-btn" id="outpaint-mask-reset" title="Recover masking system if tools stop responding" style="border-color:rgba(255,0,0,0.4); color:rgba(255,0,0,0.8); margin-left:auto;">Reset</button>
+    <button type="button" class="mask-tool-btn" id="outpaint-mask-reset" title="Refresh masking controls if tools stop responding" style="border-color:rgba(255,160,64,0.45); color:rgba(255,180,96,0.95); margin-left:auto;">Refresh</button>
   </div>
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
     <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">
@@ -398,7 +398,7 @@ with shared.gradio_root:
       <button type="button" class="mask-tool-btn" id="inpaint-mask-mode-bb" title="Paint BB Mask">BB Mask</button>
       <button type="button" class="mask-tool-btn active" id="inpaint-mask-mode-disable" title="Disable Masking">Disable</button>
     </div>
-    <button type="button" class="mask-tool-btn" id="inpaint-mask-reset" title="Recover masking system if tools stop responding" style="border-color:rgba(255,0,0,0.4); color:rgba(255,0,0,0.8); margin-left:auto;">Reset</button>
+    <button type="button" class="mask-tool-btn" id="inpaint-mask-reset" title="Refresh masking controls if tools stop responding" style="border-color:rgba(255,160,64,0.45); color:rgba(255,180,96,0.95); margin-left:auto;">Refresh</button>
   </div>
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding-top:4px; border-top:1px solid rgba(128,128,128,0.1);">
     <label style="display:flex; align-items:center; gap:12px; font-size:0.9rem; font-weight:500; flex-grow:1; min-width:200px;">

@@ -10,6 +10,8 @@
     let currentCompareMap = {};
     let pendingRevealName = '';
     let latestImages = [];
+    let activeImageDragCount = 0;
+    let renderPendingAfterDrag = false;
 
     function escapeSelector(value) {
         if (window.CSS && typeof window.CSS.escape === 'function') {
@@ -194,10 +196,50 @@
             if (json === lastImagesJson) return; // No change
             lastImagesJson = json;
 
+            if (activeImageDragCount > 0) {
+                renderPendingAfterDrag = true;
+                return;
+            }
             renderImages(latestImages);
         } catch (e) {
             console.error('[Staging] Fetch error:', e);
         }
+    }
+
+    function refreshAfterDragIfNeeded() {
+        if (activeImageDragCount > 0 || !renderPendingAfterDrag) {
+            return;
+        }
+        renderPendingAfterDrag = false;
+        renderImages(latestImages);
+    }
+
+    function updateCompareBadges() {
+        if (!panel) {
+            return;
+        }
+        panel.querySelectorAll('.staging-item').forEach((item) => {
+            const imageName = item.dataset.imageName || '';
+            const compareBadge = currentCompareMap[imageName] || '';
+            item.classList.toggle('is-in-compare', !!compareBadge);
+            if (compareBadge) {
+                item.dataset.compareSlot = compareBadge;
+            } else {
+                delete item.dataset.compareSlot;
+            }
+
+            let badge = item.querySelector('.staging-compare-badge');
+            if (compareBadge) {
+                if (!badge) {
+                    badge = document.createElement('div');
+                    badge.className = 'staging-compare-badge';
+                    item.appendChild(badge);
+                }
+                badge.textContent = `${compareBadge} in Compare`;
+            } else if (badge) {
+                badge.remove();
+            }
+        });
     }
 
     function renderImages(images) {
@@ -229,6 +271,7 @@
 
             // Critical for dragging into Gradio slots: set absolute URL in dataTransfer
             imgEl.addEventListener('dragstart', (e) => {
+                activeImageDragCount += 1;
                 const absoluteUrl = window.location.origin + img.url;
                 const payload = JSON.stringify({
                     kind: 'nex-image-source',
@@ -242,6 +285,10 @@
                 e.dataTransfer.setData('application/json', payload);
                 e.dataTransfer.setData('fooocus/staging-internal', 'true'); // Flag to prevent self-drop
                 console.log('[Staging] Drag start:', absoluteUrl);
+            });
+            imgEl.addEventListener('dragend', () => {
+                activeImageDragCount = Math.max(0, activeImageDragCount - 1);
+                refreshAfterDragIfNeeded();
             });
 
             item.appendChild(imgEl);
@@ -429,7 +476,7 @@
             window.addEventListener('nex-compare:state-change', (event) => {
                 currentCompareMap = (event && event.detail && event.detail.stagingMap) || {};
                 if (latestImages.length > 0) {
-                    renderImages(latestImages);
+                    updateCompareBadges();
                 } else {
                     fetchImages();
                 }

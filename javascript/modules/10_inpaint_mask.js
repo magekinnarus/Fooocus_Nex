@@ -832,13 +832,12 @@
       state.initialized = true;
     }
 
-    // --- Reset Buttons ---
     ["inpaint-mask-reset", "outpaint-mask-reset", "remove-mask-reset"].forEach(
       (id) => {
-        const btn = document.getElementById(id);
-        if (btn && !btn.dataset.bound) {
-          btn.dataset.bound = "1";
-          btn.addEventListener("click", () => resetMaskingSystem());
+        const button = document.getElementById(id);
+        if (button && !button.dataset.bound) {
+          button.dataset.bound = "1";
+          button.addEventListener("click", () => refreshMaskingSystem());
         }
       },
     );
@@ -863,13 +862,6 @@
     surface.root = getRoot(mode);
     if (!surface.root) return;
     surface.host = getHost(surface.root);
-
-    // --- Hardening: Parentage Check ---
-    if (surface.canvas && (!surface.canvas.parentNode || surface.canvas.parentNode !== surface.host)) {
-        console.log(`[Masking] Orphaned canvas detected for ${mode}. Resetting...`);
-        surface.canvas = null;
-        surface.ctx = null;
-    }
 
     surface.img = getImage(surface.root);
     ensureCanvas(mode);
@@ -922,9 +914,7 @@
     window.setInterval(refreshAll, 500);
   }
 
-  function resetMaskingSystem() {
-    console.log("[Masking] Resetting masking system...");
-
+  function refreshMaskingSystem() {
     Object.keys(MODES).forEach((mode) => {
       const surface = getSurface(mode);
       if (surface.drawing) {
@@ -937,6 +927,10 @@
       surface.canvas = null;
       surface.ctx = null;
       surface.observersAttached = false;
+      surface.root = null;
+      surface.host = null;
+      surface.img = null;
+      surface.sourceKey = null;
     });
 
     state.initialized = false;
@@ -944,15 +938,13 @@
       .querySelectorAll(
         ".mask-tool-btn, .mask-workflow-toolbar input, .mask-workflow-toolbar button",
       )
-      .forEach((el) => {
-        delete el.dataset.bound;
+      .forEach((element) => {
+        delete element.dataset.bound;
       });
 
     refreshAll();
-    setStatus("Masking system reset.");
+    setStatus("Masking controls refreshed.");
   }
-
-  window.resetMaskingSystem = resetMaskingSystem;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
