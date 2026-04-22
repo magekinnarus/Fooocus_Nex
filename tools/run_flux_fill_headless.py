@@ -62,6 +62,28 @@ def _resolve_unet_path(tier: str, unet: str | None) -> Path:
         raise ValueError(f"Unknown Flux Fill tier {tier!r}. Supported tiers: {supported}.") from exc
 
 
+def _prepare_flux_fill_mask(mask: np.ndarray, *, grow: int = 16, blur: int = 6) -> np.ndarray:
+    import cv2
+
+    mask_np = np.asarray(mask)
+    if mask_np.ndim == 3:
+        mask_np = mask_np[:, :, 0]
+    if mask_np.ndim != 2:
+        raise ValueError(f"Flux Fill mask must be HW or HWC, got shape {mask_np.shape}.")
+
+    mask_np = np.where(mask_np > 0, 255, 0).astype(np.uint8)
+    if grow > 0:
+        kernel_size = max(1, int(grow) * 2 + 1)
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        mask_np = cv2.dilate(mask_np, kernel, iterations=1)
+    if blur > 0:
+        kernel_size = max(3, int(blur) * 2 + 1)
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        mask_np = cv2.GaussianBlur(mask_np, (kernel_size, kernel_size), 0)
+    return mask_np.clip(0, 255).astype(np.uint8)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run headless Flux Fill glass object removal on an image and mask.")
     parser.add_argument("--image", required=True, help="Input RGB image path.")
@@ -69,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output PNG path.")
     parser.add_argument("--metadata-output", default=None, help="Optional JSON metadata output path.")
     parser.add_argument("--mode", default="baseline", choices=("baseline", "context_crop", "debug", "scaled"), help="Flux Fill glass mode.")
-    parser.add_argument("--target-megapixels", type=float, default=1.0, help="Target working megapixels when scaled mode is selected.")
+    parser.add_argument("--target-megapixels", type=float, default=1.15, help="Target working megapixels when scaled mode is selected.")
     parser.add_argument("--debug-output-dir", default=None, help="Optional directory for debug artifacts.")
     parser.add_argument("--capture-artifacts", action="store_true", help="Write debug PNG artifacts.")
     parser.add_argument("--capture-tensors", action="store_true", help="Write debug tensor artifacts.")
@@ -100,9 +122,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
     mask = _load_mask(mask_path)
     mask_prepared = not bool(getattr(args, "raw_mask", False))
     if mask_prepared:
-        from modules.objr_engine import prepare_flux_fill_mask
-
-        mask = prepare_flux_fill_mask(mask)
+        mask = _prepare_flux_fill_mask(mask)
     config = FluxFillGlassConfig(
         unet_path=unet_path,
         ae_path=Path(args.ae),

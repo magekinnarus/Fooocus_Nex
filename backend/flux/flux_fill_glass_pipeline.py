@@ -35,6 +35,10 @@ FLUX_FILL_GLASS_DEFAULT_MODE = "baseline"
 FLUX_FILL_GLASS_BLEND_MODES = ("alpha", "morphological")
 FLUX_FILL_GLASS_DEFAULT_BLEND_MODE = "morphological"
 
+FLUX_FILL_CANVAS_ALIGNMENT = 16
+FLUX_FILL_CANVAS_MIN_PIXELS = 1_100_000
+FLUX_FILL_CANVAS_MAX_PIXELS = 1_200_000
+FLUX_FILL_CANVAS_TARGET_PIXELS = 1_150_000
 _SDXL_BUCKETS: tuple[tuple[int, int], ...] = tuple(
     (int(value.split("*")[0]), int(value.split("*")[1])) for value in flags.sdxl_aspect_ratios
 )
@@ -59,25 +63,78 @@ def _normalize_blend_mode(blend_mode: str | None) -> str:
         f"Unsupported Flux Fill glass blend mode: {blend_mode!r}. Expected one of {list(FLUX_FILL_GLASS_BLEND_MODES)}."
     )
 
-def _round_down_to_multiple(value: int, multiple: int) -> int:
+def _round_to_multiple(value: float, multiple: int) -> int:
     if multiple < 1:
         raise ValueError("multiple must be >= 1")
-    return max(multiple, int(value) // int(multiple) * int(multiple))
+    return max(multiple, int(round(float(value) / float(multiple))) * int(multiple))
 
 
-def _scale_working_dimensions(width: int, height: int, *, target_megapixels: float, multiple: int = 8) -> tuple[int, int, float]:
+def _scale_working_dimensions(width: int, height: int, *, target_megapixels: float, multiple: int = FLUX_FILL_CANVAS_ALIGNMENT) -> tuple[int, int, float]:
     if width < 1 or height < 1:
         raise FluxFillValidationError(f"image dimensions must be positive, got {width}x{height}.")
 
     current_megapixels = float(width * height) / 1_000_000.0
-    needs_rescale = current_megapixels > float(target_megapixels) or (width % multiple != 0) or (height % multiple != 0)
+    target_megapixels = float(np.clip(float(target_megapixels), FLUX_FILL_CANVAS_MIN_PIXELS / 1_000_000.0, FLUX_FILL_CANVAS_MAX_PIXELS / 1_000_000.0))
+    needs_rescale = (
+        current_megapixels < (FLUX_FILL_CANVAS_MIN_PIXELS / 1_000_000.0)
+        or current_megapixels > (FLUX_FILL_CANVAS_MAX_PIXELS / 1_000_000.0)
+        or (width % multiple != 0)
+        or (height % multiple != 0)
+    )
     if not needs_rescale:
         return width, height, 1.0
 
-    scale = 1.0 if current_megapixels <= float(target_megapixels) else float(np.sqrt(float(target_megapixels) / max(current_megapixels, 1e-8)))
-    scaled_width = _round_down_to_multiple(max(1, int(round(width * scale))), multiple)
-    scaled_height = _round_down_to_multiple(max(1, int(round(height * scale))), multiple)
-    return scaled_width, scaled_height, min(scale, 1.0)
+    source_area = float(width * height)
+    target_area = float(target_megapixels) * 1_000_000.0
+    target_area = float(np.clip(target_area, FLUX_FILL_CANVAS_MIN_PIXELS, FLUX_FILL_CANVAS_MAX_PIXELS))
+    source_aspect = float(width) / float(height)
+    base_scale = float(np.sqrt(target_area / max(source_area, 1e-8)))
+    base_width = _round_to_multiple(float(width) * base_scale, multiple)
+    base_height = _round_to_multiple(float(height) * base_scale, multiple)
+
+    candidates: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+
+    def _add_candidate(candidate_width: int, candidate_height: int) -> None:
+        candidate_width = max(multiple, int(candidate_width))
+        candidate_height = max(multiple, int(candidate_height))
+        area = float(candidate_width * candidate_height)
+        if candidate_width <= 0 or candidate_height <= 0:
+            return
+        score = (
+            0.0 if FLUX_FILL_CANVAS_MIN_PIXELS <= area <= FLUX_FILL_CANVAS_MAX_PIXELS else 1.0,
+            abs(area - target_area),
+            abs((float(candidate_width) / float(candidate_height)) - source_aspect),
+            abs(area - source_area),
+        )
+        existing = candidates.get((candidate_width, candidate_height))
+        if existing is None or score < existing:
+            candidates[(candidate_width, candidate_height)] = score
+
+    for offset in range(-24, 25):
+        candidate_width = max(multiple, base_width + offset * multiple)
+        candidate_height = _round_to_multiple(float(candidate_width) / max(source_aspect, 1e-8), multiple)
+        _add_candidate(candidate_width, candidate_height)
+
+        candidate_height = max(multiple, base_height + offset * multiple)
+        candidate_width = _round_to_multiple(float(candidate_height) * source_aspect, multiple)
+        _add_candidate(candidate_width, candidate_height)
+
+    if not candidates:
+        return width, height, 1.0
+
+    best_width, best_height = min(candidates.items(), key=lambda item: item[1])[0]
+    best_area = float(best_width * best_height)
+    return int(best_width), int(best_height), float(np.sqrt(best_area / max(source_area, 1e-8)))
+
+
+def select_flux_fill_canvas_dimensions(
+    width: int,
+    height: int,
+    *,
+    target_megapixels: float = FLUX_FILL_CANVAS_TARGET_PIXELS / 1_000_000.0,
+    multiple: int = FLUX_FILL_CANVAS_ALIGNMENT,
+) -> tuple[int, int, float]:
+    return _scale_working_dimensions(width, height, target_megapixels=target_megapixels, multiple=multiple)
 
 
 def _resize_uint8_rgb(image: np.ndarray, width: int, height: int, *, resample: int) -> np.ndarray:
@@ -93,6 +150,10 @@ def _resize_uint8_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
     return np.asarray(resized, dtype=np.uint8)
 
 
+def _clamp(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
+
+
 def _sdxl_bucket_aspect(bucket: tuple[int, int]) -> float:
     return float(bucket[0]) / float(bucket[1])
 
@@ -103,17 +164,37 @@ def _reduce_aspect_pair(width: int, height: int) -> tuple[int, int]:
     return int(width) // divisor, int(height) // divisor
 
 
-def _clamp(value: int, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, value))
+_SDXL_BUCKET_ASPECT_PAIRS: frozenset[tuple[int, int]] = frozenset(
+    _reduce_aspect_pair(bucket_width, bucket_height) for bucket_width, bucket_height in _SDXL_BUCKETS
+)
+
+
+def is_native_flux_dimensions(width: int, height: int) -> bool:
+    if width < 1 or height < 1:
+        return False
+    area = float(width * height)
+    return (
+        width % FLUX_FILL_CANVAS_ALIGNMENT == 0
+        and height % FLUX_FILL_CANVAS_ALIGNMENT == 0
+        and FLUX_FILL_CANVAS_MIN_PIXELS <= area <= FLUX_FILL_CANVAS_MAX_PIXELS
+    )
 
 
 def is_native_sdxl_dimensions(width: int, height: int) -> bool:
     return (int(width), int(height)) in _SDXL_BUCKETS
 
 
-def select_sdxl_bucket_for_aspect(aspect: float) -> tuple[int, int]:
+def is_sdxl_bucket_aspect_ratio(width: int, height: int) -> bool:
+    if width < 1 or height < 1:
+        return False
+    return _reduce_aspect_pair(width, height) in _SDXL_BUCKET_ASPECT_PAIRS
+
+
+def select_sdxl_bucket_for_aspect(
+    aspect: float,
+) -> tuple[int, int]:
     if aspect <= 0:
-        raise ValueError(f"aspect must be > 0, got {aspect}.")
+        raise FluxFillValidationError(f"aspect must be positive, got {aspect!r}.")
     return min(_SDXL_BUCKETS, key=lambda bucket: (abs(_sdxl_bucket_aspect(bucket) - float(aspect)), bucket[0] * bucket[1]))
 
 
@@ -175,15 +256,16 @@ def _crop_image_and_mask(image: np.ndarray, mask: np.ndarray, crop_box: tuple[in
 class FluxFillGlassCropPlan:
     mode: str
     crop_box: tuple[int, int, int, int]
-    bucket: tuple[int, int]
-    bucket_aspect: float
+    target_canvas: tuple[int, int]
+    target_canvas_aspect: float
+    target_canvas_area: int
     crop_width: int
     crop_height: int
     normalized_width: int
     normalized_height: int
     target_width: int
     target_height: int
-    scale_to_bucket: float
+    scale_to_canvas: float
     mask_bbox: tuple[int, int, int, int]
     mask_bbox_width_ratio: float
     mask_bbox_height_ratio: float
@@ -196,19 +278,32 @@ class FluxFillGlassCropPlan:
     source_image_width: int = 0
     source_image_height: int = 0
 
+    @property
+    def bucket(self) -> tuple[int, int]:
+        return self.target_canvas
+
+    @property
+    def bucket_aspect(self) -> float:
+        return self.target_canvas_aspect
+
+    @property
+    def scale_to_bucket(self) -> float:
+        return self.scale_to_canvas
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
             "crop_box": [int(v) for v in self.crop_box],
-            "bucket": [int(v) for v in self.bucket],
-            "bucket_aspect": float(self.bucket_aspect),
+            "target_canvas": [int(v) for v in self.target_canvas],
+            "target_canvas_aspect": float(self.target_canvas_aspect),
+            "target_canvas_area": int(self.target_canvas_area),
             "crop_width": int(self.crop_width),
             "crop_height": int(self.crop_height),
             "normalized_width": int(self.normalized_width),
             "normalized_height": int(self.normalized_height),
             "target_width": int(self.target_width),
             "target_height": int(self.target_height),
-            "scale_to_bucket": float(self.scale_to_bucket),
+            "scale_to_canvas": float(self.scale_to_canvas),
             "mask_bbox": [int(v) for v in self.mask_bbox],
             "mask_bbox_width_ratio": float(self.mask_bbox_width_ratio),
             "mask_bbox_height_ratio": float(self.mask_bbox_height_ratio),
@@ -220,6 +315,9 @@ class FluxFillGlassCropPlan:
             "pad": [int(v) for v in self.pad],
             "source_image_width": int(self.source_image_width),
             "source_image_height": int(self.source_image_height),
+            "bucket": [int(v) for v in self.target_canvas],
+            "bucket_aspect": float(self.target_canvas_aspect),
+            "scale_to_bucket": float(self.scale_to_canvas),
         }
 
 
@@ -239,151 +337,35 @@ def _select_context_crop_plan(
     bbox_y1, bbox_y2, bbox_x1, bbox_x2 = mask_bbox
     bbox_height = max(1, int(bbox_y2 - bbox_y1))
     bbox_width = max(1, int(bbox_x2 - bbox_x1))
-    bbox_area = max(1, int(mask_area))
     source_aspect = float(width) / float(height)
-    bbox_aspect = float(bbox_width) / float(bbox_height)
-    center_y = int(round((bbox_y1 + bbox_y2) / 2.0))
-    center_x = int(round((bbox_x1 + bbox_x2) / 2.0))
-    large_mask_full_context = (float(mask_area) / float(image_area)) > (1.0 / 6.0)
-
-    def _build_candidate(bucket: tuple[int, int]) -> dict[str, Any] | None:
-        bucket_w, bucket_h = bucket
-        bucket_aspect = _sdxl_bucket_aspect(bucket)
-        reduced_w, reduced_h = _reduce_aspect_pair(bucket_w, bucket_h)
-        min_scale = max(
-            1.0,
-            float(bbox_width) / max(reduced_w, 1) / 0.5,
-            float(bbox_height) / max(reduced_h, 1) / (1.0 / 3.0),
-            math.sqrt(float(bbox_area) / max(reduced_w * reduced_h, 1) * 6.0),
-        )
-        scale_units = max(1, int(math.ceil(min_scale)))
-        crop_width = reduced_w * scale_units
-        crop_height = reduced_h * scale_units
-        if crop_width > width or crop_height > height:
-            return None
-
-        valid_x1_min = max(0, bbox_x2 - crop_width)
-        valid_x1_max = min(bbox_x1, width - crop_width)
-        valid_y1_min = max(0, bbox_y2 - crop_height)
-        valid_y1_max = min(bbox_y1, height - crop_height)
-        if valid_x1_min > valid_x1_max or valid_y1_min > valid_y1_max:
-            return None
-
-        x1 = _clamp(int(round(center_x - crop_width / 2.0)), valid_x1_min, valid_x1_max)
-        y1 = _clamp(int(round(center_y - crop_height / 2.0)), valid_y1_min, valid_y1_max)
-        x2 = x1 + crop_width
-        y2 = y1 + crop_height
-        crop_area = max(1, int(crop_width * crop_height))
-        return {
-            "bucket": bucket,
-            "bucket_aspect": bucket_aspect,
-            "crop_box": (int(y1), int(y2), int(x1), int(x2)),
-            "crop_width": int(crop_width),
-            "crop_height": int(crop_height),
-            "crop_aspect": float(crop_width) / float(crop_height),
-            "scale_to_bucket": float(bucket_w) / float(crop_width),
-            "mask_bbox_width_ratio": float(bbox_width) / float(crop_width),
-            "mask_bbox_height_ratio": float(bbox_height) / float(crop_height),
-            "mask_area_ratio": float(mask_area) / float(crop_area),
-            "area": int(crop_area),
-            "full_image_crop": bool(crop_width == width and crop_height == height),
-        }
-
-    if large_mask_full_context:
-        bucket = select_sdxl_bucket_for_aspect(source_aspect)
-        bucket_aspect = _sdxl_bucket_aspect(bucket)
-        normalized_image, normalized_mask, pad = _pad_to_aspect(image_np, mask_np, bucket_aspect)
-        normalized_height, normalized_width = normalized_image.shape[:2]
-        return FluxFillGlassCropPlan(
-            mode=mode,
-            crop_box=(0, int(height), 0, int(width)),
-            bucket=bucket,
-            bucket_aspect=bucket_aspect,
-            crop_width=int(width),
-            crop_height=int(height),
-            normalized_width=int(normalized_width),
-            normalized_height=int(normalized_height),
-            target_width=int(bucket[0]),
-            target_height=int(bucket[1]),
-            scale_to_bucket=float(bucket[0]) / float(max(normalized_width, 1)),
-            mask_bbox=mask_bbox,
-            mask_bbox_width_ratio=float(bbox_width) / float(width),
-            mask_bbox_height_ratio=float(bbox_height) / float(height),
-            mask_area_ratio=float(mask_area) / float(image_area),
-            full_image_crop=True,
-            large_mask_full_context=True,
-            context_limited_by_bounds=bool(pad != (0, 0, 0, 0)),
-            crop_aspect=source_aspect,
-            pad=pad,
-            source_image_width=int(width),
-            source_image_height=int(height),
-        )
-
-    candidates = [candidate for bucket in _SDXL_BUCKETS if (candidate := _build_candidate(bucket)) is not None]
-    if candidates:
-        best = min(
-            candidates,
-            key=lambda candidate: (
-                int(candidate["area"]),
-                abs(float(candidate["crop_aspect"]) - source_aspect),
-                abs(float(candidate["crop_aspect"]) - bbox_aspect),
-            ),
-        )
-        crop_box = best["crop_box"]
-        crop_width = int(best["crop_width"])
-        crop_height = int(best["crop_height"])
-        bucket = tuple(int(v) for v in best["bucket"])
-        bucket_aspect = float(best["bucket_aspect"])
-        return FluxFillGlassCropPlan(
-            mode=mode,
-            crop_box=crop_box,
-            bucket=bucket,
-            bucket_aspect=bucket_aspect,
-            crop_width=crop_width,
-            crop_height=crop_height,
-            normalized_width=crop_width,
-            normalized_height=crop_height,
-            target_width=int(bucket[0]),
-            target_height=int(bucket[1]),
-            scale_to_bucket=float(best["scale_to_bucket"]),
-            mask_bbox=mask_bbox,
-            mask_bbox_width_ratio=float(best["mask_bbox_width_ratio"]),
-            mask_bbox_height_ratio=float(best["mask_bbox_height_ratio"]),
-            mask_area_ratio=float(best["mask_area_ratio"]),
-            full_image_crop=bool(best["full_image_crop"]),
-            large_mask_full_context=False,
-            context_limited_by_bounds=False,
-            crop_aspect=float(best["crop_aspect"]),
-            pad=(0, 0, 0, 0),
-            source_image_width=int(width),
-            source_image_height=int(height),
-        )
-
-    bucket = select_sdxl_bucket_for_aspect(source_aspect)
-    bucket_aspect = _sdxl_bucket_aspect(bucket)
-    normalized_image, normalized_mask, pad = _pad_to_aspect(image_np, mask_np, bucket_aspect)
-    normalized_height, normalized_width = normalized_image.shape[:2]
+    target_width, target_height, scale_to_canvas = select_flux_fill_canvas_dimensions(
+        width,
+        height,
+        target_megapixels=FLUX_FILL_CANVAS_TARGET_PIXELS / 1_000_000.0,
+        multiple=FLUX_FILL_CANVAS_ALIGNMENT,
+    )
     return FluxFillGlassCropPlan(
         mode=mode,
         crop_box=(0, int(height), 0, int(width)),
-        bucket=bucket,
-        bucket_aspect=bucket_aspect,
+        target_canvas=(int(target_width), int(target_height)),
+        target_canvas_aspect=float(target_width) / float(max(target_height, 1)),
+        target_canvas_area=int(target_width * target_height),
         crop_width=int(width),
         crop_height=int(height),
-        normalized_width=int(normalized_width),
-        normalized_height=int(normalized_height),
-        target_width=int(bucket[0]),
-        target_height=int(bucket[1]),
-        scale_to_bucket=float(bucket[0]) / float(max(normalized_width, 1)),
+        normalized_width=int(target_width),
+        normalized_height=int(target_height),
+        target_width=int(target_width),
+        target_height=int(target_height),
+        scale_to_canvas=float(scale_to_canvas),
         mask_bbox=mask_bbox,
         mask_bbox_width_ratio=float(bbox_width) / float(width),
         mask_bbox_height_ratio=float(bbox_height) / float(height),
         mask_area_ratio=float(mask_area) / float(image_area),
         full_image_crop=True,
-        large_mask_full_context=large_mask_full_context,
-        context_limited_by_bounds=True,
+        large_mask_full_context=(float(mask_area) / float(image_area)) > (1.0 / 6.0),
+        context_limited_by_bounds=False,
         crop_aspect=source_aspect,
-        pad=pad,
+        pad=(0, 0, 0, 0),
         source_image_width=int(width),
         source_image_height=int(height),
     )
@@ -400,8 +382,6 @@ def prepare_flux_fill_glass_context_crop(
     image_np = _ensure_uint8_rgb(image)
     mask_np = _ensure_mask_shape(image_np, mask)
     crop_image, crop_mask = _crop_image_and_mask(image_np, mask_np, plan.crop_box)
-    if plan.pad != (0, 0, 0, 0):
-        crop_image, crop_mask, _ = _pad_to_aspect(crop_image, crop_mask, plan.bucket_aspect)
     normalized_image = _resize_uint8_rgb(crop_image, plan.target_width, plan.target_height, resample=Image.Resampling.LANCZOS)
     normalized_mask = _resize_uint8_mask(crop_mask, plan.target_width, plan.target_height)
     return normalized_image, normalized_mask, {
@@ -472,7 +452,7 @@ class FluxFillGlassConfig:
     debug_output_dir: Path | str | None = None
     mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
     blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE
-    target_megapixels: float = 1.0
+    target_megapixels: float = FLUX_FILL_CANVAS_TARGET_PIXELS / 1_000_000.0
     verify_c_concat: bool = True
     capture_artifacts: bool = False
     capture_tensors: bool = False
@@ -622,7 +602,7 @@ def _prepare_scaled_inputs(image: np.ndarray, mask: np.ndarray, *, target_megapi
         width,
         height,
         target_megapixels=target_megapixels,
-        multiple=8,
+        multiple=FLUX_FILL_CANVAS_ALIGNMENT,
     )
     if scaled_width == width and scaled_height == height:
         return image_np, mask_np, {
@@ -685,7 +665,7 @@ class FluxFillGlassPipeline:
         if normalized_mode == "debug":
             width = int(image.shape[1])
             height = int(image.shape[0])
-            if is_native_sdxl_dimensions(width, height) and width % 8 == 0 and height % 8 == 0:
+            if is_native_sdxl_dimensions(width, height):
                 return "baseline"
             return "context_crop"
         return normalized_mode
@@ -696,19 +676,22 @@ class FluxFillGlassPipeline:
         height, width = image_np.shape[:2]
         normalized_mode = _normalize_glass_mode(mode)
         effective_mode = self._resolve_effective_mode(image_np, normalized_mode)
-        if effective_mode == "baseline" and (height % 8 != 0 or width % 8 != 0):
+        if effective_mode == "baseline" and not is_native_sdxl_dimensions(width, height):
             raise FluxFillValidationError(
-                f"W04 glass baseline does not scale or crop; image dimensions must be multiples of 8 (preferably 16). Got {width}x{height}."
+                f"W04 glass baseline does not scale or crop; image dimensions must be native SDXL bucket resolutions. Got {width}x{height}."
             )
         return {
             "image": _array_summary(image_np),
             "mask": _array_summary(mask_np),
             "mode": normalized_mode,
             "effective_mode": effective_mode,
+            "native_flux": bool(is_native_flux_dimensions(width, height)),
             "native_sdxl": bool(is_native_sdxl_dimensions(width, height)),
-            "no_bb": effective_mode != "context_crop",
-            "no_scale": normalized_mode != "scaled",
+            "sdxl_bucket_aspect": bool(is_sdxl_bucket_aspect_ratio(width, height)),
+            "no_bb": True,
+            "no_scale": effective_mode == "baseline",
             "multiple_of_8": (height % 8 == 0 and width % 8 == 0),
+            "multiple_of_16": (height % 16 == 0 and width % 16 == 0),
             "prefer_multiple_of_16": (height % 16 == 0 and width % 16 == 0),
             "mask_coverage": float(_binary_mask(mask_np).mean()) if mask_np.size else 0.0,
         }
@@ -955,15 +938,16 @@ class FluxFillGlassPipeline:
                 "mode": mode,
                 "effective_mode": effective_mode,
                 "crop_box": [0, int(image_np.shape[0]), 0, int(image_np.shape[1])],
-                "bucket": [int(target_width), int(target_height)],
-                "bucket_aspect": float(target_width) / float(max(target_height, 1)),
+                "target_canvas": [int(target_width), int(target_height)],
+                "target_canvas_aspect": float(target_width) / float(max(target_height, 1)),
+                "target_canvas_area": int(target_width * target_height),
                 "crop_width": int(image_np.shape[1]),
                 "crop_height": int(image_np.shape[0]),
-                "normalized_width": int(image_np.shape[1]),
-                "normalized_height": int(image_np.shape[0]),
+                "normalized_width": int(target_width),
+                "normalized_height": int(target_height),
                 "target_width": int(target_width),
                 "target_height": int(target_height),
-                "scale_to_bucket": float(scale_factor),
+                "scale_to_canvas": float(scale_factor),
                 "mask_bbox": [int(v) for v in mask_bbox],
                 "mask_bbox_width_ratio": float(bbox_width) / float(max(image_np.shape[1], 1)),
                 "mask_bbox_height_ratio": float(bbox_height) / float(max(image_np.shape[0], 1)),
@@ -976,6 +960,9 @@ class FluxFillGlassPipeline:
                 "source_image_width": int(image_np.shape[1]),
                 "source_image_height": int(image_np.shape[0]),
                 "scaled": bool(scaled_flag),
+                "bucket": [int(target_width), int(target_height)],
+                "bucket_aspect": float(target_width) / float(max(target_height, 1)),
+                "scale_to_bucket": float(scale_factor),
             }
 
         crop_plan: FluxFillGlassCropPlan | None = None
@@ -1003,6 +990,7 @@ class FluxFillGlassPipeline:
                 "working_width": int(working_image.shape[1]),
                 "working_height": int(working_image.shape[0]),
                 "scale_factor": float(crop_plan.scale_to_bucket),
+                "scale_to_canvas": float(crop_plan.scale_to_canvas),
                 "scale_to_bucket": float(crop_plan.scale_to_bucket),
                 "scaled": False,
                 "crop_width": int(crop_plan.crop_width),
@@ -1173,14 +1161,15 @@ class FluxFillGlassPipeline:
             "unet_path": str(self.config.unet_path),
             "ae_path": str(self.config.ae_path),
             "conditioning_cache_path": str(self.config.conditioning_cache_path),
-            "no_bb": effective_mode != "context_crop",
-            "no_scale": mode != "scaled",
+            "no_bb": True,
+            "no_scale": effective_mode == "baseline",
             "verify_c_concat": bool(self.config.verify_c_concat),
             "original_width": int(image_np.shape[1]),
             "original_height": int(image_np.shape[0]),
             "working_width": int(working_image.shape[1]),
             "working_height": int(working_image.shape[0]),
             "scale_factor": float(scale_summary.get("scale_factor", 1.0)),
+            "scale_to_canvas": float(geometry_for_metadata.get("scale_to_canvas", scale_summary.get("scale_factor", 1.0))),
             "scale_to_bucket": float(geometry_for_metadata.get("scale_to_bucket", scale_summary.get("scale_factor", 1.0))),
             "scaled": bool(scale_summary.get("scaled", False)),
             "crop_box": [int(v) for v in geometry_for_metadata.get("crop_box", [0, image_np.shape[0], 0, image_np.shape[1]])],
@@ -1190,6 +1179,9 @@ class FluxFillGlassPipeline:
             "normalized_height": int(geometry_for_metadata.get("normalized_height", image_np.shape[0])),
             "target_width": int(geometry_for_metadata.get("target_width", working_image.shape[1])),
             "target_height": int(geometry_for_metadata.get("target_height", working_image.shape[0])),
+            "target_canvas": [int(v) for v in geometry_for_metadata.get("target_canvas", [working_image.shape[1], working_image.shape[0]])],
+            "target_canvas_aspect": float(geometry_for_metadata.get("target_canvas_aspect", float(working_image.shape[1]) / float(max(working_image.shape[0], 1)))),
+            "target_canvas_area": int(geometry_for_metadata.get("target_canvas_area", int(working_image.shape[1] * working_image.shape[0]))),
             "bucket": [int(v) for v in geometry_for_metadata.get("bucket", [working_image.shape[1], working_image.shape[0]])],
             "bucket_aspect": float(geometry_for_metadata.get("bucket_aspect", float(working_image.shape[1]) / float(max(working_image.shape[0], 1)))),
             "full_image_crop": bool(geometry_for_metadata.get("full_image_crop", True)),
@@ -1203,6 +1195,9 @@ class FluxFillGlassPipeline:
             "concat_latent_shape": [int(dim) for dim in concat_latent.shape],
             "denoise_mask_shape": [int(dim) for dim in denoise_mask.shape],
             "conditioning_batch": int(payloads.batch_size),
+            "native_flux": bool(is_native_flux_dimensions(image_np.shape[1], image_np.shape[0])),
+            "native_sdxl": bool(is_native_sdxl_dimensions(image_np.shape[1], image_np.shape[0])),
+            "sdxl_bucket_aspect": bool(is_sdxl_bucket_aspect_ratio(image_np.shape[1], image_np.shape[0])),
         }
 
         return FluxFillGlassResult(
