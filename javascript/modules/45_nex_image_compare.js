@@ -2,6 +2,9 @@
     const MIN_ZOOM = 1;
     const MAX_ZOOM = 8;
     const ZOOM_STEP = 0.16;
+    const MIN_COMPACT_WIDTH = 360;
+    const MIN_COMPACT_HEIGHT = 220;
+    const VIEWPORT_MARGIN = 12;
 
     const state = {
         panel: null,
@@ -15,6 +18,7 @@
         },
         panState: null,
         dragState: null,
+        resizeState: null,
     };
 
     function toAbsoluteUrl(value) {
@@ -62,6 +66,32 @@
         return decodeURIComponent(parts.length ? parts[parts.length - 1].split("?")[0] : "compare_image.png");
     }
 
+    function clampCompactRect(left, top, width, height) {
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN);
+        const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - height - VIEWPORT_MARGIN);
+        return {
+            left: clamp(left, VIEWPORT_MARGIN, maxLeft),
+            top: clamp(top, VIEWPORT_MARGIN, maxTop),
+            width: clamp(width, MIN_COMPACT_WIDTH, Math.max(MIN_COMPACT_WIDTH, viewportWidth - (VIEWPORT_MARGIN * 2))),
+            height: clamp(height, MIN_COMPACT_HEIGHT, Math.max(MIN_COMPACT_HEIGHT, viewportHeight - (VIEWPORT_MARGIN * 2))),
+        };
+    }
+
+    function setCompactRect(left, top, width, height) {
+        if (!state.panel) {
+            return;
+        }
+        const rect = clampCompactRect(left, top, width, height);
+        state.panel.style.left = `${rect.left}px`;
+        state.panel.style.top = `${rect.top}px`;
+        state.panel.style.width = `${rect.width}px`;
+        state.panel.style.height = `${rect.height}px`;
+        state.panel.style.right = "auto";
+        state.panel.style.bottom = "auto";
+    }
+
     function ensurePanel() {
         if (state.panel) {
             return;
@@ -74,13 +104,14 @@
             <div class="panel-header nex-compare-overlay__header">
                 <span class="panel-title">Compare Viewer</span>
                 <div class="panel-controls">
-                    <button id="nex-compare-minimize" title="Switch to windowed view">□</button>
-                    <button id="nex-compare-close" title="Close">x</button>
+                    <button id="nex-compare-minimize" class="panel-window-btn" title="Switch to windowed view">[]</button>
+                    <button id="nex-compare-close" class="panel-window-btn" title="Close">x</button>
                 </div>
             </div>
             <div class="panel-content nex-compare-overlay__content">
                 <div class="nco-empty">Select up to 4 staged images, then press Compare.</div>
             </div>
+            <div class="resize-handle nex-compare-overlay__resize"></div>
         `;
 
         document.body.appendChild(panel);
@@ -88,24 +119,29 @@
         state.content = panel.querySelector(".nex-compare-overlay__content");
 
         panel.querySelector("#nex-compare-close").addEventListener("click", closeCompare);
-        panel.querySelector("#nex-compare-minimize").addEventListener("click", toggleMinimize);
+        panel.querySelector("#nex-compare-minimize").addEventListener("click", toggleCompactMode);
         panel.querySelector(".nex-compare-overlay__header").addEventListener("mousedown", startDragging);
+        panel.querySelector(".nex-compare-overlay__resize").addEventListener("mousedown", startResizing);
         panel.addEventListener("wheel", handleWheel, { passive: false });
         panel.addEventListener("mousedown", handleMouseDown);
         document.addEventListener("mousemove", handleMouseMove);
         document.addEventListener("mouseup", handleMouseUp);
+        window.addEventListener("resize", handleWindowResize);
+
         applyWindowMode();
     }
 
     function openCompare(items) {
         ensurePanel();
-        state.items = Array.isArray(items) ? items.slice(0, 4).map((item, index) => ({
-            absoluteUrl: toAbsoluteUrl(item.absoluteUrl || item.url || item.relativeUrl || ""),
-            relativeUrl: item.relativeUrl || toRelativeUrl(item.absoluteUrl || item.url || ""),
-            stagingName: item.stagingName || "",
-            filename: item.filename || getFilenameFromUrl(item.relativeUrl || item.absoluteUrl || item.url || ""),
-            slotLabel: `C${index + 1}`,
-        })).filter((item) => item.absoluteUrl) : [];
+        state.items = Array.isArray(items)
+            ? items.slice(0, 4).map((item, index) => ({
+                absoluteUrl: toAbsoluteUrl(item.absoluteUrl || item.url || item.relativeUrl || ""),
+                relativeUrl: item.relativeUrl || toRelativeUrl(item.absoluteUrl || item.url || ""),
+                stagingName: item.stagingName || "",
+                filename: item.filename || getFilenameFromUrl(item.relativeUrl || item.absoluteUrl || item.url || ""),
+                slotLabel: `C${index + 1}`,
+            })).filter((item) => item.absoluteUrl)
+            : [];
 
         resetCamera();
         state.panel.classList.remove("is-hidden");
@@ -119,16 +155,22 @@
         state.items = [];
         resetCamera();
         state.panel.classList.add("is-hidden");
+        state.panel.classList.remove("dragging", "resizing");
+        state.dragState = null;
+        state.resizeState = null;
         render();
         announceCompareState();
+        window.dispatchEvent(new CustomEvent("nex-compare:closed"));
     }
 
-    function toggleMinimize() {
+    function toggleCompactMode() {
         if (!state.panel || state.panel.classList.contains("is-hidden")) {
             return;
         }
         state.mode = state.mode === "full" ? "compact" : "full";
         applyWindowMode();
+        resetCamera();
+        render();
     }
 
     function applyWindowMode() {
@@ -140,14 +182,16 @@
         if (state.mode === "compact") {
             state.panel.classList.add("is-compact");
             if (!state.panel.dataset.compactPositioned) {
-                state.panel.style.left = "24px";
-                state.panel.style.top = "88px";
-                state.panel.style.width = "640px";
-                state.panel.style.height = "360px";
+                setCompactRect(24, 88, 640, 360);
                 state.panel.dataset.compactPositioned = "true";
+            } else if (!state.panel.style.width || !state.panel.style.height) {
+                setCompactRect(24, 88, 640, 360);
+            } else {
+                const current = state.panel.getBoundingClientRect();
+                setCompactRect(current.left, current.top, current.width, current.height);
             }
             if (toggleButton) {
-                toggleButton.textContent = "□";
+                toggleButton.textContent = "[]";
                 toggleButton.title = "Expand to full window";
             }
             return;
@@ -158,8 +202,10 @@
         state.panel.style.top = "";
         state.panel.style.width = "";
         state.panel.style.height = "";
+        state.panel.style.right = "";
+        state.panel.style.bottom = "";
         if (toggleButton) {
-            toggleButton.textContent = "□";
+            toggleButton.textContent = "[]";
             toggleButton.title = "Switch to windowed view";
         }
     }
@@ -347,15 +393,42 @@
         state.dragState = {
             offsetX: event.clientX - rect.left,
             offsetY: event.clientY - rect.top,
+            width: rect.width,
+            height: rect.height,
         };
         state.panel.classList.add("dragging");
         event.preventDefault();
     }
 
+    function startResizing(event) {
+        if (!state.panel || state.mode !== "compact" || event.button !== 0) {
+            return;
+        }
+        const rect = state.panel.getBoundingClientRect();
+        state.resizeState = {
+            startX: event.clientX,
+            startY: event.clientY,
+            width: rect.width,
+            height: rect.height,
+            left: rect.left,
+            top: rect.top,
+        };
+        state.panel.classList.add("resizing");
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
     function handleMouseMove(event) {
         if (state.dragState && state.panel && state.mode === "compact") {
-            state.panel.style.left = `${event.clientX - state.dragState.offsetX}px`;
-            state.panel.style.top = `${event.clientY - state.dragState.offsetY}px`;
+            const nextLeft = event.clientX - state.dragState.offsetX;
+            const nextTop = event.clientY - state.dragState.offsetY;
+            setCompactRect(nextLeft, nextTop, state.dragState.width, state.dragState.height);
+        }
+
+        if (state.resizeState && state.panel && state.mode === "compact") {
+            const nextWidth = state.resizeState.width + (event.clientX - state.resizeState.startX);
+            const nextHeight = state.resizeState.height + (event.clientY - state.resizeState.startY);
+            setCompactRect(state.resizeState.left, state.resizeState.top, nextWidth, nextHeight);
         }
 
         if (!state.panState) {
@@ -377,11 +450,24 @@
             state.panel.classList.remove("dragging");
             state.dragState = null;
         }
+        if (state.resizeState && state.panel) {
+            state.panel.classList.remove("resizing");
+            state.resizeState = null;
+        }
         if (!state.panState) {
             return;
         }
         getViewport(state.panState.slotIndex)?.classList.remove("is-panning");
         state.panState = null;
+    }
+
+    function handleWindowResize() {
+        if (!state.panel || state.mode !== "compact") {
+            return;
+        }
+        const rect = state.panel.getBoundingClientRect();
+        setCompactRect(rect.left, rect.top, rect.width, rect.height);
+        syncAllTransforms();
     }
 
     function resetCamera() {

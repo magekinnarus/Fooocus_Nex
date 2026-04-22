@@ -272,12 +272,14 @@
 
     if (key === "q" || key === "w") {
       const delta = key === "q" ? -4 : 4;
+      const nextSize = setBrushSize(state.brushSize + delta, state.activeMode);
       setStatus(`${currentModeName()} brush size: ${nextSize}px`);
       event.preventDefault();
+      return;
     }
 
     if (key === "r") {
-      resetMaskingSystem();
+      refreshMaskingSystem();
       event.preventDefault();
     }
   }

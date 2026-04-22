@@ -309,6 +309,17 @@
         }));
     }
 
+    function clearCompareSelection() {
+        if (selectedCompareNames.size === 0) {
+            return;
+        }
+        selectedCompareNames = new Set();
+        panel?.querySelectorAll('.staging-item.is-selected').forEach((item) => {
+            item.classList.remove('is-selected');
+        });
+        updateCompareButtonState();
+    }
+
     function renderImages(images) {
         syncSelectedCompareNames(images);
         if (images.length === 0) {
@@ -576,6 +587,10 @@
                 openPanel();
                 fetchImages();
                 window.setTimeout(() => flashRevealTarget(name), 180);
+            });
+
+            window.addEventListener('nex-compare:closed', () => {
+                clearCompareSelection();
             });
 
             // Global listener for the launcher button (survives Gradio DOM swaps)
