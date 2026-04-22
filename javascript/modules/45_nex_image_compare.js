@@ -252,6 +252,7 @@
         render() {
             const loaded = this.getLoadedEntries();
             const layoutMode = this.getLayoutMode();
+            const allEntries = this.state.slots.map((slot, index) => ({ slot, index }));
 
             if (loaded.length === 0) {
                 this.innerHTML = `
@@ -268,7 +269,7 @@
             this.innerHTML = `
                 <section class="nic-shell nic-shell--${layoutMode}" data-layout-mode="${layoutMode}" data-loaded-count="${loaded.length}">
                     <div class="nic-grid nic-grid--${layoutMode}">
-                        ${loaded.map((entry, renderIndex) => this.renderSlot(entry, renderIndex, loaded.length, layoutMode)).join('')}
+                        ${allEntries.map((entry, renderIndex) => this.renderSlot(entry, renderIndex, loaded.length, layoutMode)).join('')}
                     </div>
                 </section>
             `;
@@ -279,6 +280,21 @@
         renderSlot(entry, renderIndex, totalLoaded, layoutMode) {
             const { slot, index } = entry;
             const toolbarPosition = this.getToolbarPosition(layoutMode, renderIndex, totalLoaded);
+            if (!slot) {
+                return `
+                    <article class="nic-slot nic-slot--${layoutMode} nic-slot--empty" data-slot-index="${index}">
+                        <div class="nic-slot__viewport nic-slot__viewport--empty" data-slot-index="${index}">
+                            <div class="nic-slot__toolbar nic-slot__toolbar--${toolbarPosition}">
+                                <span class="nic-slot__label">C${index + 1}</span>
+                            </div>
+                            <div class="nic-slot__dropcopy">
+                                <div class="nic-slot__dropcopy-title">Empty</div>
+                                <div class="nic-slot__dropcopy-text">Drag from gallery or staging</div>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            }
             return `
                 <article class="nic-slot nic-slot--${layoutMode}" data-slot-index="${index}">
                     <div class="nic-slot__viewport" data-slot-index="${index}">

@@ -77,6 +77,12 @@ nex-image-compare {
   cursor: default;
 }
 
+.nic-slot__viewport--empty {
+  background:
+    linear-gradient(180deg, rgba(13, 19, 33, 0.94), rgba(6, 10, 18, 0.96));
+  border: 1px dashed rgba(236, 175, 92, 0.34);
+}
+
 .nic-slot.is-zoomed .nic-slot__viewport {
   cursor: grab;
 }
@@ -101,6 +107,10 @@ nex-image-compare {
 
 .nic-slot--single .nic-slot__viewport {
   min-height: 520px;
+}
+
+.nic-slot--empty.nic-slot--single .nic-slot__viewport {
+  min-height: 180px;
 }
 
 .nic-slot__toolbar {
@@ -172,6 +182,28 @@ nex-image-compare {
 .nic-slot__tool:hover {
   background: rgba(236, 175, 92, 0.28);
   transform: translateY(-1px);
+}
+
+.nic-slot__dropcopy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px;
+  color: rgba(228, 235, 245, 0.74);
+  text-align: center;
+  pointer-events: none;
+}
+
+.nic-slot__dropcopy-title {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: rgba(244, 247, 255, 0.92);
+}
+
+.nic-slot__dropcopy-text {
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .nic-slot__toolbar--side .nic-slot__tool {

@@ -3598,28 +3598,6 @@
       "registration_state": "sourced_registered"
     },
     {
-      "id": "civitai.lora.sdxl.illustrious.eyes_il",
-      "alias": "eyes_il",
-      "name": "EnchantingEyes.safetensors",
-      "display_name": "EnchantingEyes",
-      "model_type": "lora",
-      "architecture": "sdxl",
-      "sub_architecture": "illustrious",
-      "root_key": "loras",
-      "asset_group_key": "illustrious.eyes_il",
-      "thumbnail_library_relative": "thumbnails/loras/sdxl/illustrious/sdxl_illustrious_lora_eyes_il.png",
-      "source_provider": "civitai",
-      "source_version_id": "1463317",
-      "visibility": "generic",
-      "preset_managed": false,
-      "token_required": true,
-      "source": {
-        "url": "https://civitai.com/api/download/models/1463317",
-        "token_env": "CIVITAI_TOKEN"
-      },
-      "registration_state": "sourced_registered"
-    },
-    {
       "id": "civitai.lora.sdxl.illustrious.venus",
       "alias": "venus",
       "name": "VenusNoire_Style.safetensors",
