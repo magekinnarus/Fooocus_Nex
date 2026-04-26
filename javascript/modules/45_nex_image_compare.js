@@ -2,24 +2,36 @@
     const MIN_ZOOM = 1;
     const MAX_ZOOM = 8;
     const ZOOM_STEP = 0.16;
-    const MIN_COMPACT_WIDTH = 360;
-    const MIN_COMPACT_HEIGHT = 220;
     const VIEWPORT_MARGIN = 12;
+    const MIN_COMPACT_CONTENT_WIDTH = 360;
+    const MIN_COMPACT_CONTENT_HEIGHT = 180;
 
     const state = {
         panel: null,
+        header: null,
         content: null,
+        modeButton: null,
+        closeButton: null,
+        resizeHandle: null,
         items: [],
         mode: "full",
         camera: {
             zoom: 1,
-            ratioX: 0,
-            ratioY: 0,
+            centerX: 0.5,
+            centerY: 0.5,
         },
-        panState: null,
+        compactRect: null,
         dragState: null,
         resizeState: null,
+        panState: null,
+        syncHandle: null,
+        syncTimeout: null,
+        settleHandle: null,
     };
+
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
 
     function toAbsoluteUrl(value) {
         if (!value) {
@@ -47,10 +59,6 @@
         return String(value);
     }
 
-    function clamp(value, min, max) {
-        return Math.min(max, Math.max(min, value));
-    }
-
     function getFilenameFromUrl(value) {
         const raw = String(value || "").trim();
         if (!raw) {
@@ -66,28 +74,95 @@
         return decodeURIComponent(parts.length ? parts[parts.length - 1].split("?")[0] : "compare_image.png");
     }
 
-    function clampCompactRect(left, top, width, height) {
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-        const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - width - VIEWPORT_MARGIN);
-        const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - height - VIEWPORT_MARGIN);
+    function getHeaderHeight() {
+        return state.header?.offsetHeight || 40;
+    }
+
+    function getViewportSize() {
         return {
-            left: clamp(left, VIEWPORT_MARGIN, maxLeft),
-            top: clamp(top, VIEWPORT_MARGIN, maxTop),
-            width: clamp(width, MIN_COMPACT_WIDTH, Math.max(MIN_COMPACT_WIDTH, viewportWidth - (VIEWPORT_MARGIN * 2))),
-            height: clamp(height, MIN_COMPACT_HEIGHT, Math.max(MIN_COMPACT_HEIGHT, viewportHeight - (VIEWPORT_MARGIN * 2))),
+            width: window.innerWidth || document.documentElement.clientWidth || 1,
+            height: window.innerHeight || document.documentElement.clientHeight || 1,
         };
     }
 
-    function setCompactRect(left, top, width, height) {
+    function getFullContentAspectRatio() {
+        const viewport = getViewportSize();
+        const contentHeight = Math.max(1, viewport.height - getHeaderHeight());
+        return viewport.width / contentHeight;
+    }
+
+    function createDefaultCompactRect() {
+        const aspectRatio = Math.max(0.1, getFullContentAspectRatio());
+        const viewport = getViewportSize();
+        const maxContentHeight = Math.max(
+            MIN_COMPACT_CONTENT_HEIGHT,
+            Math.min(
+                viewport.height - (VIEWPORT_MARGIN * 2) - getHeaderHeight(),
+                (viewport.width - (VIEWPORT_MARGIN * 2)) / aspectRatio,
+            ),
+        );
+        const preferredContentHeight = clamp(
+            Math.min(320, viewport.height * 0.32),
+            MIN_COMPACT_CONTENT_HEIGHT,
+            maxContentHeight,
+        );
+        return {
+            left: 24,
+            top: 88,
+            contentHeight: preferredContentHeight,
+        };
+    }
+
+    function clampCompactContentHeight(contentHeight) {
+        const aspectRatio = Math.max(0.1, getFullContentAspectRatio());
+        const viewport = getViewportSize();
+        const maxHeight = Math.max(
+            MIN_COMPACT_CONTENT_HEIGHT,
+            Math.min(
+                viewport.height - (VIEWPORT_MARGIN * 2) - getHeaderHeight(),
+                (viewport.width - (VIEWPORT_MARGIN * 2)) / aspectRatio,
+            ),
+        );
+        const minHeight = Math.max(
+            MIN_COMPACT_CONTENT_HEIGHT,
+            MIN_COMPACT_CONTENT_WIDTH / aspectRatio,
+        );
+        return clamp(contentHeight, minHeight, maxHeight);
+    }
+
+    function applyCompactRect(rect) {
         if (!state.panel) {
             return;
         }
-        const rect = clampCompactRect(left, top, width, height);
-        state.panel.style.left = `${rect.left}px`;
-        state.panel.style.top = `${rect.top}px`;
-        state.panel.style.width = `${rect.width}px`;
-        state.panel.style.height = `${rect.height}px`;
+
+        const nextRect = rect || state.compactRect || createDefaultCompactRect();
+        const aspectRatio = Math.max(0.1, getFullContentAspectRatio());
+        const contentHeight = clampCompactContentHeight(nextRect.contentHeight);
+        const contentWidth = contentHeight * aspectRatio;
+        const panelWidth = contentWidth;
+        const panelHeight = contentHeight + getHeaderHeight();
+        const viewport = getViewportSize();
+        const left = clamp(
+            nextRect.left,
+            VIEWPORT_MARGIN,
+            Math.max(VIEWPORT_MARGIN, viewport.width - panelWidth - VIEWPORT_MARGIN),
+        );
+        const top = clamp(
+            nextRect.top,
+            VIEWPORT_MARGIN,
+            Math.max(VIEWPORT_MARGIN, viewport.height - panelHeight - VIEWPORT_MARGIN),
+        );
+
+        state.compactRect = {
+            left,
+            top,
+            contentHeight,
+        };
+
+        state.panel.style.left = `${left}px`;
+        state.panel.style.top = `${top}px`;
+        state.panel.style.width = `${panelWidth}px`;
+        state.panel.style.height = `${panelHeight}px`;
         state.panel.style.right = "auto";
         state.panel.style.bottom = "auto";
     }
@@ -104,7 +179,7 @@
             <div class="panel-header nex-compare-overlay__header">
                 <span class="panel-title">Compare Viewer</span>
                 <div class="panel-controls">
-                    <button id="nex-compare-minimize" class="panel-window-btn" title="Switch to windowed view">[]</button>
+                    <button id="nex-compare-mode" class="panel-window-btn" title="Switch to windowed view">[]</button>
                     <button id="nex-compare-close" class="panel-window-btn" title="Close">x</button>
                 </div>
             </div>
@@ -116,34 +191,52 @@
 
         document.body.appendChild(panel);
         state.panel = panel;
+        state.header = panel.querySelector(".nex-compare-overlay__header");
         state.content = panel.querySelector(".nex-compare-overlay__content");
+        state.modeButton = panel.querySelector("#nex-compare-mode");
+        state.closeButton = panel.querySelector("#nex-compare-close");
+        state.resizeHandle = panel.querySelector(".nex-compare-overlay__resize");
 
-        panel.querySelector("#nex-compare-close").addEventListener("click", closeCompare);
-        panel.querySelector("#nex-compare-minimize").addEventListener("click", toggleCompactMode);
-        panel.querySelector(".nex-compare-overlay__header").addEventListener("mousedown", startDragging);
-        panel.querySelector(".nex-compare-overlay__resize").addEventListener("mousedown", startResizing);
+        state.modeButton.addEventListener("click", toggleMode);
+        state.closeButton.addEventListener("click", closeCompare);
+        state.resizeHandle.addEventListener("mousedown", startResize);
+        state.header.addEventListener("mousedown", startDrag);
         panel.addEventListener("wheel", handleWheel, { passive: false });
-        panel.addEventListener("mousedown", handleMouseDown);
-        document.addEventListener("mousemove", handleMouseMove);
-        document.addEventListener("mouseup", handleMouseUp);
+        panel.addEventListener("mousedown", startPan);
+        document.addEventListener("mousemove", handlePointerMove);
+        document.addEventListener("mouseup", handlePointerUp);
+        document.addEventListener("keydown", handleKeyDown);
         window.addEventListener("resize", handleWindowResize);
-
-        applyWindowMode();
     }
 
-    function openCompare(items) {
-        ensurePanel();
-        state.items = Array.isArray(items)
-            ? items.slice(0, 4).map((item, index) => ({
-                absoluteUrl: toAbsoluteUrl(item.absoluteUrl || item.url || item.relativeUrl || ""),
-                relativeUrl: item.relativeUrl || toRelativeUrl(item.absoluteUrl || item.url || ""),
-                stagingName: item.stagingName || "",
-                filename: item.filename || getFilenameFromUrl(item.relativeUrl || item.absoluteUrl || item.url || ""),
+    function resetCamera() {
+        state.camera.zoom = 1;
+        state.camera.centerX = 0.5;
+        state.camera.centerY = 0.5;
+    }
+
+    function normalizeItems(rawItems) {
+        return Array.isArray(rawItems)
+            ? rawItems.slice(0, 4).map((item, index) => ({
                 slotLabel: `C${index + 1}`,
+                stagingName: item.stagingName || "",
+                filename: item.filename || getFilenameFromUrl(item.absoluteUrl || item.relativeUrl || item.url || ""),
+                absoluteUrl: toAbsoluteUrl(item.absoluteUrl || item.relativeUrl || item.url || ""),
             })).filter((item) => item.absoluteUrl)
             : [];
+    }
+
+    function openCompare(rawItems) {
+        ensurePanel();
+        state.items = normalizeItems(rawItems);
+        if (!state.items.length) {
+            closeCompare();
+            return;
+        }
 
         resetCamera();
+        state.mode = "full";
+        state.compactRect = state.compactRect || createDefaultCompactRect();
         state.panel.classList.remove("is-hidden");
         applyWindowMode();
         render();
@@ -153,24 +246,18 @@
     function closeCompare() {
         ensurePanel();
         state.items = [];
-        resetCamera();
-        state.panel.classList.add("is-hidden");
-        state.panel.classList.remove("dragging", "resizing");
         state.dragState = null;
         state.resizeState = null;
-        render();
+        if (state.panState) {
+            state.panState.viewport?.classList.remove("is-panning");
+        }
+        state.panState = null;
+        state.panel.classList.add("is-hidden");
+        state.panel.classList.remove("dragging", "resizing", "is-compact");
+        state.content.innerHTML = `<div class="nco-empty">Select up to 4 staged images, then press Compare.</div>`;
+        resetCamera();
         announceCompareState();
         window.dispatchEvent(new CustomEvent("nex-compare:closed"));
-    }
-
-    function toggleCompactMode() {
-        if (!state.panel || state.panel.classList.contains("is-hidden")) {
-            return;
-        }
-        state.mode = state.mode === "full" ? "compact" : "full";
-        applyWindowMode();
-        resetCamera();
-        render();
     }
 
     function applyWindowMode() {
@@ -178,36 +265,63 @@
             return;
         }
 
-        const toggleButton = state.panel.querySelector("#nex-compare-minimize");
         if (state.mode === "compact") {
             state.panel.classList.add("is-compact");
-            if (!state.panel.dataset.compactPositioned) {
-                setCompactRect(24, 88, 640, 360);
-                state.panel.dataset.compactPositioned = "true";
-            } else if (!state.panel.style.width || !state.panel.style.height) {
-                setCompactRect(24, 88, 640, 360);
-            } else {
-                const current = state.panel.getBoundingClientRect();
-                setCompactRect(current.left, current.top, current.width, current.height);
-            }
-            if (toggleButton) {
-                toggleButton.textContent = "[]";
-                toggleButton.title = "Expand to full window";
-            }
+            applyCompactRect(state.compactRect || createDefaultCompactRect());
+            state.modeButton.title = "Expand to full window";
+            queueSync();
             return;
         }
 
         state.panel.classList.remove("is-compact");
-        state.panel.style.left = "";
-        state.panel.style.top = "";
-        state.panel.style.width = "";
-        state.panel.style.height = "";
-        state.panel.style.right = "";
-        state.panel.style.bottom = "";
-        if (toggleButton) {
-            toggleButton.textContent = "[]";
-            toggleButton.title = "Switch to windowed view";
+        state.panel.style.top = "0";
+        state.panel.style.left = "0";
+        state.panel.style.width = "100vw";
+        state.panel.style.height = "100vh";
+        state.panel.style.right = "auto";
+        state.panel.style.bottom = "auto";
+        state.modeButton.title = "Switch to windowed view";
+        queueSync();
+    }
+
+    function queueSettledSync() {
+        if (state.settleHandle) {
+            clearTimeout(state.settleHandle);
+            state.settleHandle = null;
         }
+        state.settleHandle = window.setTimeout(() => {
+            state.settleHandle = null;
+            queueSync();
+        }, 120);
+    }
+
+    function toggleMode() {
+        if (!state.panel || state.panel.classList.contains("is-hidden")) {
+            return;
+        }
+        if (state.mode === "full") {
+            const currentRect = state.panel.getBoundingClientRect();
+            const contentHeight = clampCompactContentHeight(
+                Math.max(MIN_COMPACT_CONTENT_HEIGHT, Math.min(currentRect.height - getHeaderHeight(), 320)),
+            );
+            state.compactRect = state.compactRect || {
+                left: 24,
+                top: 88,
+                contentHeight,
+            };
+            state.mode = "compact";
+        } else {
+            const rect = state.panel.getBoundingClientRect();
+            const contentHeight = clampCompactContentHeight(rect.height - getHeaderHeight());
+            state.compactRect = {
+                left: rect.left,
+                top: rect.top,
+                contentHeight,
+            };
+            state.mode = "full";
+        }
+        applyWindowMode();
+        queueSettledSync();
     }
 
     function render() {
@@ -239,7 +353,14 @@
             </div>
         `;
 
-        syncAllTransforms();
+        state.items.forEach((item, index) => {
+            const image = getImage(index);
+            if (image) {
+                image.addEventListener("load", queueSync, { once: true });
+            }
+        });
+
+        queueSync();
     }
 
     function getViewport(index) {
@@ -250,54 +371,123 @@
         return state.panel?.querySelector(`.nco-image[data-slot-index="${index}"]`) || null;
     }
 
-    function getCell(index) {
-        return state.panel?.querySelector(`.nco-cell[data-slot-index="${index}"]`) || null;
-    }
-
-    function computeMaxPan(index, zoomOverride = null) {
-        const viewport = getViewport(index);
-        const image = getImage(index);
-        if (!viewport || !image) {
-            return { x: 0, y: 0 };
+    function fitContain(naturalWidth, naturalHeight, viewportWidth, viewportHeight) {
+        if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) {
+            return null;
         }
-
-        const zoom = zoomOverride ?? state.camera.zoom;
-        const baseWidth = image.clientWidth || image.naturalWidth || 0;
-        const baseHeight = image.clientHeight || image.naturalHeight || 0;
-        const viewportWidth = viewport.clientWidth || 0;
-        const viewportHeight = viewport.clientHeight || 0;
-
+        const imageRatio = naturalWidth / naturalHeight;
+        const viewportRatio = viewportWidth / viewportHeight;
+        if (imageRatio > viewportRatio) {
+            const width = viewportWidth;
+            return {
+                width,
+                height: width / imageRatio,
+            };
+        }
+        const height = viewportHeight;
         return {
-            x: Math.max(0, ((baseWidth * zoom) - viewportWidth) / 2),
-            y: Math.max(0, ((baseHeight * zoom) - viewportHeight) / 2),
+            width: height * imageRatio,
+            height,
         };
     }
 
-    function applyTransform(index) {
+    function getMetrics(index, cameraOverride = state.camera) {
+        const viewport = getViewport(index);
         const image = getImage(index);
-        const cell = getCell(index);
-        if (!image || !cell) {
+        if (!viewport || !image) {
+            return null;
+        }
+
+        const viewportWidth = viewport.clientWidth || 0;
+        const viewportHeight = viewport.clientHeight || 0;
+        const naturalWidth = image.naturalWidth || 0;
+        const naturalHeight = image.naturalHeight || 0;
+        const fitted = fitContain(naturalWidth, naturalHeight, viewportWidth, viewportHeight);
+        if (!fitted) {
+            return null;
+        }
+
+        const zoom = clamp(cameraOverride.zoom, MIN_ZOOM, MAX_ZOOM);
+        const displayWidth = fitted.width * zoom;
+        const displayHeight = fitted.height * zoom;
+        const minCenterX = displayWidth <= viewportWidth ? 0.5 : viewportWidth / (2 * displayWidth);
+        const maxCenterX = displayWidth <= viewportWidth ? 0.5 : 1 - minCenterX;
+        const minCenterY = displayHeight <= viewportHeight ? 0.5 : viewportHeight / (2 * displayHeight);
+        const maxCenterY = displayHeight <= viewportHeight ? 0.5 : 1 - minCenterY;
+        const centerX = clamp(cameraOverride.centerX, minCenterX, maxCenterX);
+        const centerY = clamp(cameraOverride.centerY, minCenterY, maxCenterY);
+        const left = displayWidth <= viewportWidth
+            ? (viewportWidth - displayWidth) / 2
+            : (viewportWidth / 2) - (centerX * displayWidth);
+        const top = displayHeight <= viewportHeight
+            ? (viewportHeight - displayHeight) / 2
+            : (viewportHeight / 2) - (centerY * displayHeight);
+
+        return {
+            viewport,
+            image,
+            viewportWidth,
+            viewportHeight,
+            displayWidth,
+            displayHeight,
+            minCenterX,
+            maxCenterX,
+            minCenterY,
+            maxCenterY,
+            centerX,
+            centerY,
+            left,
+            top,
+        };
+    }
+
+    function clampCameraFromReference(index) {
+        const metrics = getMetrics(index);
+        if (!metrics) {
+            return;
+        }
+        state.camera.centerX = metrics.centerX;
+        state.camera.centerY = metrics.centerY;
+    }
+
+    function applySlotLayout(index) {
+        const cell = state.panel?.querySelector(`.nco-cell[data-slot-index="${index}"]`) || null;
+        const metrics = getMetrics(index);
+        if (!cell || !metrics) {
             return;
         }
 
-        const maxPan = computeMaxPan(index);
-        const panX = maxPan.x * state.camera.ratioX;
-        const panY = maxPan.y * state.camera.ratioY;
-        image.style.transform = `translate(${panX}px, ${panY}px) scale(${state.camera.zoom})`;
-        cell.classList.toggle("is-zoomed", state.camera.zoom > 1.01);
+        metrics.image.style.width = `${metrics.displayWidth}px`;
+        metrics.image.style.height = `${metrics.displayHeight}px`;
+        metrics.image.style.left = `${metrics.left}px`;
+        metrics.image.style.top = `${metrics.top}px`;
+        cell.classList.toggle("is-zoomed", state.camera.zoom > 1.0001);
     }
 
-    function syncAllTransforms() {
-        state.items.forEach((item, index) => {
-            const image = getImage(index);
-            if (!image) {
-                return;
-            }
-            if (!image.dataset.transformBound) {
-                image.dataset.transformBound = "true";
-                image.addEventListener("load", () => applyTransform(index));
-            }
-            applyTransform(index);
+    function syncAll() {
+        if (!state.items.length) {
+            return;
+        }
+        clampCameraFromReference(0);
+        state.items.forEach((item, index) => applySlotLayout(index));
+    }
+
+    function queueSync() {
+        if (state.syncHandle) {
+            cancelAnimationFrame(state.syncHandle);
+        }
+        if (state.syncTimeout) {
+            clearTimeout(state.syncTimeout);
+            state.syncTimeout = null;
+        }
+
+        state.syncHandle = requestAnimationFrame(() => {
+            state.syncHandle = null;
+            syncAll();
+            state.syncTimeout = window.setTimeout(() => {
+                state.syncTimeout = null;
+                syncAll();
+            }, 32);
         });
     }
 
@@ -311,81 +501,98 @@
             return;
         }
 
-        event.preventDefault();
-
         const slotIndex = Number(viewport.dataset.slotIndex || -1);
-        if (slotIndex < 0) {
+        const currentMetrics = getMetrics(slotIndex);
+        if (!currentMetrics) {
             return;
         }
 
-        const oldZoom = state.camera.zoom;
-        const newZoom = clamp(
-            oldZoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
+        event.preventDefault();
+
+        const nextZoom = clamp(
+            state.camera.zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
             MIN_ZOOM,
             MAX_ZOOM,
         );
-
-        if (Math.abs(newZoom - oldZoom) < 0.0001) {
+        if (Math.abs(nextZoom - state.camera.zoom) < 0.0001) {
             return;
         }
 
-        const oldMax = computeMaxPan(slotIndex, oldZoom);
-        const newMax = computeMaxPan(slotIndex, newZoom);
         const rect = viewport.getBoundingClientRect();
-        const dx = event.clientX - (rect.left + rect.width / 2);
-        const dy = event.clientY - (rect.top + rect.height / 2);
-        const oldPanX = oldMax.x * state.camera.ratioX;
-        const oldPanY = oldMax.y * state.camera.ratioY;
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        const focusX = currentMetrics.displayWidth > 0
+            ? clamp((localX - currentMetrics.left) / currentMetrics.displayWidth, 0, 1)
+            : 0.5;
+        const focusY = currentMetrics.displayHeight > 0
+            ? clamp((localY - currentMetrics.top) / currentMetrics.displayHeight, 0, 1)
+            : 0.5;
 
-        state.camera.zoom = newZoom;
-        if (newZoom <= 1.0001) {
-            state.camera.ratioX = 0;
-            state.camera.ratioY = 0;
-        } else {
-            const newPanX = clamp(dx - ((dx - oldPanX) * newZoom / oldZoom), -newMax.x, newMax.x);
-            const newPanY = clamp(dy - ((dy - oldPanY) * newZoom / oldZoom), -newMax.y, newMax.y);
-            state.camera.ratioX = newMax.x > 0 ? clamp(newPanX / newMax.x, -1, 1) : 0;
-            state.camera.ratioY = newMax.y > 0 ? clamp(newPanY / newMax.y, -1, 1) : 0;
+        if (nextZoom <= 1.0001) {
+            resetCamera();
+            queueSync();
+            return;
         }
 
-        syncAllTransforms();
+        const nextMetrics = getMetrics(slotIndex, {
+            zoom: nextZoom,
+            centerX: state.camera.centerX,
+            centerY: state.camera.centerY,
+        });
+        if (!nextMetrics) {
+            return;
+        }
+
+        state.camera.zoom = nextZoom;
+        state.camera.centerX = clamp(
+            focusX - ((localX - (nextMetrics.viewportWidth / 2)) / nextMetrics.displayWidth),
+            0,
+            1,
+        );
+        state.camera.centerY = clamp(
+            focusY - ((localY - (nextMetrics.viewportHeight / 2)) / nextMetrics.displayHeight),
+            0,
+            1,
+        );
+
+        queueSync();
     }
 
-    function handleMouseDown(event) {
-        if (!state.items.length || event.button !== 0 || !event.ctrlKey) {
+    function startPan(event) {
+        if (!state.items.length || !event.ctrlKey || event.button !== 0 || state.camera.zoom <= 1.0001) {
             return;
         }
 
         const viewport = event.target.closest(".nco-viewport");
-        if (!viewport || !state.panel?.contains(viewport) || state.camera.zoom <= 1.0001) {
+        if (!viewport || !state.panel?.contains(viewport)) {
             return;
         }
 
         const slotIndex = Number(viewport.dataset.slotIndex || -1);
-        if (slotIndex < 0) {
+        const metrics = getMetrics(slotIndex);
+        if (!metrics) {
             return;
         }
 
-        const maxPan = computeMaxPan(slotIndex);
         state.panState = {
+            viewport,
             slotIndex,
             startX: event.clientX,
             startY: event.clientY,
-            originPanX: maxPan.x * state.camera.ratioX,
-            originPanY: maxPan.y * state.camera.ratioY,
+            startCenterX: state.camera.centerX,
+            startCenterY: state.camera.centerY,
+            displayWidth: metrics.displayWidth,
+            displayHeight: metrics.displayHeight,
         };
         viewport.classList.add("is-panning");
         event.preventDefault();
     }
 
-    function startDragging(event) {
-        if (!state.panel || state.mode !== "compact") {
+    function startDrag(event) {
+        if (!state.panel || state.mode !== "compact" || event.button !== 0) {
             return;
         }
         if (event.target.closest(".panel-controls")) {
-            return;
-        }
-        if (event.button !== 0) {
             return;
         }
 
@@ -393,59 +600,65 @@
         state.dragState = {
             offsetX: event.clientX - rect.left,
             offsetY: event.clientY - rect.top,
-            width: rect.width,
-            height: rect.height,
         };
         state.panel.classList.add("dragging");
         event.preventDefault();
     }
 
-    function startResizing(event) {
+    function startResize(event) {
         if (!state.panel || state.mode !== "compact" || event.button !== 0) {
             return;
         }
+
         const rect = state.panel.getBoundingClientRect();
         state.resizeState = {
             startX: event.clientX,
             startY: event.clientY,
-            width: rect.width,
-            height: rect.height,
             left: rect.left,
             top: rect.top,
+            startContentHeight: clampCompactContentHeight(rect.height - getHeaderHeight()),
+            aspectRatio: Math.max(0.1, getFullContentAspectRatio()),
         };
         state.panel.classList.add("resizing");
         event.preventDefault();
         event.stopPropagation();
     }
 
-    function handleMouseMove(event) {
-        if (state.dragState && state.panel && state.mode === "compact") {
-            const nextLeft = event.clientX - state.dragState.offsetX;
-            const nextTop = event.clientY - state.dragState.offsetY;
-            setCompactRect(nextLeft, nextTop, state.dragState.width, state.dragState.height);
+    function handlePointerMove(event) {
+        if (state.dragState && state.mode === "compact") {
+            applyCompactRect({
+                left: event.clientX - state.dragState.offsetX,
+                top: event.clientY - state.dragState.offsetY,
+                contentHeight: state.compactRect?.contentHeight || createDefaultCompactRect().contentHeight,
+            });
+            queueSync();
         }
 
-        if (state.resizeState && state.panel && state.mode === "compact") {
-            const nextWidth = state.resizeState.width + (event.clientX - state.resizeState.startX);
-            const nextHeight = state.resizeState.height + (event.clientY - state.resizeState.startY);
-            setCompactRect(state.resizeState.left, state.resizeState.top, nextWidth, nextHeight);
+        if (state.resizeState && state.mode === "compact") {
+            const deltaX = event.clientX - state.resizeState.startX;
+            const deltaY = event.clientY - state.resizeState.startY;
+            const vectorX = state.resizeState.aspectRatio;
+            const vectorY = 1;
+            const scaleDelta = ((deltaX * vectorX) + (deltaY * vectorY)) / ((vectorX * vectorX) + (vectorY * vectorY));
+            const contentHeight = clampCompactContentHeight(state.resizeState.startContentHeight + scaleDelta);
+            applyCompactRect({
+                left: state.resizeState.left,
+                top: state.resizeState.top,
+                contentHeight,
+            });
+            queueSync();
         }
 
         if (!state.panState) {
             return;
         }
 
-        const maxPan = computeMaxPan(state.panState.slotIndex);
-        const deltaX = event.clientX - state.panState.startX;
-        const deltaY = event.clientY - state.panState.startY;
-        const nextPanX = clamp(state.panState.originPanX + deltaX, -maxPan.x, maxPan.x);
-        const nextPanY = clamp(state.panState.originPanY + deltaY, -maxPan.y, maxPan.y);
-        state.camera.ratioX = maxPan.x > 0 ? clamp(nextPanX / maxPan.x, -1, 1) : 0;
-        state.camera.ratioY = maxPan.y > 0 ? clamp(nextPanY / maxPan.y, -1, 1) : 0;
-        syncAllTransforms();
+        state.camera.centerX = state.panState.startCenterX - ((event.clientX - state.panState.startX) / Math.max(1, state.panState.displayWidth));
+        state.camera.centerY = state.panState.startCenterY - ((event.clientY - state.panState.startY) / Math.max(1, state.panState.displayHeight));
+        queueSync();
     }
 
-    function handleMouseUp() {
+    function handlePointerUp() {
         if (state.dragState && state.panel) {
             state.panel.classList.remove("dragging");
             state.dragState = null;
@@ -454,36 +667,58 @@
             state.panel.classList.remove("resizing");
             state.resizeState = null;
         }
-        if (!state.panState) {
-            return;
+        if (state.panState) {
+            state.panState.viewport?.classList.remove("is-panning");
+            state.panState = null;
         }
-        getViewport(state.panState.slotIndex)?.classList.remove("is-panning");
-        state.panState = null;
     }
 
     function handleWindowResize() {
-        if (!state.panel || state.mode !== "compact") {
+        if (!state.panel || state.panel.classList.contains("is-hidden")) {
             return;
         }
-        const rect = state.panel.getBoundingClientRect();
-        setCompactRect(rect.left, rect.top, rect.width, rect.height);
-        syncAllTransforms();
+        if (state.mode === "compact") {
+            applyCompactRect(state.compactRect || createDefaultCompactRect());
+        } else {
+            applyWindowMode();
+        }
+        queueSettledSync();
     }
 
-    function resetCamera() {
-        state.camera.zoom = 1;
-        state.camera.ratioX = 0;
-        state.camera.ratioY = 0;
-        syncAllTransforms();
+    function handleKeyDown(event) {
+        if (!state.panel || state.panel.classList.contains("is-hidden")) {
+            return;
+        }
+        if (event.metaKey || event.altKey) {
+            return;
+        }
+        const target = event.target;
+        if (
+            target &&
+            (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+        ) {
+            return;
+        }
+
+        const key = (event.key || "").toLowerCase();
+        if (key === "escape") {
+            closeCompare();
+            event.preventDefault();
+            return;
+        }
+        if (!event.ctrlKey && key === "r") {
+            resetCamera();
+            queueSync();
+            event.preventDefault();
+        }
     }
 
     function announceCompareState() {
         const stagingMap = {};
         state.items.forEach((item, index) => {
-            if (!item.stagingName) {
-                return;
+            if (item.stagingName) {
+                stagingMap[item.stagingName] = `C${index + 1}`;
             }
-            stagingMap[item.stagingName] = `C${index + 1}`;
         });
         window.dispatchEvent(new CustomEvent("nex-compare:state-change", {
             detail: { stagingMap },
@@ -491,12 +726,7 @@
     }
 
     window.addEventListener("nex-compare:open", (event) => {
-        const items = event?.detail?.items || [];
-        if (!items.length) {
-            closeCompare();
-            return;
-        }
-        openCompare(items);
+        openCompare(event?.detail?.items || []);
     });
 
     window.addEventListener("nex-compare:close-request", closeCompare);

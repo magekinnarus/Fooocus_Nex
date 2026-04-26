@@ -1,10 +1,14 @@
 #nex-compare-overlay.nex-compare-overlay {
-  top: 24px;
-  left: 24px;
-  width: calc(100vw - 48px);
-  height: calc(100vh - 48px);
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   max-width: none;
   z-index: 10020;
+  border-radius: 0;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
 }
 
 .nex-compare-overlay.is-hidden {
@@ -27,9 +31,15 @@
 }
 
 .nex-compare-overlay__content {
+  position: relative;
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0;
   overflow: hidden;
   background: #05080f;
+  min-height: 0;
+  max-height: none;
 }
 
 .nco-empty {
@@ -46,13 +56,16 @@
   display: grid;
   grid-template-columns: repeat(var(--nco-cols, 1), minmax(0, 1fr));
   height: 100%;
+  min-height: 0;
 }
 
 .nco-cell {
   position: relative;
   min-width: 0;
+  min-height: 0;
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   background: #05080f;
+  overflow: hidden;
 }
 
 .nco-cell:first-child {
@@ -80,11 +93,9 @@
 
 .nco-viewport {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
   cursor: default;
 }
@@ -100,13 +111,11 @@
 
 .nco-image {
   display: block;
+  position: absolute;
   width: auto;
   height: auto;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  transform-origin: center center;
-  transition: transform 0.08s linear;
+  max-width: none;
+  max-height: none;
   pointer-events: none;
   user-select: none;
 }
@@ -183,10 +192,10 @@
 
 @media (max-width: 900px) {
   #nex-compare-overlay.nex-compare-overlay {
-    top: 12px;
-    left: 12px;
-    width: calc(100vw - 24px);
-    height: calc(100vh - 24px);
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
   }
 
   .nex-compare-overlay.is-compact {
