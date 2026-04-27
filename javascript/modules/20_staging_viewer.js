@@ -13,6 +13,48 @@
     let activeImageDragCount = 0;
     let renderPendingAfterDrag = false;
     let selectedCompareNames = new Set();
+    let isFetchInFlight = false;
+    let fetchQueued = false;
+    let fetchQueuedForceRender = false;
+    let panelDirty = false;
+    let dragGuardHandle = null;
+
+    function isPanelVisible() {
+        return !!(panel && panel.style.display !== 'none');
+    }
+
+    function isPanelMinimized() {
+        return !!(panel && panel.classList.contains('minimized'));
+    }
+
+    function isCompareActive() {
+        return Object.keys(currentCompareMap).length > 0;
+    }
+
+    function scheduleDragGuardReset() {
+        if (dragGuardHandle) {
+            window.clearTimeout(dragGuardHandle);
+        }
+        dragGuardHandle = window.setTimeout(() => {
+            activeImageDragCount = 0;
+            dragGuardHandle = null;
+            refreshAfterDragIfNeeded();
+        }, 2500);
+    }
+
+    function clearDragGuardReset() {
+        if (!dragGuardHandle) {
+            return;
+        }
+        window.clearTimeout(dragGuardHandle);
+        dragGuardHandle = null;
+    }
+
+    function finalizeImageDrag() {
+        activeImageDragCount = 0;
+        clearDragGuardReset();
+        refreshAfterDragIfNeeded();
+    }
 
     function escapeSelector(value) {
         if (window.CSS && typeof window.CSS.escape === 'function') {
@@ -118,6 +160,12 @@
         }
         panel.style.display = 'flex';
         panel.classList.remove('minimized');
+        const wasDirty = panelDirty;
+        if (wasDirty) {
+            panelDirty = false;
+            renderImages(latestImages);
+        }
+        fetchImages(wasDirty || latestImages.length === 0);
     }
 
     function startDragging(e) {
@@ -190,23 +238,44 @@
         }));
     }
 
-    async function fetchImages() {
+    async function fetchImages(forceRender = false) {
+        if (document.visibilityState === 'hidden') {
+            return;
+        }
+        if (isFetchInFlight) {
+            fetchQueued = true;
+            fetchQueuedForceRender = fetchQueuedForceRender || forceRender;
+            return;
+        }
         try {
+            isFetchInFlight = true;
             const res = await fetch('/staging_api/images');
             const data = await res.json();
             currentGimpQueue = Array.isArray(data.gimp_queue) ? data.gimp_queue : [];
             latestImages = Array.isArray(data.images) ? data.images : [];
             const json = JSON.stringify({ images: data.images, gimp_queue: currentGimpQueue });
-            if (json === lastImagesJson) return; // No change
+            if (!forceRender && json === lastImagesJson) return; // No change
             lastImagesJson = json;
 
             if (activeImageDragCount > 0) {
                 renderPendingAfterDrag = true;
                 return;
             }
+            if (!isPanelVisible() || isPanelMinimized()) {
+                panelDirty = true;
+                return;
+            }
             renderImages(latestImages);
         } catch (e) {
             console.error('[Staging] Fetch error:', e);
+        } finally {
+            isFetchInFlight = false;
+            if (fetchQueued) {
+                const queuedForceRender = fetchQueuedForceRender;
+                fetchQueued = false;
+                fetchQueuedForceRender = false;
+                window.setTimeout(() => fetchImages(queuedForceRender), 0);
+            }
         }
     }
 
@@ -215,6 +284,10 @@
             return;
         }
         renderPendingAfterDrag = false;
+        if (!isPanelVisible() || isPanelMinimized()) {
+            panelDirty = true;
+            return;
+        }
         renderImages(latestImages);
     }
 
@@ -347,11 +420,14 @@
             imgEl.src = img.url;
             imgEl.alt = img.name;
             imgEl.draggable = true;
+            imgEl.loading = 'lazy';
+            imgEl.decoding = 'async';
             imgEl.title = 'Drag to slots';
 
             // Critical for dragging into Gradio slots: set absolute URL in dataTransfer
             imgEl.addEventListener('dragstart', (e) => {
                 activeImageDragCount += 1;
+                scheduleDragGuardReset();
                 const absoluteUrl = window.location.origin + img.url;
                 const payload = JSON.stringify({
                     kind: 'nex-image-source',
@@ -367,8 +443,7 @@
                 console.log('[Staging] Drag start:', absoluteUrl);
             });
             imgEl.addEventListener('dragend', () => {
-                activeImageDragCount = Math.max(0, activeImageDragCount - 1);
-                refreshAfterDragIfNeeded();
+                finalizeImageDrag();
             });
 
             item.appendChild(imgEl);
@@ -553,7 +628,7 @@
             });
             const result = await res.json();
             if (result.status === 'success') {
-                fetchImages();
+                fetchImages(true);
             }
         } catch (e) {
             console.error('[Staging] Upload error:', e);
@@ -566,11 +641,15 @@
             createPanel();
 
             window.addEventListener('nex-compare:state-change', (event) => {
-                currentCompareMap = (event && event.detail && event.detail.stagingMap) || {};
-                if (latestImages.length > 0) {
+                const nextCompareMap = (event && event.detail && event.detail.stagingMap) || {};
+                const wasActive = isCompareActive();
+                currentCompareMap = nextCompareMap;
+                const nowActive = isCompareActive();
+                if (!wasActive && !nowActive) {
+                    return;
+                }
+                if (latestImages.length > 0 && isPanelVisible()) {
                     updateCompareBadges();
-                } else {
-                    fetchImages();
                 }
             });
 
@@ -585,12 +664,21 @@
                 }
                 pendingRevealName = name;
                 openPanel();
-                fetchImages();
+                fetchImages(true);
                 window.setTimeout(() => flashRevealTarget(name), 180);
             });
 
             window.addEventListener('nex-compare:closed', () => {
                 clearCompareSelection();
+            });
+
+            window.addEventListener('drop', finalizeImageDrag);
+            window.addEventListener('dragend', finalizeImageDrag);
+            window.addEventListener('blur', finalizeImageDrag);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && isPanelVisible()) {
+                    fetchImages(panelDirty);
+                }
             });
 
             // Global listener for the launcher button (survives Gradio DOM swaps)
