@@ -414,17 +414,16 @@ def get_segments(length: int, tile_size: int, overlap: int):
     
     while segments[-1][1] < length:
         start = segments[-1][1]
-        end = start + tile_size - overlap * 2
-        
-        if end >= length:
+        tile_start = start - overlap
+        if tile_start + tile_size >= length:
             end = length
-            # pad back to keep tile_size
-            start_in_v = end - tile_size
-            actual_start = max(0, start)
-            pad_l = actual_start - start_in_v
-            segments.append((actual_start, end, pad_l, 0))
-        else:
-            segments.append((start, end, overlap, overlap))
+            final_tile_start = max(0, length - tile_size)
+            pad_l = start - final_tile_start
+            segments.append((start, end, pad_l, 0))
+            break
+
+        end = start + tile_size - overlap * 2
+        segments.append((start, end, overlap, overlap))
     return segments
 
 # --- Core Engine ---
