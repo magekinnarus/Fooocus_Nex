@@ -34,6 +34,12 @@
         { id: 'violet', label: 'Violet' },
         { id: 'gray', label: 'Gray' },
     ];
+    const markerShapeOptions = [
+        { id: 'star', glyph: '\u2605', label: 'Star' },
+        { id: 'flag', glyph: '\u2691', label: 'Flag' },
+        { id: 'circle', glyph: '\u25CF', label: 'Circle' },
+        { id: 'triangle', glyph: '\u25B2', label: 'Triangle' },
+    ];
 
     function isPanelVisible() {
         return !!(panel && panel.style.display !== 'none');
@@ -88,6 +94,27 @@
         return latestImages.find((img) => img.name === name) || null;
     }
 
+    function getMarkerShapeGlyph(iconId) {
+        const legacyAlias = {
+            pin: 'circle',
+            bookmark: 'triangle',
+        };
+        const resolvedId = legacyAlias[iconId] || iconId;
+        const option = markerShapeOptions.find((item) => item.id === resolvedId);
+        return option ? option.glyph : '\u25CF';
+    }
+
+    function normalizeMarkerShapeId(iconId) {
+        const legacyAlias = {
+            pin: 'circle',
+            bookmark: 'triangle',
+        };
+        const resolvedId = legacyAlias[iconId] || iconId;
+        return markerShapeOptions.some((item) => item.id === resolvedId)
+            ? resolvedId
+            : markerShapeOptions[0].id;
+    }
+
     function closeMarkerPicker() {
         if (!markerPicker) {
             return;
@@ -124,7 +151,7 @@
         `;
 
         const iconsContainer = markerPicker.querySelector('.staging-marker-picker__icons');
-        markerIconOptions.forEach((option) => {
+        markerShapeOptions.forEach((option) => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'staging-marker-picker__icon';
@@ -167,7 +194,7 @@
         }
         const picker = ensureMarkerPicker();
         const marker = image.marker || {};
-        const iconId = marker.icon || markerIconOptions[0].id;
+        const iconId = normalizeMarkerShapeId(marker.icon || markerShapeOptions[0].id);
         const colorId = marker.color || markerColorOptions[0].id;
         const label = marker.label || '';
 
@@ -529,7 +556,7 @@
 
         const icon = document.createElement('span');
         icon.className = 'staging-marker-badge__icon';
-        icon.textContent = getMarkerIconGlyph(marker.icon);
+        icon.textContent = getMarkerShapeGlyph(marker.icon);
         badge.appendChild(icon);
 
         if (marker.label) {
@@ -685,7 +712,7 @@
 
             const markerBtn = document.createElement('button');
             markerBtn.className = 'item-action-btn btn-marker';
-            markerBtn.innerHTML = img.marker ? getMarkerIconGlyph(img.marker.icon) : 'M';
+            markerBtn.innerHTML = img.marker ? getMarkerShapeGlyph(img.marker.icon) : 'M';
             markerBtn.title = img.marker && img.marker.label ? `Edit marker: ${img.marker.label}` : 'Set marker';
             markerBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
