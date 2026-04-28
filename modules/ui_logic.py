@@ -125,13 +125,14 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
             flag, product = task.yields.pop(0)
             if flag == 'preview':
                 percentage, title, image = product
-                # Coalesce consecutive preview updates so the UI sees the newest
-                # progress state without dropping every preview under load.
+                # Preserve image-bearing sampling previews. Only collapse runs of
+                # text-only preview updates so the UI does not starve long samplers.
                 while len(task.yields) > 0 and task.yields[0][0] == 'preview':
-                    next_percentage, next_title, next_image = task.yields.pop(0)[1]
-                    percentage, title = next_percentage, next_title
+                    next_percentage, next_title, next_image = task.yields[0][1]
                     if next_image is not None:
-                        image = next_image
+                        break
+                    task.yields.pop(0)
+                    percentage, title = next_percentage, next_title
                 if preview_enabled:
                     if has_results and batch_size >= 2:
                         preview_col = gr.update(visible=True)

@@ -40,6 +40,7 @@
             this.objectUrl = null;
             this.render();
             this.bindEvents();
+            this.markUploadState(false);
             this.observeApp();
             if (this.uploadMode === 'api') {
                 this.attachApiFieldListeners();
@@ -324,10 +325,25 @@
             }, 250);
         }
 
+        markUploadState(isUploading) {
+            this.dataset.uploading = isUploading ? 'true' : 'false';
+            this.slotRoot?.classList.toggle('is-uploading', !!isUploading);
+            window.dispatchEvent(new CustomEvent('nex-image-slot:upload-state', {
+                detail: {
+                    slotId: this.id || '',
+                    bridgeId: this.bridgeId || '',
+                    pathFieldId: this.pathFieldId || '',
+                    workspaceFieldId: this.workspaceFieldId || '',
+                    uploading: !!isUploading,
+                },
+            }));
+        }
+
         async handleFile(file) {
             try {
                 if (this.uploadMode === 'api') {
                     this.apiUploadInFlight = true;
+                    this.markUploadState(true);
                     await this.prepareApiReplacement();
                 }
 
@@ -343,12 +359,56 @@
             } finally {
                 if (this.uploadMode === 'api') {
                     this.apiUploadInFlight = false;
+                    this.markUploadState(false);
                     this.syncFromApiFields(true);
                 }
             }
         }
 
+        toAbsoluteUrl(value) {
+            if (!value) {
+                return '';
+            }
+            try {
+                return new URL(String(value), window.location.origin).toString();
+            } catch (error) {
+                return String(value);
+            }
+        }
+
+        canFetchDirectly(rawUrl) {
+            try {
+                const url = new URL(this.toAbsoluteUrl(rawUrl));
+                if (url.origin !== window.location.origin) {
+                    return false;
+                }
+                return (
+                    url.pathname.startsWith('/staging_api/image/') ||
+                    url.pathname.startsWith('/image_api/image/') ||
+                    url.pathname.startsWith('/file=')
+                );
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async buildFileFromResponse(url) {
+            const absoluteUrl = this.toAbsoluteUrl(url);
+            const response = await fetch(absoluteUrl);
+            if (!response.ok) {
+                throw new Error(`Image fetch failed with status ${response.status}`);
+            }
+
+            const blob = await response.blob();
+            const filename = this.getApiFilename(absoluteUrl) || 'dropped_image.png';
+            return new File([blob], filename, { type: blob.type || 'image/png' });
+        }
+
         async fetchFileFromDroppedUrl(url) {
+            if (this.canFetchDirectly(url)) {
+                return this.buildFileFromResponse(url);
+            }
+
             const formData = new FormData();
             formData.append('url', url);
 
@@ -365,14 +425,11 @@
                 throw new Error('Stage URL upload returned an invalid payload');
             }
 
-            const imageResponse = await fetch(payload.url);
-            if (!imageResponse.ok) {
-                throw new Error(`Staged URL fetch failed with status ${imageResponse.status}`);
+            const stagedFile = await this.buildFileFromResponse(payload.url);
+            if (payload.file && payload.file !== stagedFile.name) {
+                return new File([stagedFile], payload.file, { type: stagedFile.type || 'image/png' });
             }
-
-            const blob = await imageResponse.blob();
-            const filename = payload.file || this.getApiFilename(url) || 'dropped_image.png';
-            return new File([blob], filename, { type: blob.type || 'image/png' });
+            return stagedFile;
         }
 
         attachBridge() {

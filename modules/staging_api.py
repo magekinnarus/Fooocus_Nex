@@ -4,6 +4,7 @@ import json
 import zipfile
 import urllib.request
 import urllib.parse
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse, FileResponse, Response
 import modules.config
@@ -85,6 +86,40 @@ def _write_gimp_queue_names(names):
         os.remove(legacy_target)
 
 
+_STAGING_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+_FORMAT_TO_EXTENSION = {
+    "PNG": ".png",
+    "JPEG": ".jpg",
+    "WEBP": ".webp",
+}
+
+
+def _guess_extension(source_name: str | None, detected_format: str | None) -> str:
+    suffix = Path(source_name or "").suffix.lower()
+    if suffix in _STAGING_EXTENSIONS:
+        return suffix
+    return _FORMAT_TO_EXTENSION.get(str(detected_format or "").upper(), ".png")
+
+
+def _stage_bytes(staging_dir: str, contents: bytes, source_name: str | None = None) -> tuple[str, str]:
+    try:
+        with Image.open(io.BytesIO(contents)) as img:
+            detected_format = img.format
+            img.verify()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image payload: {exc}") from exc
+
+    import datetime
+
+    time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S_%f")
+    extension = _guess_extension(source_name, detected_format)
+    filename = f"staged_{time_str}{extension}"
+    filepath = os.path.join(staging_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(contents)
+    return filename, filepath
+
+
 @staging_router.get("/staging_api/images")
 async def list_staging_images():
     """Returns a list of image URLs currently in the staging directory."""
@@ -117,47 +152,55 @@ async def upload_staging_image(
     staging_dir = get_staging_dir()
 
     try:
-        img = None
+        contents = None
+        source_name = None
         if file is not None:
             contents = await file.read()
-            img = Image.open(io.BytesIO(contents)).convert("RGBA")
+            source_name = file.filename
 
         elif url is not None:
             if url.startswith("data:image"):
                 header, encoded = url.split(",", 1)
                 import base64
-                data = base64.b64decode(encoded)
-                img = Image.open(io.BytesIO(data)).convert("RGBA")
+                contents = base64.b64decode(encoded)
+                mime = header.split(";", 1)[0].split(":", 1)[-1].strip().lower()
+                extension = {
+                    "image/png": ".png",
+                    "image/jpeg": ".jpg",
+                    "image/webp": ".webp",
+                }.get(mime, ".png")
+                source_name = f"staged_upload{extension}"
             elif "/file=" in url:
                 filepath = url.split("/file=", 1)[1].split("?")[0]
                 filepath = urllib.parse.unquote(filepath)
                 if os.path.exists(filepath):
-                    img = Image.open(filepath).convert("RGBA")
+                    with open(filepath, "rb") as f:
+                        contents = f.read()
+                    source_name = os.path.basename(filepath)
                 else:
                     raise HTTPException(status_code=400, detail="Local file not found")
             elif url.startswith("file://"):
                 filepath = url.replace("file:///", "").replace("file://", "")
                 filepath = urllib.parse.unquote(filepath)
                 if os.path.exists(filepath):
-                    img = Image.open(filepath).convert("RGBA")
+                    with open(filepath, "rb") as f:
+                        contents = f.read()
+                    source_name = os.path.basename(filepath)
                 else:
                     raise HTTPException(status_code=400, detail="Local file not found")
             elif url.startswith("http"):
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req) as response:
-                    data = response.read()
-                    img = Image.open(io.BytesIO(data)).convert("RGBA")
+                    contents = response.read()
+                parsed_url = urllib.parse.urlparse(url)
+                source_name = os.path.basename(parsed_url.path) or "staged_remote.png"
             else:
                 raise HTTPException(status_code=400, detail="Invalid URL format")
         else:
             raise HTTPException(status_code=400, detail="Must provide file or url")
 
-        if img:
-            import datetime
-            time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S_%f")
-            filename = f"staged_{time_str}.png"
-            filepath = os.path.join(staging_dir, filename)
-            img.save(filepath, format="PNG")
+        if contents:
+            filename, filepath = _stage_bytes(staging_dir, contents, source_name)
             return JSONResponse(content={
                 "status": "success",
                 "file": filename,

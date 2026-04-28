@@ -130,6 +130,35 @@
     field.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function getFieldValue(fieldId) {
+    const field = document.querySelector(`#${fieldId} textarea, #${fieldId} input`);
+    return field ? String(field.value || "").trim() : "";
+  }
+
+  function slotHasVisibleImage(slotId) {
+    const slot = document.getElementById(slotId);
+    const dropZone = slot ? slot.querySelector(".nex-slot__drop") : null;
+    return !!(dropZone && dropZone.classList.contains("has-image"));
+  }
+
+  function slotUploadPending(slotId, pathFieldId, workspaceFieldId) {
+    const slot = document.getElementById(slotId);
+    if (!slot) {
+      return false;
+    }
+    if (slot.dataset.uploading === "true") {
+      return true;
+    }
+
+    if (!slotHasVisibleImage(slotId)) {
+      return false;
+    }
+
+    const pathValue = pathFieldId ? getFieldValue(pathFieldId) : "";
+    const workspaceValue = workspaceFieldId ? getFieldValue(workspaceFieldId) : "";
+    return !pathValue && !workspaceValue;
+  }
+
   function updateModeButtons() {
     const contextBtn = document.getElementById("inpaint-mask-mode-context");
     const bbBtn = document.getElementById("inpaint-mask-mode-bb");
@@ -705,6 +734,27 @@
     if (replaceBbBtn && !replaceBbBtn.dataset.bound) {
       replaceBbBtn.dataset.bound = "1";
       replaceBbBtn.addEventListener("click", () => {
+        const basePending = slotUploadPending(
+          "inpaint_canvas",
+          "inpaint_input_image_path",
+          "inpaint_input_workspace_id",
+        );
+        if (basePending) {
+          setStatus("Base Image is still saving. Wait a moment, then retry.");
+          return;
+        }
+
+        const contextPending = slotUploadPending(
+          "inpaint_context_mask_canvas",
+          "inpaint_context_mask_image_path",
+          "inpaint_context_mask_workspace_id",
+        );
+        const contextMaskData = getFieldValue("inpaint_context_mask_data");
+        if (contextPending || (slotHasVisibleImage("inpaint_context_mask_canvas") && !getFieldValue("inpaint_context_mask_image_path") && !contextMaskData)) {
+          setStatus("Context Mask is still saving. Wait a moment, then retry.");
+          return;
+        }
+
         const nonceField = document.querySelector(
           "#inpaint_replace_bb_nonce textarea, #inpaint_replace_bb_nonce input",
         );
