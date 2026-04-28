@@ -199,6 +199,9 @@ def patched_ClipVisionModel_encode_image(self, image):
 def load_embed_catalog_lookup(embedding_name, embedding_directory, embedding_size, embed_key=None):
     try:
         import modules.config as config
+        resolved_path = config.resolve_embedding_path(embedding_name)
+        if resolved_path is not None and os.path.isfile(resolved_path):
+            return resolved_path
         entry = config.resolve_model_catalog_entry(embedding_name, root_keys=['embeddings'])
         if entry is not None:
             root_path = config.get_asset_root_path(entry.root_key)

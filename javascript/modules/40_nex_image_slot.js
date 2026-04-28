@@ -31,12 +31,16 @@
             this.bridgeRoot = null;
             this.bridgeObserver = null;
             this.appObserver = null;
+            this.appSyncScheduled = false;
             this.pathField = null;
             this.workspaceField = null;
-            this.apiPollHandle = null;
+            this.apiFieldObserver = null;
+            this.apiObservedPathElement = null;
+            this.apiObservedWorkspaceElement = null;
             this.lastApiStateKey = '';
             this.apiUploadInFlight = false;
             this.onApiFieldChange = () => this.syncFromApiFields(true);
+            this.onApiFieldMutation = () => this.syncFromApiFields(false);
             this.objectUrl = null;
             this.render();
             this.bindEvents();
@@ -44,7 +48,7 @@
             this.observeApp();
             if (this.uploadMode === 'api') {
                 this.attachApiFieldListeners();
-                this.startApiPolling();
+                this.attachApiFieldObservers();
                 this.syncFromApiFields(false);
             } else {
                 this.attachBridge();
@@ -60,10 +64,7 @@
                 this.appObserver.disconnect();
                 this.appObserver = null;
             }
-            if (this.apiPollHandle) {
-                window.clearInterval(this.apiPollHandle);
-                this.apiPollHandle = null;
-            }
+            this.detachApiFieldObservers();
             this.detachApiFieldListeners();
             this.releaseObjectUrl();
         }
@@ -212,13 +213,23 @@
             }
 
             this.appObserver = new MutationObserver(() => {
-                if (this.uploadMode === 'api') {
-                    this.attachApiFieldListeners();
-                    this.syncFromApiFields(false);
-                } else {
-                    this.attachBridge();
-                    this.syncFromBridge();
+                if (this.appSyncScheduled) {
+                    return;
                 }
+                this.appSyncScheduled = true;
+                window.requestAnimationFrame(() => {
+                    this.appSyncScheduled = false;
+                    if (this.uploadMode === 'api') {
+                        const listenersChanged = this.attachApiFieldListeners();
+                        const observersChanged = this.attachApiFieldObservers();
+                        if (listenersChanged || observersChanged) {
+                            this.syncFromApiFields(false);
+                        }
+                    } else {
+                        this.attachBridge();
+                        this.syncFromBridge();
+                    }
+                });
             });
             this.appObserver.observe(appRoot(), { childList: true, subtree: true });
         }
@@ -286,7 +297,7 @@
             const nextWorkspaceField = this.getFieldControl(this.workspaceFieldId);
 
             if (this.pathField === nextPathField && this.workspaceField === nextWorkspaceField) {
-                return;
+                return false;
             }
 
             this.detachApiFieldListeners();
@@ -301,6 +312,7 @@
                 field.addEventListener('input', this.onApiFieldChange);
                 field.addEventListener('change', this.onApiFieldChange);
             });
+            return true;
         }
 
         detachApiFieldListeners() {
@@ -315,14 +327,43 @@
             this.workspaceField = null;
         }
 
-        startApiPolling() {
-            if (this.apiPollHandle) {
-                return;
+        attachApiFieldObservers() {
+            const nextPathElement = this.getFieldElement(this.pathFieldId);
+            const nextWorkspaceElement = this.getFieldElement(this.workspaceFieldId);
+
+            if (this.apiObservedPathElement === nextPathElement && this.apiObservedWorkspaceElement === nextWorkspaceElement) {
+                return false;
             }
-            this.apiPollHandle = window.setInterval(() => {
-                this.attachApiFieldListeners();
-                this.syncFromApiFields(false);
-            }, 250);
+
+            this.detachApiFieldObservers();
+            this.apiObservedPathElement = nextPathElement;
+            this.apiObservedWorkspaceElement = nextWorkspaceElement;
+
+            const observeTargets = [nextPathElement, nextWorkspaceElement].filter(Boolean);
+            if (!observeTargets.length) {
+                return true;
+            }
+
+            this.apiFieldObserver = new MutationObserver(this.onApiFieldMutation);
+            observeTargets.forEach((target) => {
+                this.apiFieldObserver.observe(target, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true,
+                    attributes: true,
+                    attributeFilter: ['value'],
+                });
+            });
+            return true;
+        }
+
+        detachApiFieldObservers() {
+            if (this.apiFieldObserver) {
+                this.apiFieldObserver.disconnect();
+                this.apiFieldObserver = null;
+            }
+            this.apiObservedPathElement = null;
+            this.apiObservedWorkspaceElement = null;
         }
 
         markUploadState(isUploading) {

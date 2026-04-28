@@ -1075,7 +1075,9 @@ with open(config_example_path, "w", encoding="utf-8") as json_file:
 model_filenames = []
 clip_filenames = []
 lora_filenames = []
+embedding_filenames = []
 vae_filenames = []
+embedding_path_lookup = {}
 
 
 def get_model_filenames(folder_paths, extensions=None, name_filter=None):
@@ -1091,8 +1093,74 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
     return files
 
 
+def _register_embedding_alias(lookup, alias, full_path):
+    normalized = _normalize_model_selector(alias)
+    if normalized and normalized not in lookup:
+        lookup[normalized] = full_path
+
+
+def rebuild_embedding_path_lookup():
+    global embedding_path_lookup
+
+    lookup = {}
+    embedding_roots = get_asset_root_paths('embeddings')
+
+    for relative_path in embedding_filenames:
+        resolved_path = None
+
+        if os.path.isabs(relative_path):
+            candidate = os.path.abspath(os.path.realpath(relative_path))
+            if os.path.isfile(candidate):
+                resolved_path = candidate
+        else:
+            for root in embedding_roots:
+                candidate = os.path.abspath(os.path.realpath(os.path.join(root, relative_path)))
+                if os.path.isfile(candidate):
+                    resolved_path = candidate
+                    break
+
+        if resolved_path is None:
+            continue
+
+        basename = os.path.basename(relative_path)
+        relative_stem = os.path.splitext(relative_path)[0]
+        basename_stem = os.path.splitext(basename)[0]
+
+        for alias in (relative_path, basename, relative_stem, basename_stem):
+            _register_embedding_alias(lookup, alias, resolved_path)
+
+    embedding_path_lookup = lookup
+    return
+
+
+def resolve_embedding_path(name_or_path):
+    if name_or_path is None:
+        return None
+
+    value = str(name_or_path).strip()
+    if value == '':
+        return None
+
+    if os.path.isabs(value) and os.path.isfile(value):
+        return os.path.abspath(os.path.realpath(value))
+
+    candidates = _build_model_selector_candidates(value, get_asset_root_paths('embeddings'))
+
+    for extra_candidate in (os.path.splitext(value)[0], os.path.splitext(os.path.basename(value))[0]):
+        normalized = _normalize_model_selector(extra_candidate)
+        if normalized and extra_candidate not in candidates:
+            candidates.append(extra_candidate)
+
+    for candidate in candidates:
+        resolved = embedding_path_lookup.get(_normalize_model_selector(candidate))
+        if resolved is not None and os.path.isfile(resolved):
+            return resolved
+
+    return None
+
+
 def update_files():
-    global model_filenames, clip_filenames, lora_filenames, vae_filenames, available_presets
+    global model_filenames, clip_filenames, lora_filenames, embedding_filenames, vae_filenames, available_presets
 
     start = time.perf_counter()
 
@@ -1110,6 +1178,11 @@ def update_files():
     lora_filenames = sorted(list(set(get_model_filenames(paths_lora_discovery))))
     lora_elapsed = time.perf_counter() - lora_start
 
+    embedding_start = time.perf_counter()
+    embedding_filenames = sorted(list(set(get_model_filenames(path_embeddings, extensions=['.safetensors', '.pt', '.bin']))))
+    rebuild_embedding_path_lookup()
+    embedding_elapsed = time.perf_counter() - embedding_start
+
     vae_start = time.perf_counter()
     vae_filenames = sorted(list(set(get_model_filenames(path_vae))))
     vae_filenames = [x for x in vae_filenames if not x.replace('\\', '/').lower().startswith('flux/')]
@@ -1124,6 +1197,7 @@ def update_files():
         f'models={len(model_filenames)} ({model_elapsed:.2f}s), '
         f'clips={len(clip_filenames)} ({clip_elapsed:.2f}s), '
         f'loras={len(lora_filenames)} ({lora_elapsed:.2f}s), '
+        f'embeddings={len(embedding_filenames)} ({embedding_elapsed:.2f}s), '
         f'vaes={len(vae_filenames)} ({vae_elapsed:.2f}s), '
         f'presets={len(available_presets)} ({preset_elapsed:.2f}s), '
         f'total={time.perf_counter() - start:.2f}s'

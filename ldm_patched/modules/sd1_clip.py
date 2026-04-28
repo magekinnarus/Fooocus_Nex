@@ -287,6 +287,7 @@ def safe_load_embed_zip(embed_path):
 
 import time
 _directory_list_cache = {}
+_embedding_file_cache = {}
 
 def expand_directory_list(directories):
     global _directory_list_cache
@@ -354,6 +355,15 @@ def load_embed(embedding_name, embedding_directory, embedding_size, embed_key=No
         return None
 
     embed_path = valid_file
+    cache_key = None
+    try:
+        stat = os.stat(embed_path)
+        cache_key = (os.path.abspath(embed_path), stat.st_mtime_ns, stat.st_size, embedding_size, embed_key)
+        cached = _embedding_file_cache.get(cache_key)
+        if cached is not None:
+            return cached
+    except OSError:
+        pass
 
     embed_out = None
 
@@ -393,6 +403,9 @@ def load_embed(embedding_name, embedding_directory, embedding_size, embed_key=No
         else:
             values = embed.values()
             embed_out = next(iter(values))
+
+    if cache_key is not None and embed_out is not None:
+        _embedding_file_cache[cache_key] = embed_out
     return embed_out
 
 class SDTokenizer:
