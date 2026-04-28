@@ -4,6 +4,7 @@ import json
 import zipfile
 import urllib.request
 import urllib.parse
+import os
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse, FileResponse, Response
@@ -26,6 +27,10 @@ def _gimp_target_file():
 
 def _gimp_queue_file():
     return os.path.join(get_staging_dir(), ".gimp_queue.json")
+
+
+def _markers_manifest_file():
+    return os.path.join(get_staging_dir(), ".markers.json")
 
 
 def _read_gimp_target_name():
@@ -92,6 +97,76 @@ _FORMAT_TO_EXTENSION = {
     "JPEG": ".jpg",
     "WEBP": ".webp",
 }
+_MARKER_ICON_OPTIONS = {"star", "flag", "pin", "bookmark"}
+_MARKER_COLOR_OPTIONS = {"red", "amber", "green", "blue", "violet", "gray"}
+
+
+def _read_staging_markers():
+    manifest_path = _markers_manifest_file()
+    if not os.path.exists(manifest_path):
+        return {}
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    sanitized = {}
+    for name, marker in data.items():
+        if not isinstance(name, str):
+            continue
+        clean_name = name.strip()
+        clean_marker = _sanitize_marker_payload(marker)
+        if clean_name and clean_marker is not None:
+            sanitized[clean_name] = clean_marker
+    return sanitized
+
+
+def _write_staging_markers(markers):
+    manifest_path = _markers_manifest_file()
+    sanitized = {}
+    for name, marker in (markers or {}).items():
+        if not isinstance(name, str):
+            continue
+        clean_name = name.strip()
+        clean_marker = _sanitize_marker_payload(marker)
+        if clean_name and clean_marker is not None:
+            sanitized[clean_name] = clean_marker
+
+    if sanitized:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(sanitized, f, ensure_ascii=True, indent=2, sort_keys=True)
+    elif os.path.exists(manifest_path):
+        os.remove(manifest_path)
+
+
+def _sanitize_marker_payload(marker):
+    if marker is None:
+        return None
+    if not isinstance(marker, dict):
+        return None
+
+    icon = str(marker.get("icon", "")).strip().lower()
+    color = str(marker.get("color", "")).strip().lower()
+    label = str(marker.get("label", "")).strip()
+
+    if icon not in _MARKER_ICON_OPTIONS:
+        return None
+    if color not in _MARKER_COLOR_OPTIONS:
+        return None
+
+    if len(label) > 48:
+        label = label[:48].rstrip()
+
+    return {
+        "icon": icon,
+        "color": color,
+        "label": label,
+    }
 
 
 def _guess_extension(source_name: str | None, detected_format: str | None) -> str:
@@ -125,6 +200,7 @@ async def list_staging_images():
     """Returns a list of image URLs currently in the staging directory."""
     staging_dir = get_staging_dir()
     files = []
+    markers = _read_staging_markers()
 
     try:
         entries = sorted(
@@ -136,6 +212,7 @@ async def list_staging_images():
             files.append({
                 "name": entry.name,
                 "url": f"/staging_api/image/{entry.name}",
+                "marker": markers.get(entry.name),
             })
     except Exception as e:
         print(f"Error reading staging dir: {e}")
@@ -229,6 +306,10 @@ async def delete_staging_image(name: str):
             os.remove(filepath)
             remaining_queue = [queued for queued in _read_gimp_queue_names() if queued != name]
             _write_gimp_queue_names(remaining_queue)
+            markers = _read_staging_markers()
+            if name in markers:
+                del markers[name]
+                _write_staging_markers(markers)
             return JSONResponse(content={"status": "success"})
         raise HTTPException(status_code=404, detail="File not found")
     except Exception as e:
@@ -282,6 +363,36 @@ async def set_gimp_target(name: str):
         return JSONResponse(content={"status": "success", "queue": queue, "queued": queued})
     except Exception as e:
         print(f"Staging GIMP queue error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@staging_router.post("/staging_api/marker")
+async def set_staging_marker(payload: dict = Body(...)):
+    name = payload.get("name") if isinstance(payload, dict) else None
+    marker = payload.get("marker") if isinstance(payload, dict) else None
+
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=400, detail="Missing staged image name")
+
+    name = name.strip()
+    _, filepath = _safe_staging_path(name)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    sanitized_marker = _sanitize_marker_payload(marker)
+    if marker is not None and sanitized_marker is None:
+        raise HTTPException(status_code=400, detail="Invalid marker payload")
+
+    try:
+        markers = _read_staging_markers()
+        if sanitized_marker is None:
+            markers.pop(name, None)
+        else:
+            markers[name] = sanitized_marker
+        _write_staging_markers(markers)
+        return JSONResponse(content={"status": "success", "marker": sanitized_marker})
+    except Exception as e:
+        print(f"Staging marker error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

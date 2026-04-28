@@ -18,6 +18,22 @@
     let fetchQueuedForceRender = false;
     let panelDirty = false;
     let dragGuardHandle = null;
+    let markerPicker = null;
+    let activeMarkerName = '';
+    const markerIconOptions = [
+        { id: 'star', glyph: '★', label: 'Star' },
+        { id: 'flag', glyph: '⚑', label: 'Flag' },
+        { id: 'pin', glyph: '◆', label: 'Pin' },
+        { id: 'bookmark', glyph: '⬢', label: 'Bookmark' },
+    ];
+    const markerColorOptions = [
+        { id: 'red', label: 'Red' },
+        { id: 'amber', label: 'Amber' },
+        { id: 'green', label: 'Green' },
+        { id: 'blue', label: 'Blue' },
+        { id: 'violet', label: 'Violet' },
+        { id: 'gray', label: 'Gray' },
+    ];
 
     function isPanelVisible() {
         return !!(panel && panel.style.display !== 'none');
@@ -63,6 +79,182 @@
         return String(value).replace(/([^a-zA-Z0-9_-])/g, '\\$1');
     }
 
+    function getMarkerIconGlyph(iconId) {
+        const option = markerIconOptions.find((item) => item.id === iconId);
+        return option ? option.glyph : '★';
+    }
+
+    function getImageByName(name) {
+        return latestImages.find((img) => img.name === name) || null;
+    }
+
+    function closeMarkerPicker() {
+        if (!markerPicker) {
+            return;
+        }
+        markerPicker.classList.remove('is-open');
+        markerPicker.style.display = 'none';
+        activeMarkerName = '';
+    }
+
+    function ensureMarkerPicker() {
+        if (markerPicker) {
+            return markerPicker;
+        }
+
+        markerPicker = document.createElement('div');
+        markerPicker.className = 'staging-marker-picker';
+        markerPicker.innerHTML = `
+            <div class="staging-marker-picker__section">
+                <div class="staging-marker-picker__label">Icon</div>
+                <div class="staging-marker-picker__icons"></div>
+            </div>
+            <div class="staging-marker-picker__section">
+                <div class="staging-marker-picker__label">Color</div>
+                <div class="staging-marker-picker__colors"></div>
+            </div>
+            <div class="staging-marker-picker__section">
+                <div class="staging-marker-picker__label">Label</div>
+                <input class="staging-marker-picker__input" type="text" maxlength="48" placeholder="Optional note">
+            </div>
+            <div class="staging-marker-picker__actions">
+                <button type="button" class="staging-marker-picker__action staging-marker-picker__action--save">Save</button>
+                <button type="button" class="staging-marker-picker__action staging-marker-picker__action--clear">Clear</button>
+            </div>
+        `;
+
+        const iconsContainer = markerPicker.querySelector('.staging-marker-picker__icons');
+        markerIconOptions.forEach((option) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'staging-marker-picker__icon';
+            button.dataset.icon = option.id;
+            button.title = option.label;
+            button.textContent = option.glyph;
+            button.addEventListener('click', () => {
+                markerPicker.querySelectorAll('.staging-marker-picker__icon').forEach((el) => {
+                    el.classList.toggle('is-active', el.dataset.icon === option.id);
+                });
+            });
+            iconsContainer.appendChild(button);
+        });
+
+        const colorsContainer = markerPicker.querySelector('.staging-marker-picker__colors');
+        markerColorOptions.forEach((option) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `staging-marker-picker__color color-${option.id}`;
+            button.dataset.color = option.id;
+            button.title = option.label;
+            button.addEventListener('click', () => {
+                markerPicker.querySelectorAll('.staging-marker-picker__color').forEach((el) => {
+                    el.classList.toggle('is-active', el.dataset.color === option.id);
+                });
+            });
+            colorsContainer.appendChild(button);
+        });
+
+        markerPicker.querySelector('.staging-marker-picker__action--save').addEventListener('click', saveMarkerFromPicker);
+        markerPicker.querySelector('.staging-marker-picker__action--clear').addEventListener('click', clearMarkerFromPicker);
+        markerPicker.addEventListener('click', (event) => event.stopPropagation());
+        document.body.appendChild(markerPicker);
+        return markerPicker;
+    }
+
+    function openMarkerPicker(anchorElement, image) {
+        if (!anchorElement || !image) {
+            return;
+        }
+        const picker = ensureMarkerPicker();
+        const marker = image.marker || {};
+        const iconId = marker.icon || markerIconOptions[0].id;
+        const colorId = marker.color || markerColorOptions[0].id;
+        const label = marker.label || '';
+
+        activeMarkerName = image.name;
+        picker.querySelectorAll('.staging-marker-picker__icon').forEach((el) => {
+            el.classList.toggle('is-active', el.dataset.icon === iconId);
+        });
+        picker.querySelectorAll('.staging-marker-picker__color').forEach((el) => {
+            el.classList.toggle('is-active', el.dataset.color === colorId);
+        });
+        picker.querySelector('.staging-marker-picker__input').value = label;
+
+        const rect = anchorElement.getBoundingClientRect();
+        picker.style.display = 'block';
+        picker.classList.add('is-open');
+        const pickerRect = picker.getBoundingClientRect();
+        const maxLeft = Math.max(12, window.innerWidth - pickerRect.width - 12);
+        const preferredTop = rect.bottom + 8;
+        const fallbackTop = rect.top - pickerRect.height - 8;
+        picker.style.left = `${Math.min(maxLeft, Math.max(12, rect.left - 10))}px`;
+        picker.style.top = `${fallbackTop >= 12 ? fallbackTop : Math.max(12, preferredTop)}px`;
+    }
+
+    function updateLocalMarker(name, marker) {
+        latestImages = latestImages.map((img) => {
+            if (img.name !== name) {
+                return img;
+            }
+            return { ...img, marker: marker || null };
+        });
+        lastImagesJson = JSON.stringify({ images: latestImages, gimp_queue: currentGimpQueue });
+    }
+
+    async function persistMarker(name, marker) {
+        const res = await fetch('/staging_api/marker', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name, marker }),
+        });
+        const result = await res.json();
+        if (result.status !== 'success') {
+            throw new Error(result.detail || result.message || 'Failed to save marker');
+        }
+        updateLocalMarker(name, result.marker || null);
+        if (isPanelVisible() && !isPanelMinimized()) {
+            renderImages(latestImages);
+        } else {
+            panelDirty = true;
+        }
+        closeMarkerPicker();
+    }
+
+    async function saveMarkerFromPicker() {
+        if (!activeMarkerName || !markerPicker) {
+            return;
+        }
+        const activeIcon = markerPicker.querySelector('.staging-marker-picker__icon.is-active');
+        const activeColor = markerPicker.querySelector('.staging-marker-picker__color.is-active');
+        const labelInput = markerPicker.querySelector('.staging-marker-picker__input');
+
+        if (!activeIcon || !activeColor) {
+            return;
+        }
+        try {
+            await persistMarker(activeMarkerName, {
+                icon: activeIcon.dataset.icon,
+                color: activeColor.dataset.color,
+                label: labelInput.value.trim(),
+            });
+        } catch (error) {
+            console.error('[Staging] Marker save error:', error);
+        }
+    }
+
+    async function clearMarkerFromPicker() {
+        if (!activeMarkerName) {
+            return;
+        }
+        try {
+            await persistMarker(activeMarkerName, null);
+        } catch (error) {
+            console.error('[Staging] Marker clear error:', error);
+        }
+    }
+
     function createPanel() {
         if (panel) return;
 
@@ -90,6 +282,7 @@
 
         document.body.appendChild(panel);
         imagesContainer = panel.querySelector('#staging-images-grid');
+        ensureMarkerPicker();
 
         // Snap Logic: default position at top-right, aligned with tab titles
         const snapToDefault = () => {
@@ -142,6 +335,13 @@
         panel.addEventListener('dragover', () => panel.classList.add('drag-over'));
         panel.addEventListener('dragleave', () => panel.classList.remove('drag-over'));
         panel.addEventListener('drop', handleDrop);
+        panel.addEventListener('click', closeMarkerPicker);
+        document.addEventListener('click', closeMarkerPicker);
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeMarkerPicker();
+            }
+        });
 
         // Load position and size from localStorage
         const pos = JSON.parse(localStorage.getItem('staging-panel-pos') || '{"top": "60px", "right": "20px"}');
@@ -319,6 +519,29 @@
         });
     }
 
+    function appendMarkerBadge(item, marker) {
+        if (!marker || !marker.icon || !marker.color) {
+            return;
+        }
+        const badge = document.createElement('div');
+        badge.className = `staging-marker-badge color-${marker.color}`;
+        badge.title = marker.label ? `${marker.icon}: ${marker.label}` : `Marker: ${marker.icon}`;
+
+        const icon = document.createElement('span');
+        icon.className = 'staging-marker-badge__icon';
+        icon.textContent = getMarkerIconGlyph(marker.icon);
+        badge.appendChild(icon);
+
+        if (marker.label) {
+            const label = document.createElement('span');
+            label.className = 'staging-marker-badge__label';
+            label.textContent = marker.label;
+            badge.appendChild(label);
+        }
+
+        item.appendChild(badge);
+    }
+
     function syncSelectedCompareNames(images) {
         const names = new Set((images || []).map((img) => img.name));
         const nextSelected = new Set();
@@ -447,6 +670,7 @@
             });
 
             item.appendChild(imgEl);
+            appendMarkerBadge(item, img.marker);
 
             if (compareBadge) {
                 const badge = document.createElement('div');
@@ -458,6 +682,16 @@
             // Action buttons container
             const actionsContainer = document.createElement('div');
             actionsContainer.className = 'item-actions';
+
+            const markerBtn = document.createElement('button');
+            markerBtn.className = 'item-action-btn btn-marker';
+            markerBtn.innerHTML = img.marker ? getMarkerIconGlyph(img.marker.icon) : 'M';
+            markerBtn.title = img.marker && img.marker.label ? `Edit marker: ${img.marker.label}` : 'Set marker';
+            markerBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openMarkerPicker(markerBtn, img);
+            });
+            actionsContainer.appendChild(markerBtn);
 
             // GIMP button
             const gimpBtn = document.createElement('button');
