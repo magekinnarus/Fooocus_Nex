@@ -835,6 +835,22 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         outputs=[inpaint_bb_image_path, inpaint_bb_workspace_id, inpaint_mask_image_path, inpaint_mask_workspace_id, inpaint_bb_mask_data, inpaint_step2_checkbox],
         queue=False,
         show_progress=False
+    ).then(
+        lambda: None,
+        queue=False,
+        show_progress=False,
+        js="""
+        () => {
+            const pathFieldIds = ['inpaint_bb_image_path', 'inpaint_mask_image_path'];
+            if (typeof window.nexDispatchSlotServerSync === 'function') {
+                window.nexDispatchSlotServerSync(pathFieldIds, 'once');
+                return;
+            }
+            window.dispatchEvent(new CustomEvent('nex-slot:server-sync', {
+                detail: { pathFieldIds, mode: 'once' },
+            }));
+        }
+        """
     )
 
     inpaint_bb_mask_data.change(
@@ -851,6 +867,22 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         outputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_image, outpaint_bb_workspace_id, outpaint_mask_image, outpaint_mask_workspace_id, outpaint_bb_mask_data, outpaint_step2_checkbox, outpaint_prepare_notice],
         queue=False,
         show_progress=True
+    ).then(
+        lambda: None,
+        queue=False,
+        show_progress=False,
+        js="""
+        () => {
+            const pathFieldIds = ['outpaint_input_image_path', 'outpaint_bb_image_path', 'outpaint_mask_image_path'];
+            if (typeof window.nexDispatchSlotServerSync === 'function') {
+                window.nexDispatchSlotServerSync(pathFieldIds, 'once');
+                return;
+            }
+            window.dispatchEvent(new CustomEvent('nex-slot:server-sync', {
+                detail: { pathFieldIds, mode: 'once' },
+            }));
+        }
+        """
     )
 
     outpaint_bb_mask_data.change(

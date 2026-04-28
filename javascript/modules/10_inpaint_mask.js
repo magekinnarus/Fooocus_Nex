@@ -41,6 +41,17 @@
     },
   };
 
+  const MODE_AFFECTED_SLOTS = {
+    context: [
+      "inpaint_context_mask_image_path",
+      "inpaint_bb_image_path",
+      "inpaint_mask_image_path",
+    ],
+    bb: ["inpaint_mask_image_path"],
+    outpaint_bb: ["outpaint_mask_image_path"],
+    remove: ["remove_mask_image_path"],
+  };
+
   const state = {
     activeMode: "context",
     tool: "brush",
@@ -122,17 +133,60 @@
     }
   }
 
+  function dispatchServerSync(pathFieldIds, mode = "live") {
+    const uniqueIds = [...new Set((pathFieldIds || []).filter(Boolean))];
+    if (!uniqueIds.length) return;
+    window.dispatchEvent(
+      new CustomEvent("nex-slot:server-sync", {
+        detail: {
+          pathFieldIds: uniqueIds,
+          mode: mode === "once" ? "once" : "live",
+        },
+      }),
+    );
+  }
+
+  function dispatchModeServerSync(mode, syncMode = "live") {
+    dispatchServerSync(MODE_AFFECTED_SLOTS[mode] || [], syncMode);
+  }
+
+  window.nexDispatchSlotServerSync = dispatchServerSync;
+
   function setMaskValue(mode, value) {
     const field = getMaskField(mode);
     if (!field || field.value === value) return;
     field.value = value;
     field.dispatchEvent(new Event("input", { bubbles: true }));
     field.dispatchEvent(new Event("change", { bubbles: true }));
+    dispatchModeServerSync(mode, "live");
   }
 
   function getFieldValue(fieldId) {
     const field = document.querySelector(`#${fieldId} textarea, #${fieldId} input`);
     return field ? String(field.value || "").trim() : "";
+  }
+
+  function getFieldControl(fieldId) {
+    return document.querySelector(`#${fieldId} textarea, #${fieldId} input`);
+  }
+
+  function setFieldValue(fieldId, value) {
+    const field = getFieldControl(fieldId);
+    if (!field) return;
+    const nextValue = value == null ? "" : String(value);
+    const isCheckbox = field.type === "checkbox";
+    if (isCheckbox) {
+      const nextChecked =
+        value === true || value === "true" || value === 1 || value === "1";
+      if (field.checked === nextChecked) return;
+      field.checked = nextChecked;
+      field.value = nextChecked ? "true" : "false";
+    } else {
+      if (field.value === nextValue) return;
+      field.value = nextValue;
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   function slotHasVisibleImage(slotId) {
@@ -157,6 +211,65 @@
     const pathValue = pathFieldId ? getFieldValue(pathFieldId) : "";
     const workspaceValue = workspaceFieldId ? getFieldValue(workspaceFieldId) : "";
     return !pathValue && !workspaceValue;
+  }
+
+  function handleBaseSlotReplaced(event) {
+    const detail = event && event.detail ? event.detail : {};
+    const slotId = detail.slotId || "";
+
+    if (slotId === "inpaint_canvas") {
+      setFieldValue("inpaint_context_mask_image_path", "");
+      setFieldValue("inpaint_context_mask_workspace_id", "");
+      setFieldValue("inpaint_bb_image_path", "");
+      setFieldValue("inpaint_bb_workspace_id", "");
+      setFieldValue("inpaint_mask_image_path", "");
+      setFieldValue("inpaint_mask_workspace_id", "");
+      setFieldValue("inpaint_context_mask_data", "");
+      setFieldValue("inpaint_bb_mask_data", "");
+      setFieldValue("inpaint_step2_checkbox", false);
+      state.enabledModes.bb = false;
+      if (state.activeMode === "bb") {
+        state.activeMode = "context";
+      }
+      updateModeButtons();
+      dispatchServerSync(
+        [
+          "inpaint_context_mask_image_path",
+          "inpaint_bb_image_path",
+          "inpaint_mask_image_path",
+        ],
+        "live",
+      );
+      refreshAll();
+      return;
+    }
+
+    if (slotId === "outpaint_input_slot") {
+      setFieldValue("outpaint_bb_image_path", "");
+      setFieldValue("outpaint_bb_workspace_id", "");
+      setFieldValue("outpaint_mask_image_path", "");
+      setFieldValue("outpaint_mask_workspace_id", "");
+      setFieldValue("outpaint_bb_mask_data", "");
+      setFieldValue("outpaint_step2_checkbox", false);
+      state.enabledModes.outpaint_bb = false;
+      updateModeButtons();
+      dispatchServerSync(
+        ["outpaint_bb_image_path", "outpaint_mask_image_path"],
+        "live",
+      );
+      refreshAll();
+      return;
+    }
+
+    if (slotId === "remove_base_image_slot") {
+      setFieldValue("remove_mask_image_path", "");
+      setFieldValue("remove_mask_workspace_id", "");
+      setFieldValue("remove_mask_data", "");
+      state.enabledModes.remove = false;
+      updateModeButtons();
+      dispatchServerSync(["remove_mask_image_path"], "live");
+      refreshAll();
+    }
   }
 
   function updateModeButtons() {
@@ -766,6 +879,10 @@
         nonceField.value = String(Date.now());
         nonceField.dispatchEvent(new Event("input", { bubbles: true }));
         nonceField.dispatchEvent(new Event("change", { bubbles: true }));
+        dispatchServerSync(
+          ["inpaint_bb_image_path", "inpaint_mask_image_path"],
+          "once",
+        );
       });
     }
     if (inpaintDisableBtn && !inpaintDisableBtn.dataset.bound) {
@@ -962,6 +1079,7 @@
   }
 
   function start() {
+    window.addEventListener("nex-slot:base-replaced", handleBaseSlotReplaced);
     refreshAll();
     window.setInterval(refreshAll, 500);
   }

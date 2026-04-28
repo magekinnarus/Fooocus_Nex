@@ -39,13 +39,17 @@
             this.apiObservedWorkspaceElement = null;
             this.lastApiStateKey = '';
             this.apiUploadInFlight = false;
+            this.serverResyncHandle = null;
+            this.serverResyncToken = 0;
             this.onApiFieldChange = () => this.syncFromApiFields(true);
             this.onApiFieldMutation = () => this.syncFromApiFields(false);
+            this.onServerSyncRequest = (event) => this.handleServerSyncRequest(event);
             this.objectUrl = null;
             this.render();
             this.bindEvents();
             this.markUploadState(false);
             this.observeApp();
+            window.addEventListener('nex-slot:server-sync', this.onServerSyncRequest);
             if (this.uploadMode === 'api') {
                 this.attachApiFieldListeners();
                 this.attachApiFieldObservers();
@@ -64,6 +68,8 @@
                 this.appObserver.disconnect();
                 this.appObserver = null;
             }
+            window.removeEventListener('nex-slot:server-sync', this.onServerSyncRequest);
+            this.clearServerResync();
             this.detachApiFieldObservers();
             this.detachApiFieldListeners();
             this.releaseObjectUrl();
@@ -366,6 +372,82 @@
             this.apiObservedWorkspaceElement = null;
         }
 
+        handleServerSyncRequest(event) {
+            if (this.uploadMode !== 'api' || !this.pathFieldId) {
+                return;
+            }
+            const detail = event && event.detail ? event.detail : {};
+            const pathFieldIds = Array.isArray(detail.pathFieldIds) ? detail.pathFieldIds : [];
+            if (!pathFieldIds.includes(this.pathFieldId)) {
+                return;
+            }
+            this.scheduleServerResync(detail.mode === 'once' ? 'once' : 'live');
+        }
+
+        clearServerResync() {
+            this.serverResyncToken += 1;
+            if (this.serverResyncHandle) {
+                window.clearTimeout(this.serverResyncHandle);
+                this.serverResyncHandle = null;
+            }
+        }
+
+        isMaskBaseSlot() {
+            return ['inpaint_canvas', 'outpaint_input_slot', 'remove_base_image_slot'].includes(this.id || '');
+        }
+
+        dispatchBaseImageReplaced(reason = 'replace') {
+            if (!this.isMaskBaseSlot()) {
+                return;
+            }
+            window.dispatchEvent(new CustomEvent('nex-slot:base-replaced', {
+                detail: {
+                    slotId: this.id || '',
+                    pathFieldId: this.pathFieldId || '',
+                    workspaceFieldId: this.workspaceFieldId || '',
+                    reason,
+                },
+            }));
+        }
+
+        scheduleServerResync(mode = 'live') {
+            this.clearServerResync();
+            const token = this.serverResyncToken;
+
+            if (mode === 'once') {
+                let attemptsRemaining = 3;
+                const runDelayedSync = () => {
+                    if (token !== this.serverResyncToken) {
+                        return;
+                    }
+                    this.syncFromApiFields(true);
+                    attemptsRemaining -= 1;
+                    if (attemptsRemaining <= 0) {
+                        this.serverResyncHandle = null;
+                        return;
+                    }
+                    this.serverResyncHandle = window.setTimeout(runDelayedSync, 500);
+                };
+                this.serverResyncHandle = window.setTimeout(runDelayedSync, 400);
+                return;
+            }
+
+            let attemptsRemaining = 5;
+            const runSync = () => {
+                if (token !== this.serverResyncToken) {
+                    return;
+                }
+                this.syncFromApiFields(true);
+                attemptsRemaining -= 1;
+                if (attemptsRemaining <= 0) {
+                    this.serverResyncHandle = null;
+                    return;
+                }
+                this.serverResyncHandle = window.setTimeout(runSync, 500);
+            };
+            runSync();
+        }
+
         markUploadState(isUploading) {
             this.dataset.uploading = isUploading ? 'true' : 'false';
             this.slotRoot?.classList.toggle('is-uploading', !!isUploading);
@@ -386,6 +468,7 @@
                     this.apiUploadInFlight = true;
                     this.markUploadState(true);
                     await this.prepareApiReplacement();
+                    this.dispatchBaseImageReplaced('replace');
                 }
 
                 this.setPreview(URL.createObjectURL(file), true);
@@ -644,6 +727,7 @@
         async clearSlot() {
             if (this.uploadMode === 'api') {
                 await this.clearApiState();
+                this.dispatchBaseImageReplaced('clear');
             } else {
                 this.clearBridge();
             }
