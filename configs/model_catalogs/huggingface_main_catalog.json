@@ -1023,7 +1023,7 @@
                     {
                         "id": "huggingface.lora.sdxl.pony.pretty_girls",
                         "alias": "pretty_girls",
-                        "name": "Beautiful_Girls_v7.safetensors",
+                        "name": "Beautiful_Girls_V7.safetensors",
                         "display_name": "Beautiful Girls v7",
                         "model_type": "lora",
                         "architecture": "sdxl",
@@ -1037,7 +1037,7 @@
                         "preset_managed": false,
                         "token_required": false,
                         "source": {
-                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/Beautiful_Girls_v7.safetensors"
+                            "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/loras/sdxl/Beautiful_Girls_V7.safetensors"
                         },
                         "registration_state": "sourced_registered"
                     },

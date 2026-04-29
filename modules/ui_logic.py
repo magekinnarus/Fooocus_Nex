@@ -125,14 +125,23 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
             flag, product = task.yields.pop(0)
             if flag == 'preview':
                 percentage, title, image = product
-                # Preserve image-bearing sampling previews. Only collapse runs of
-                # text-only preview updates so the UI does not starve long samplers.
-                while len(task.yields) > 0 and task.yields[0][0] == 'preview':
-                    next_percentage, next_title, next_image = task.yields[0][1]
-                    if next_image is not None:
-                        break
-                    task.yields.pop(0)
-                    percentage, title = next_percentage, next_title
+                # Prioritize image-bearing sampling previews so they do not sit
+                # behind text-only progress frames on slower links (e.g. Colab
+                # tunnels). We still collapse runs of text-only previews to
+                # avoid starving the UI during long samplers.
+                if image is None:
+                    while len(task.yields) > 0 and task.yields[0][0] == 'preview':
+                        next_percentage, next_title, next_image = task.yields.pop(0)[1]
+                        percentage, title, image = next_percentage, next_title, next_image
+                        if image is not None:
+                            break
+                else:
+                    while len(task.yields) > 0 and task.yields[0][0] == 'preview':
+                        next_percentage, next_title, next_image = task.yields[0][1]
+                        if next_image is not None:
+                            break
+                        task.yields.pop(0)
+                        percentage, title = next_percentage, next_title
                 if preview_enabled:
                     if has_results and batch_size >= 2:
                         preview_col = gr.update(visible=True)
