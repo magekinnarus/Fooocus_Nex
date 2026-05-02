@@ -428,7 +428,7 @@
                     }
                     this.serverResyncHandle = window.setTimeout(runDelayedSync, 500);
                 };
-                this.serverResyncHandle = window.setTimeout(runDelayedSync, 800);
+                this.serverResyncHandle = window.setTimeout(runDelayedSync, 400);
                 return;
             }
 
