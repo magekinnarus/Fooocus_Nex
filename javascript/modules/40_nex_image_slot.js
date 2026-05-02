@@ -415,7 +415,7 @@
             const token = this.serverResyncToken;
 
             if (mode === 'once') {
-                let attemptsRemaining = 3;
+                let attemptsRemaining = 5;
                 const runDelayedSync = () => {
                     if (token !== this.serverResyncToken) {
                         return;
@@ -428,7 +428,7 @@
                     }
                     this.serverResyncHandle = window.setTimeout(runDelayedSync, 500);
                 };
-                this.serverResyncHandle = window.setTimeout(runDelayedSync, 400);
+                this.serverResyncHandle = window.setTimeout(runDelayedSync, 800);
                 return;
             }
 

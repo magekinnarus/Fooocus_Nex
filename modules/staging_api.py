@@ -97,7 +97,7 @@ _FORMAT_TO_EXTENSION = {
     "JPEG": ".jpg",
     "WEBP": ".webp",
 }
-_MARKER_ICON_OPTIONS = {"star", "flag", "pin", "bookmark"}
+_MARKER_ICON_OPTIONS = {"star", "flag", "circle", "triangle", "pin", "bookmark"}
 _MARKER_COLOR_OPTIONS = {"red", "amber", "green", "blue", "violet", "gray"}
 
 
