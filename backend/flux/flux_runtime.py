@@ -44,13 +44,16 @@ _SDXL_BUCKETS: tuple[tuple[int, int], ...] = tuple(
 )
 
 
-def _normalize_glass_mode(mode: str | None) -> str:
+def _normalize_flux_fill_mode(mode: str | None) -> str:
     value = str(mode or FLUX_FILL_GLASS_DEFAULT_MODE).strip().lower()
     if value in FLUX_FILL_GLASS_MODES:
         return value
     raise FluxFillValidationError(
-        f"Unsupported Flux Fill glass mode: {mode!r}. Expected one of {list(FLUX_FILL_GLASS_MODES)}."
+        f"Unsupported Flux Fill pipeline mode: {mode!r}. Expected one of {list(FLUX_FILL_GLASS_MODES)}."
     )
+
+
+_normalize_glass_mode = _normalize_flux_fill_mode
 
 
 def _normalize_blend_mode(blend_mode: str | None) -> str:
@@ -60,7 +63,7 @@ def _normalize_blend_mode(blend_mode: str | None) -> str:
     if value in FLUX_FILL_GLASS_BLEND_MODES:
         return value
     raise FluxFillValidationError(
-        f"Unsupported Flux Fill glass blend mode: {blend_mode!r}. Expected one of {list(FLUX_FILL_GLASS_BLEND_MODES)}."
+        f"Unsupported Flux Fill pipeline blend mode: {blend_mode!r}. Expected one of {list(FLUX_FILL_GLASS_BLEND_MODES)}."
     )
 
 def _round_to_multiple(value: float, multiple: int) -> int:
@@ -253,7 +256,7 @@ def _crop_image_and_mask(image: np.ndarray, mask: np.ndarray, crop_box: tuple[in
 
 
 @dataclass(frozen=True)
-class FluxFillGlassCropPlan:
+class FluxFillPipelineCropPlan:
     mode: str
     crop_box: tuple[int, int, int, int]
     target_canvas: tuple[int, int]
@@ -326,7 +329,7 @@ def _select_context_crop_plan(
     mask: np.ndarray,
     *,
     mode: str = "context_crop",
-) -> FluxFillGlassCropPlan:
+) -> FluxFillPipelineCropPlan:
     image_np = _ensure_uint8_rgb(image)
     mask_np = _ensure_mask_shape(image_np, mask)
     mask_binary = _binary_mask(mask_np)
@@ -344,7 +347,7 @@ def _select_context_crop_plan(
         target_megapixels=FLUX_FILL_CANVAS_TARGET_PIXELS / 1_000_000.0,
         multiple=FLUX_FILL_CANVAS_ALIGNMENT,
     )
-    return FluxFillGlassCropPlan(
+    return FluxFillPipelineCropPlan(
         mode=mode,
         crop_box=(0, int(height), 0, int(width)),
         target_canvas=(int(target_width), int(target_height)),
@@ -371,13 +374,13 @@ def _select_context_crop_plan(
     )
 
 
-select_flux_fill_glass_context_crop_plan = _select_context_crop_plan
+select_flux_fill_pipeline_context_crop_plan = _select_context_crop_plan
 
 
-def prepare_flux_fill_glass_context_crop(
+def prepare_flux_fill_pipeline_context_crop(
     image: np.ndarray,
     mask: np.ndarray,
-    plan: FluxFillGlassCropPlan,
+    plan: FluxFillPipelineCropPlan,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     image_np = _ensure_uint8_rgb(image)
     mask_np = _ensure_mask_shape(image_np, mask)
@@ -393,7 +396,7 @@ def prepare_flux_fill_glass_context_crop(
     }
 
 
-def restore_flux_fill_glass_context_crop(decoded_bucket_image: np.ndarray, plan: FluxFillGlassCropPlan) -> np.ndarray:
+def restore_flux_fill_pipeline_context_crop(decoded_bucket_image: np.ndarray, plan: FluxFillPipelineCropPlan) -> np.ndarray:
     bucket_image = _ensure_uint8_rgb(decoded_bucket_image)
     restored = _resize_uint8_rgb(bucket_image, plan.normalized_width, plan.normalized_height, resample=Image.Resampling.LANCZOS)
     if plan.pad != (0, 0, 0, 0):
@@ -406,10 +409,10 @@ def restore_flux_fill_glass_context_crop(decoded_bucket_image: np.ndarray, plan:
     return restored
 
 
-def stitch_flux_fill_glass_context_crop(
+def stitch_flux_fill_pipeline_context_crop(
     original_image: np.ndarray,
     mask: np.ndarray,
-    plan: FluxFillGlassCropPlan,
+    plan: FluxFillPipelineCropPlan,
     decoded_crop: np.ndarray,
     *,
     blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE,
@@ -433,7 +436,7 @@ def stitch_flux_fill_glass_context_crop(
 
 
 @dataclass
-class FluxFillGlassConfig:
+class FluxFillPipelineConfig:
     unet_path: Path | str
     ae_path: Path | str
     conditioning_cache_path: Path | str
@@ -459,7 +462,7 @@ class FluxFillGlassConfig:
     save_composite: bool = False
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
-        self.mode = _normalize_glass_mode(self.mode)
+        self.mode = _normalize_flux_fill_mode(self.mode)
         self.blend_mode = _normalize_blend_mode(self.blend_mode)
         if self.steps < 1:
             raise FluxFillValidationError(f"steps must be >= 1, got {self.steps}.")
@@ -470,7 +473,7 @@ class FluxFillGlassConfig:
         if self.scheduler != "normal":
             raise NotImplementedError(f"Unsupported Flux Fill scheduler: {self.scheduler!r}.")
         if self.denoise != 1.0:
-            raise NotImplementedError("W04 glass baseline only supports denoise=1.0.")
+            raise NotImplementedError("Flux pipeline baseline only supports denoise=1.0.")
         if self.guidance <= 0:
             raise FluxFillValidationError(f"guidance must be > 0, got {self.guidance}.")
         if self.target_megapixels <= 0:
@@ -483,7 +486,7 @@ class FluxFillGlassConfig:
 
 
 @dataclass(frozen=True)
-class FluxFillGlassResult:
+class FluxFillPipelineResult:
     output_image: Any
     output_path: Path | None
     seed: int
@@ -631,7 +634,7 @@ def _artifact_path(root: Path, name: str, suffix: str) -> Path:
     return root / f"{safe_name}{suffix}"
 
 
-def _build_glass_concat_condition(unet_patcher: Any, *, noise: torch.Tensor, concat_latent: torch.Tensor, denoise_mask: torch.Tensor, device: torch.device) -> torch.Tensor | None:
+def _build_flux_concat_condition(unet_patcher: Any, *, noise: torch.Tensor, concat_latent: torch.Tensor, denoise_mask: torch.Tensor, device: torch.device) -> torch.Tensor | None:
     model = getattr(unet_patcher, "model", unet_patcher)
     concat_cond = getattr(model, "concat_cond", None)
     if not callable(concat_cond):
@@ -639,8 +642,11 @@ def _build_glass_concat_condition(unet_patcher: Any, *, noise: torch.Tensor, con
     return concat_cond(noise=noise, concat_latent_image=concat_latent, denoise_mask=denoise_mask, device=device)
 
 
-class FluxFillGlassPipeline:
-    route_label = "flux_fill_glass"
+_build_glass_concat_condition = _build_flux_concat_condition
+
+
+class FluxFillPipeline:
+    route_label = "flux_fill_pipeline"
     stage_order = (
         "validate_contract",
         "select_working_geometry",
@@ -656,12 +662,12 @@ class FluxFillGlassPipeline:
         "compose_debug",
     )
 
-    def __init__(self, config: FluxFillGlassConfig, *, device: torch.device | None = None) -> None:
+    def __init__(self, config: FluxFillPipelineConfig, *, device: torch.device | None = None) -> None:
         self.config = config
         self.device = device or (torch.device(config.device) if config.device else resources.get_torch_device())
 
     def _resolve_effective_mode(self, image: np.ndarray, mode: str) -> str:
-        normalized_mode = _normalize_glass_mode(mode)
+        normalized_mode = _normalize_flux_fill_mode(mode)
         if normalized_mode == "debug":
             width = int(image.shape[1])
             height = int(image.shape[0])
@@ -674,11 +680,11 @@ class FluxFillGlassPipeline:
         image_np = _ensure_uint8_rgb(image)
         mask_np = _ensure_mask_shape(image_np, mask)
         height, width = image_np.shape[:2]
-        normalized_mode = _normalize_glass_mode(mode)
+        normalized_mode = _normalize_flux_fill_mode(mode)
         effective_mode = self._resolve_effective_mode(image_np, normalized_mode)
         if effective_mode == "baseline" and not is_native_sdxl_dimensions(width, height):
             raise FluxFillValidationError(
-                f"W04 glass baseline does not scale or crop; image dimensions must be native SDXL bucket resolutions. Got {width}x{height}."
+                f"Flux pipeline baseline does not scale or crop; image dimensions must be native SDXL bucket resolutions. Got {width}x{height}."
             )
         return {
             "image": _array_summary(image_np),
@@ -730,8 +736,12 @@ class FluxFillGlassPipeline:
         *,
         stage_name: str,
         apply_latent_format: bool,
+        vae: Any | None = None,
+        cleanup_vae: bool | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        vae = load_flux_ae(ae_path, load_device=self.device, offload_device=None)
+        owned_vae = vae is None
+        if vae is None:
+            vae = load_flux_ae(ae_path, load_device=self.device, offload_device=None)
         start = time.perf_counter()
         try:
             resources.load_models_gpu([vae.patcher])
@@ -753,33 +763,53 @@ class FluxFillGlassPipeline:
                 if hasattr(latent, "sample"):
                     latent = latent.sample()
         finally:
-            try:
-                vae.patcher.detach()
-            finally:
-                resources.soft_empty_cache()
+            should_cleanup = cleanup_vae if cleanup_vae is not None else owned_vae
+            if should_cleanup:
+                try:
+                    vae.patcher.detach()
+                finally:
+                    resources.soft_empty_cache()
         elapsed = time.perf_counter() - start
         summary = {
             "stage": stage_name,
             "latent": _tensor_summary(latent),
             "elapsed": elapsed,
             "latent_format": "processed" if apply_latent_format else "raw_vae",
+            "resident_vae": not owned_vae,
+            "cleanup_vae": bool(cleanup_vae if cleanup_vae is not None else owned_vae),
         }
         return latent.detach().cpu(), summary
 
-    def encode_source_latent(self, source_pixels: np.ndarray) -> tuple[torch.Tensor, dict[str, Any]]:
+    def encode_source_latent(
+        self,
+        source_pixels: np.ndarray,
+        *,
+        vae: Any | None = None,
+        cleanup_vae: bool | None = None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         return self._encode_pixels(
             source_pixels,
             self.config.ae_path,
             stage_name="encode_source_latent",
             apply_latent_format=True,
+            vae=vae,
+            cleanup_vae=cleanup_vae,
         )
 
-    def encode_concat_latent(self, concat_pixels: np.ndarray) -> tuple[torch.Tensor, dict[str, Any]]:
+    def encode_concat_latent(
+        self,
+        concat_pixels: np.ndarray,
+        *,
+        vae: Any | None = None,
+        cleanup_vae: bool | None = None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         return self._encode_pixels(
             concat_pixels,
             self.config.ae_path,
             stage_name="encode_concat_latent",
             apply_latent_format=False,
+            vae=vae,
+            cleanup_vae=cleanup_vae,
         )
 
     def prepare_denoise_mask(self, mask: np.ndarray, latent_shape: torch.Size | tuple[int, ...]) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -828,7 +858,7 @@ class FluxFillGlassPipeline:
         }
 
     def verify_c_concat(self, unet_patcher: Any, *, noise: torch.Tensor, concat_latent: torch.Tensor, denoise_mask: torch.Tensor) -> tuple[torch.Tensor | None, dict[str, Any]]:
-        preview = _build_glass_concat_condition(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask, device=self.device)
+        preview = _build_flux_concat_condition(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask, device=self.device)
         preview_tensor = preview.detach().cpu() if isinstance(preview, torch.Tensor) else None
         return preview_tensor, {
             "stage": "verify_c_concat",
@@ -838,7 +868,15 @@ class FluxFillGlassPipeline:
             "denoise_mask": _tensor_summary(denoise_mask),
         }
 
-    def denoise(self, latent_source: FluxFillLatentSource, *, empty_conditioning: FluxEmptyConditioning, unet_patcher: Any, disable_pbar: bool = True) -> tuple[FluxFillDenoiseResult, dict[str, Any], torch.Tensor]:
+    def denoise(
+        self,
+        latent_source: FluxFillLatentSource,
+        *,
+        empty_conditioning: FluxEmptyConditioning,
+        unet_patcher: Any | None = None,
+        disable_pbar: bool = True,
+        cleanup_unet: bool | None = None,
+    ) -> tuple[FluxFillDenoiseResult, dict[str, Any], torch.Tensor]:
         result = denoise_flux_fill_latent(
             self.config,
             latent_source,
@@ -847,7 +885,7 @@ class FluxFillGlassPipeline:
             load_device=self.device,
             offload_device=None,
             disable_pbar=disable_pbar,
-            cleanup_unet=True,
+            cleanup_unet=cleanup_unet,
         )
         return result, {
             "stage": "denoise",
@@ -857,7 +895,13 @@ class FluxFillGlassPipeline:
             "metadata": dict(result.metadata),
         }, result.samples.detach().cpu()
 
-    def decode(self, samples: torch.Tensor) -> tuple[FluxFillDecodedImage, dict[str, Any]]:
+    def decode(
+        self,
+        samples: torch.Tensor,
+        *,
+        vae: Any | None = None,
+        cleanup_vae: bool | None = None,
+    ) -> tuple[FluxFillDecodedImage, dict[str, Any]]:
         decoded = decode_flux_fill_latent(
             samples,
             self.config.ae_path,
@@ -865,6 +909,8 @@ class FluxFillGlassPipeline:
             tiled=False,
             load_device=self.device,
             offload_device=None,
+            vae=vae,
+            cleanup_vae=cleanup_vae,
         )
         return decoded, {
             "stage": "decode",
@@ -898,7 +944,7 @@ class FluxFillGlassPipeline:
             return Path(self.config.debug_output_dir)
         if self.config.mode == "debug" or self.config.capture_artifacts or self.config.capture_tensors or self.config.save_composite:
             if self.config.output_path is not None:
-                return Path(self.config.output_path).parent / f"{Path(self.config.output_path).stem}_glass_debug"
+                return Path(self.config.output_path).parent / f"{Path(self.config.output_path).stem}_flux_pipeline_debug"
         return None
 
     def _write_artifact(self, root: Path, name: str, array: np.ndarray) -> str:
@@ -915,7 +961,16 @@ class FluxFillGlassPipeline:
         torch.save(tensor.detach().cpu(), path)
         return str(path)
 
-    def run(self, image: np.ndarray, mask: np.ndarray, *, disable_pbar: bool = True) -> FluxFillGlassResult:
+    def run(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        *,
+        disable_pbar: bool = True,
+        unet_patcher: Any | None = None,
+        vae: Any | None = None,
+        empty_conditioning: FluxEmptyConditioning | None = None,
+    ) -> FluxFillPipelineResult:
         self.config.validate_static(require_existing_assets=True)
         mode = self.config.mode
         debug_summary: dict[str, Any] = {"stage_order": list(self.stage_order), "stages": {}, "artifacts": {}, "mode": mode}
@@ -965,7 +1020,7 @@ class FluxFillGlassPipeline:
                 "scale_to_bucket": float(scale_factor),
             }
 
-        crop_plan: FluxFillGlassCropPlan | None = None
+        crop_plan: FluxFillPipelineCropPlan | None = None
         crop_working_summary: dict[str, Any] = {}
         if mode == "scaled":
             working_image, working_mask, scale_summary = _prepare_scaled_inputs(
@@ -983,7 +1038,7 @@ class FluxFillGlassPipeline:
             geometry_summary["normalized_height"] = int(image_np.shape[0])
         elif effective_mode == "context_crop":
             crop_plan = _select_context_crop_plan(image_np, mask_np, mode=mode)
-            working_image, working_mask, crop_working_summary = prepare_flux_fill_glass_context_crop(image_np, mask_np, crop_plan)
+            working_image, working_mask, crop_working_summary = prepare_flux_fill_pipeline_context_crop(image_np, mask_np, crop_plan)
             scale_summary = {
                 "original_width": int(image_np.shape[1]),
                 "original_height": int(image_np.shape[0]),
@@ -1045,12 +1100,12 @@ class FluxFillGlassPipeline:
         debug_summary["stages"]["prepare_concat_pixels"] = concat_pixels_summary
 
         stage_start = time.perf_counter()
-        source_latent, source_latent_summary = self.encode_source_latent(source_pixels)
+        source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae)
         timings["encode_source_latent"] = time.perf_counter() - stage_start
         debug_summary["stages"]["encode_source_latent"] = source_latent_summary
 
         stage_start = time.perf_counter()
-        concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels)
+        concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels, vae=vae)
         timings["encode_concat_latent"] = time.perf_counter() - stage_start
         debug_summary["stages"]["encode_concat_latent"] = concat_latent_summary
 
@@ -1071,12 +1126,15 @@ class FluxFillGlassPipeline:
             height=int(source_latent.shape[-2] * 8),
         )
 
-        empty_conditioning = load_flux_empty_conditioning_cache(self.config.conditioning_cache_path)
+        if empty_conditioning is None:
+            empty_conditioning = load_flux_empty_conditioning_cache(self.config.conditioning_cache_path)
         payloads, payload_summary = self.build_conditioning_payload(empty_conditioning, source_latent, concat_latent, denoise_mask)
         debug_summary["stages"]["build_conditioning_payload"] = payload_summary
 
         noise = create_flux_fill_noise(source_latent, self.config.seed, device=self.device, dtype=source_latent.dtype)
-        unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
+        owns_unet = unet_patcher is None
+        if owns_unet:
+            unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
         if self.config.verify_c_concat:
             c_concat_preview, c_concat_summary = self.verify_c_concat(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask)
             debug_summary["stages"]["verify_c_concat"] = c_concat_summary
@@ -1087,12 +1145,18 @@ class FluxFillGlassPipeline:
             debug_summary["stages"]["verify_c_concat"] = {"stage": "verify_c_concat", "enabled": False}
 
         stage_start = time.perf_counter()
-        denoise_result, denoise_summary, samples = self.denoise(latent_source, empty_conditioning=empty_conditioning, unet_patcher=unet_patcher, disable_pbar=disable_pbar)
+        denoise_result, denoise_summary, samples = self.denoise(
+            latent_source,
+            empty_conditioning=empty_conditioning,
+            unet_patcher=unet_patcher,
+            disable_pbar=disable_pbar,
+            cleanup_unet=owns_unet,
+        )
         timings["denoise"] = time.perf_counter() - stage_start
         debug_summary["stages"]["denoise"] = denoise_summary
 
         stage_start = time.perf_counter()
-        decoded, decode_summary = self.decode(samples)
+        decoded, decode_summary = self.decode(samples, vae=vae, cleanup_vae=vae is None)
         timings["decode"] = time.perf_counter() - stage_start
         debug_summary["stages"]["decode"] = decode_summary
 
@@ -1103,8 +1167,8 @@ class FluxFillGlassPipeline:
             final_output_image = self.compose_output(image_np, mask_np, resized_raw)
             composite_summary = {"stage": "compose_debug", "enabled": True, "composite": _array_summary(final_output_image), "mode": mode}
         elif effective_mode == "context_crop" and crop_plan is not None:
-            restored_crop_image = restore_flux_fill_glass_context_crop(raw_output_image, crop_plan)
-            final_output_image = stitch_flux_fill_glass_context_crop(
+            restored_crop_image = restore_flux_fill_pipeline_context_crop(raw_output_image, crop_plan)
+            final_output_image = stitch_flux_fill_pipeline_context_crop(
                 image_np,
                 mask_np,
                 crop_plan,
@@ -1200,7 +1264,7 @@ class FluxFillGlassPipeline:
             "sdxl_bucket_aspect": bool(is_sdxl_bucket_aspect_ratio(image_np.shape[1], image_np.shape[0])),
         }
 
-        return FluxFillGlassResult(
+        return FluxFillPipelineResult(
             output_image=final_output_image,
             raw_output_image=raw_output_image,
             output_path=Path(self.config.output_path) if self.config.output_path is not None else None,
@@ -1211,7 +1275,21 @@ class FluxFillGlassPipeline:
             metadata=metadata,
             debug_summary=debug_summary,
         )
-
-
-def run_flux_fill_glass(config: FluxFillGlassConfig, image: np.ndarray, mask: np.ndarray, *, disable_pbar: bool = True) -> FluxFillGlassResult:
-    return FluxFillGlassPipeline(config).run(image, mask, disable_pbar=disable_pbar)
+def run_flux_fill_pipeline(
+    config: FluxFillPipelineConfig,
+    image: np.ndarray,
+    mask: np.ndarray,
+    *,
+    disable_pbar: bool = True,
+    unet_patcher: Any | None = None,
+    vae: Any | None = None,
+    empty_conditioning: FluxEmptyConditioning | None = None,
+) -> FluxFillPipelineResult:
+    return FluxFillPipeline(config).run(
+        image,
+        mask,
+        disable_pbar=disable_pbar,
+        unet_patcher=unet_patcher,
+        vae=vae,
+        empty_conditioning=empty_conditioning,
+    )

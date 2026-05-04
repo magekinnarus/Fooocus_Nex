@@ -574,12 +574,12 @@ def _select_flux_fill_mode(image: np.ndarray, requested_mode: str | None = None)
     if value:
         if value in {"baseline", "context_crop", "debug", "scaled"}:
             return value
-        raise ValueError(f"Unsupported Flux Fill glass mode: {requested_mode!r}. Expected baseline, context_crop, debug, or scaled.")
+        raise ValueError(f"Unsupported Flux Fill pipeline mode: {requested_mode!r}. Expected baseline, context_crop, debug, or scaled.")
 
     height, width = image.shape[:2]
     if width % 8 == 0 and height % 8 == 0:
         try:
-            from backend.flux.flux_fill_glass_pipeline import is_native_sdxl_dimensions
+            from backend.flux import is_native_sdxl_dimensions
 
             if is_native_sdxl_dimensions(width, height):
                 return "baseline"
@@ -606,7 +606,7 @@ def remove_object_flux_fill(
     mode: str | None = None,
 ) -> np.ndarray:
     """
-    Remove objects with the W04 glass Flux Fill runtime.
+    Remove objects with the Flux Pipeline runtime.
     Asset resolution is intentionally delayed until this function is called.
     """
     if image.ndim != 3:
@@ -633,9 +633,9 @@ def remove_object_flux_fill(
         progress=progress,
     )
 
-    from backend.flux import FluxFillGlassConfig, run_flux_fill_glass
+    from backend.flux import FluxFillPipelineConfig, run_flux_fill_pipeline
 
-    flux_config = FluxFillGlassConfig(
+    flux_config = FluxFillPipelineConfig(
         unet_path=asset_paths["unet_path"],
         ae_path=asset_paths["ae_path"],
         conditioning_cache_path=asset_paths["conditioning_cache_path"],
@@ -645,7 +645,7 @@ def remove_object_flux_fill(
         mode=selected_mode,
         blend_mode=selected_blend_mode,
     )
-    result = run_flux_fill_glass(flux_config, HWC3(image), flux_mask, disable_pbar=True)
+    result = run_flux_fill_pipeline(flux_config, HWC3(image), flux_mask, disable_pbar=True)
     return HWC3(np.asarray(result.output_image))
 
 

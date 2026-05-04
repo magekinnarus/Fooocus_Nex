@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.flux.flux_fill_glass_pipeline import FluxFillGlassConfig, run_flux_fill_glass  # noqa: E402
+from backend.flux.flux_runtime import FluxFillPipelineConfig, run_flux_fill_pipeline  # noqa: E402
 
 DEFAULT_UNET_BY_TIER = {
     "q8_0": Path(r"models\unet\flux\flux1-fill-dev-Q8_0.gguf"),
@@ -85,12 +85,12 @@ def _prepare_flux_fill_mask(mask: np.ndarray, *, grow: int = 16, blur: int = 6) 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run headless Flux Fill glass object removal on an image and mask.")
+    parser = argparse.ArgumentParser(description="Run headless Flux Fill pipeline object removal on an image and mask.")
     parser.add_argument("--image", required=True, help="Input RGB image path.")
     parser.add_argument("--mask", required=True, help="Input mask path. White/regenerate, black/keep.")
     parser.add_argument("--output", required=True, help="Output PNG path.")
     parser.add_argument("--metadata-output", default=None, help="Optional JSON metadata output path.")
-    parser.add_argument("--mode", default="baseline", choices=("baseline", "context_crop", "debug", "scaled"), help="Flux Fill glass mode.")
+    parser.add_argument("--mode", default="baseline", choices=("baseline", "context_crop", "debug", "scaled"), help="Flux Fill pipeline mode.")
     parser.add_argument("--target-megapixels", type=float, default=1.15, help="Target working megapixels when scaled mode is selected.")
     parser.add_argument("--debug-output-dir", default=None, help="Optional directory for debug artifacts.")
     parser.add_argument("--capture-artifacts", action="store_true", help="Write debug PNG artifacts.")
@@ -123,7 +123,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
     mask_prepared = not bool(getattr(args, "raw_mask", False))
     if mask_prepared:
         mask = _prepare_flux_fill_mask(mask)
-    config = FluxFillGlassConfig(
+    config = FluxFillPipelineConfig(
         unet_path=unet_path,
         ae_path=Path(args.ae),
         conditioning_cache_path=Path(args.conditioning_cache),
@@ -143,11 +143,11 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         capture_tensors=bool(args.capture_tensors or args.mode == "debug"),
         save_composite=bool(args.save_composite or args.mode == "debug"),
     )
-    result = run_flux_fill_glass(
+    result = run_flux_fill_pipeline(
         config,
         image,
         mask,
-        disable_pbar=not args.show_progress,
+        disable_pbar=not bool(getattr(args, "show_progress", False)),
     )
     _save_png(output_path, result.output_image)
 

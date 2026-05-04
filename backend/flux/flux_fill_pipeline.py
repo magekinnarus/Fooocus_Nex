@@ -354,7 +354,9 @@ def _validate_image_mask_arrays(image: Any, mask: Any) -> None:
         raise FluxFillValidationError(f"mask spatial shape {mask_shape[:2]} does not match image {image_shape[:2]}.")
 
 
-def _cleanup_model_patcher(model_patcher: Any) -> None:
+def _cleanup_model_patcher(model_patcher: Any, *, cleanup: bool = True) -> None:
+    if not cleanup:
+        return
     try:
         from backend import resources
 
@@ -382,6 +384,8 @@ def prepare_flux_fill_latent_source(
     load_device: torch.device | str | None = None,
     offload_device: torch.device | str | None = None,
     inpaint_pipeline: Any | None = None,
+    vae: Any | None = None,
+    cleanup_vae: bool | None = None,
 ) -> FluxFillLatentSource:
     if not isinstance(image, np.ndarray) or image.ndim != 3 or image.shape[2] != 3:
         raise FluxFillValidationError("image must be an RGB numpy array [H, W, 3].")
@@ -412,13 +416,14 @@ def prepare_flux_fill_latent_source(
         bb_image_for_concat[:, :, ch] += 0.5
     bb_image_for_concat = np.clip(bb_image_for_concat * 255.0, 0, 255).astype(np.uint8)
 
-    vae = None
+    owned_vae = vae is None
     encode_start = time.perf_counter()
     try:
         from modules.core import numpy_to_pytorch, encode_vae
         from backend import resources
 
-        vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
+        if vae is None:
+            vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
         resources.load_models_gpu([vae.patcher])
 
         # Encode unmasked original → source_latent (KSampler noise init)
@@ -445,13 +450,15 @@ def prepare_flux_fill_latent_source(
         vae.patcher.detach()
         resources.soft_empty_cache()
     finally:
+        should_cleanup = cleanup_vae if cleanup_vae is not None else owned_vae
         if vae is not None:
-            _cleanup_model_patcher(vae.patcher)
-        try:
-            from backend import resources as _res
-            _res.soft_empty_cache()
-        except Exception:
-            pass
+            _cleanup_model_patcher(vae.patcher, cleanup=should_cleanup)
+        if should_cleanup:
+            try:
+                from backend import resources as _res
+                _res.soft_empty_cache()
+            except Exception:
+                pass
     timings["ae_encode"] = time.perf_counter() - encode_start
 
     # Build denoise_mask in latent space
@@ -494,6 +501,8 @@ def decode_flux_fill_latent(
     load_device: torch.device | str | None = None,
     offload_device: torch.device | str | None = None,
     inpaint_pipeline: Any | None = None,
+    vae: Any | None = None,
+    cleanup_vae: bool | None = None,
 ) -> FluxFillDecodedImage:
     if not isinstance(latent, torch.Tensor):
         raise FluxFillValidationError(f"latent must be a torch.Tensor, got {type(latent).__name__}.")
@@ -503,10 +512,11 @@ def decode_flux_fill_latent(
         raise FluxFillValidationError("context is required when stitch=True.")
 
     timings: dict[str, float] = {}
-    vae = None
+    owned_vae = vae is None
     decode_start = time.perf_counter()
     try:
-        vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
+        if vae is None:
+            vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
         original_argv = list(sys.argv)
         try:
             sys.argv = [original_argv[0]]
@@ -516,14 +526,16 @@ def decode_flux_fill_latent(
 
         decoded = core.decode_vae(vae, {"samples": latent.detach().cpu()}, tiled=tiled)
     finally:
+        should_cleanup = cleanup_vae if cleanup_vae is not None else owned_vae
         if vae is not None:
-            _cleanup_model_patcher(vae.patcher)
-        try:
-            from backend import resources
+            _cleanup_model_patcher(vae.patcher, cleanup=should_cleanup)
+        if should_cleanup:
+            try:
+                from backend import resources
 
-            resources.soft_empty_cache()
-        except Exception:
-            pass
+                resources.soft_empty_cache()
+            except Exception:
+                pass
     timings["ae_decode"] = time.perf_counter() - decode_start
 
     if isinstance(decoded, torch.Tensor):
@@ -688,7 +700,7 @@ def denoise_flux_fill_latent(
     offload_device: torch.device | str | None = None,
     callback: Any | None = None,
     disable_pbar: bool = True,
-    cleanup_unet: bool = True,
+    cleanup_unet: bool | None = None,
 ) -> FluxFillDenoiseResult:
     config.validate_static(require_existing_assets=False)
     if empty_conditioning is None:
@@ -703,6 +715,7 @@ def denoise_flux_fill_latent(
 
     device = torch.device(load_device or config.device) if (load_device or config.device) else resources.get_torch_device()
     offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
+    owned_unet = unet_patcher is None
     timings: dict[str, float] = {}
     metadata: dict[str, Any] = {
         "sampler": config.sampler,
@@ -713,8 +726,8 @@ def denoise_flux_fill_latent(
         "guidance": float(config.guidance),
         "seed": int(config.seed),
         "device": str(device),
+        "resident_unet": not owned_unet,
     }
-
     unet_load_start = time.perf_counter()
     if unet_patcher is None:
         unet_patcher = load_flux_fill_unet(
@@ -772,8 +785,10 @@ def denoise_flux_fill_latent(
     finally:
         timings["denoise_wall"] = time.perf_counter() - denoise_start
         timings["denoise_cpu_proc"] = time.process_time() - denoise_cpu_start
-        if cleanup_unet:
-            _cleanup_model_patcher(unet_patcher)
+        should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
+        metadata["cleanup_unet"] = bool(should_cleanup)
+        if should_cleanup:
+            _cleanup_model_patcher(unet_patcher, cleanup=should_cleanup)
             try:
                 resources.soft_empty_cache()
             except Exception:
@@ -799,9 +814,14 @@ def run_flux_fill(
     tile_size: int = 64,
     callback: Any | None = None,
     disable_pbar: bool = True,
+    unet_patcher: Any | None = None,
+    vae: Any | None = None,
+    empty_conditioning: FluxEmptyConditioning | None = None,
+    cleanup_unet: bool | None = None,
+    cleanup_vae: bool | None = None,
 ) -> FluxFillResult:
     config.validate_static(require_existing_assets=True)
-    cache = load_flux_empty_conditioning_cache(config.conditioning_cache_path)
+    cache = empty_conditioning if empty_conditioning is not None else load_flux_empty_conditioning_cache(config.conditioning_cache_path)
 
     latent_source = prepare_flux_fill_latent_source(
         image,
@@ -810,6 +830,8 @@ def run_flux_fill(
         extend_factor=extend_factor,
         load_device=config.device,
         offload_device=None,
+        vae=vae,
+        cleanup_vae=cleanup_vae,
     )
     denoise_result = denoise_flux_fill_latent(
         config,
@@ -817,6 +839,8 @@ def run_flux_fill(
         empty_conditioning=cache,
         load_device=config.device,
         offload_device=None,
+        unet_patcher=unet_patcher,
+        cleanup_unet=cleanup_unet,
         callback=callback,
         disable_pbar=disable_pbar,
     )
@@ -829,6 +853,8 @@ def run_flux_fill(
         tile_size=tile_size,
         load_device=config.device,
         offload_device=None,
+        vae=vae,
+        cleanup_vae=cleanup_vae,
     )
 
     output_image = decoded.stitched_image if decoded.stitched_image is not None else decoded.bb_image
