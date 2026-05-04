@@ -14,6 +14,7 @@ from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, load_flux_ae,
 
 @dataclass
 class FluxPromptConditioningCache:
+    resolve_conditioning: Callable[[str], FluxEmptyConditioning] | None = None
     resolve_cache_path: Callable[[str], str | Path] | None = None
     _cache: dict[str, FluxEmptyConditioning] = field(default_factory=dict)
     load_count: int = 0
@@ -24,11 +25,58 @@ class FluxPromptConditioningCache:
         self,
         prompt: str | None = None,
         *,
+        conditioning: FluxEmptyConditioning | None = None,
         conditioning_cache_path: str | Path | None = None,
         fallback_path: str | Path | None = None,
         progress: bool = True,
     ) -> tuple[FluxEmptyConditioning, dict[str, Any]]:
         prompt_text = str(prompt or "").strip()
+        if conditioning is not None:
+            return conditioning, {
+                "stage": "conditioning_payload",
+                "prompt": prompt_text,
+                "cache_path": None,
+                "cache_hit": False,
+                "load_count": self.load_count,
+                "hit_count": self.hit_count,
+                "miss_count": self.miss_count,
+                "source": "explicit_payload",
+            }
+
+        if prompt_text and self.resolve_conditioning is not None:
+            cache_key = f"prompt::{prompt_text}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self.hit_count += 1
+                return cached, {
+                    "stage": "conditioning_payload",
+                    "prompt": prompt_text,
+                    "cache_path": None,
+                    "cache_hit": True,
+                    "load_count": self.load_count,
+                    "hit_count": self.hit_count,
+                    "miss_count": self.miss_count,
+                    "source": "live_prompt_cache",
+                }
+            try:
+                live_conditioning = self.resolve_conditioning(prompt_text)
+            except Exception:
+                live_conditioning = None
+            else:
+                self._cache[cache_key] = live_conditioning
+                self.load_count += 1
+                self.miss_count += 1
+                return live_conditioning, {
+                    "stage": "conditioning_payload",
+                    "prompt": prompt_text,
+                    "cache_path": None,
+                    "cache_hit": False,
+                    "load_count": self.load_count,
+                    "hit_count": self.hit_count,
+                    "miss_count": self.miss_count,
+                    "source": "live_prompt_encoder",
+                }
+
         if conditioning_cache_path is not None:
             cache_path = Path(conditioning_cache_path)
         elif prompt_text and self.resolve_cache_path is not None:
@@ -50,6 +98,7 @@ class FluxPromptConditioningCache:
                 "load_count": self.load_count,
                 "hit_count": self.hit_count,
                 "miss_count": self.miss_count,
+                "source": "pt_cache",
             }
 
         conditioning = load_flux_empty_conditioning_cache(cache_path, map_location="cpu")
@@ -64,6 +113,7 @@ class FluxPromptConditioningCache:
             "load_count": self.load_count,
             "hit_count": self.hit_count,
             "miss_count": self.miss_count,
+            "source": "pt_cache",
         }
 
     def clear(self) -> None:
@@ -109,6 +159,7 @@ class FluxFillSession:
         self,
         *,
         prompt: str | None = None,
+        conditioning: FluxEmptyConditioning | None = None,
         conditioning_cache_path: str | Path | None = None,
         progress: bool = True,
     ) -> tuple[FluxEmptyConditioning, dict[str, Any]]:
@@ -116,21 +167,35 @@ class FluxFillSession:
         if self.conditioning_provider is not None:
             conditioning, summary = self.conditioning_provider.load(
                 prompt,
+                conditioning=conditioning,
                 conditioning_cache_path=conditioning_cache_path,
                 fallback_path=fallback_path,
                 progress=progress,
             )
         else:
-            conditioning = load_flux_empty_conditioning_cache(fallback_path, map_location="cpu")
-            summary = {
-                "stage": "conditioning_cache",
-                "prompt": str(prompt or "").strip(),
-                "cache_path": str(fallback_path),
-                "cache_hit": False,
-                "load_count": 1,
-                "hit_count": 0,
-                "miss_count": 1,
-            }
+            if conditioning is not None:
+                summary = {
+                    "stage": "conditioning_payload",
+                    "prompt": str(prompt or "").strip(),
+                    "cache_path": None,
+                    "cache_hit": False,
+                    "load_count": 0,
+                    "hit_count": 0,
+                    "miss_count": 0,
+                    "source": "explicit_payload",
+                }
+            else:
+                conditioning = load_flux_empty_conditioning_cache(fallback_path, map_location="cpu")
+                summary = {
+                    "stage": "conditioning_cache",
+                    "prompt": str(prompt or "").strip(),
+                    "cache_path": str(fallback_path),
+                    "cache_hit": False,
+                    "load_count": 1,
+                    "hit_count": 0,
+                    "miss_count": 1,
+                    "source": "pt_cache",
+                }
         self.conditioning_cache_count += 1
         return conditioning, summary
 
@@ -140,6 +205,7 @@ class FluxFillSession:
         mask: Any,
         *,
         prompt: str | None = None,
+        conditioning: FluxEmptyConditioning | None = None,
         conditioning_cache_path: str | Path | None = None,
         seed: int | None = None,
         mode: str | None = None,
@@ -150,6 +216,7 @@ class FluxFillSession:
         self.start()
         conditioning, conditioning_summary = self._resolve_conditioning(
             prompt=prompt,
+            conditioning=conditioning,
             conditioning_cache_path=conditioning_cache_path,
             progress=progress,
         )
@@ -190,6 +257,7 @@ class FluxFillSession:
         mask: Any,
         *,
         prompt: str | None = None,
+        conditioning: FluxEmptyConditioning | None = None,
         conditioning_cache_path: str | Path | None = None,
         seed: int | None = None,
         mode: str | None = None,
@@ -201,6 +269,7 @@ class FluxFillSession:
             image,
             mask,
             prompt=prompt,
+            conditioning=conditioning,
             conditioning_cache_path=conditioning_cache_path,
             seed=seed,
             mode=mode,
@@ -215,6 +284,7 @@ class FluxFillSession:
         mask: Any,
         *,
         prompt: str | None = None,
+        conditioning: FluxEmptyConditioning | None = None,
         conditioning_cache_path: str | Path | None = None,
         seed: int | None = None,
         mode: str | None = None,
@@ -226,6 +296,7 @@ class FluxFillSession:
             image,
             mask,
             prompt=prompt,
+            conditioning=conditioning,
             conditioning_cache_path=conditioning_cache_path,
             seed=seed,
             mode=mode,

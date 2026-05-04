@@ -127,12 +127,10 @@ def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: 
     import modules.objr_engine as objr_engine
 
     selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, "objr_engine", None))
-    if route.family != "removal" or selected_engine != objr_engine.OBJR_ENGINE_FLUX_FILL:
-        objr_engine.end_active_flux_fill_session(reason=f"route_switch:{route.family}")
-        return None
-
     try:
-        return objr_engine.ensure_active_flux_fill_session(
+        return objr_engine.reconcile_active_flux_fill_session(
+            route_family=route.family,
+            selected_engine=selected_engine,
             conditioning=getattr(task_state, "flux_fill_conditioning", None),
             progress=progress,
         )

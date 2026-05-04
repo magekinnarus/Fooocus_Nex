@@ -127,6 +127,8 @@ def get_active_task():
 
 
 def request_interrupt(action, task=None):
+    # Flux stop/skip interrupts are intentionally non-destructive.
+    # Route-entry reconciliation decides whether a later route switch should tear residency down.
     target = get_active_task()
     if target is None:
         target = task

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 from backend.flux.flux_fill_pipeline import (  # noqa: E402
     EMPTY_FLUX_CROSS_ATTN_SHAPE,
     EMPTY_FLUX_POOLED_SHAPE,
+    FluxEmptyConditioning,
     FluxFillValidationError,
     load_flux_empty_conditioning_cache,
     save_flux_empty_conditioning_cache,
@@ -135,23 +136,24 @@ def _load_flux_clip(comfy_root: Path, gguf_node_root: Path, clip_l_path: Path, t
     return clip
 
 
-def generate_empty_conditioning(args: argparse.Namespace) -> dict[str, Any]:
+def encode_conditioning(
+    prompt: str,
+    *,
+    clip_l_path: Path,
+    t5_path: Path,
+    comfy_root: Path,
+    gguf_node_root: Path,
+) -> FluxEmptyConditioning:
     import torch
-
-    clip_l_path = Path(args.clip_l)
-    t5_path = Path(args.t5)
-    output_path = Path(args.output)
-    comfy_root = Path(args.comfy_root)
-    gguf_node_root = Path(args.gguf_node_root)
 
     clip = _load_flux_clip(comfy_root, gguf_node_root, clip_l_path, t5_path)
     try:
-        tokens = clip.tokenize(args.prompt)
+        tokens = clip.tokenize(prompt)
         with torch.inference_mode():
             cross_attn, pooled_output = clip.encode_from_tokens(tokens, return_pooled=True)
 
         metadata = {
-            "prompt": args.prompt,
+            "prompt": prompt,
             "clip_l_path": str(clip_l_path),
             "t5_path": str(t5_path),
             "comfy_root": str(comfy_root),
@@ -162,25 +164,47 @@ def generate_empty_conditioning(args: argparse.Namespace) -> dict[str, Any]:
             "cross_attn_dtype": str(cross_attn.dtype),
             "pooled_output_dtype": str(pooled_output.dtype),
             "generator": "tools/generate_flux_empty_conditioning.py",
-            "conditioning_kind": "empty" if args.prompt == "" else "prompt",
+            "conditioning_kind": "empty" if prompt == "" else "prompt",
+            "transport": "memory",
         }
-        conditioning = save_flux_empty_conditioning_cache(
-            output_path,
+        return FluxEmptyConditioning(
             cross_attn=cross_attn.to(device="cpu"),
             pooled_output=pooled_output.to(device="cpu"),
             metadata=metadata,
         )
-        return {
-            "status": "ok",
-            "output": str(output_path),
-            "cross_attn_shape": list(conditioning.cross_attn.shape),
-            "pooled_output_shape": list(conditioning.pooled_output.shape),
-            "metadata": conditioning.metadata,
-        }
     finally:
         del clip
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+def generate_empty_conditioning(args: argparse.Namespace) -> dict[str, Any]:
+    clip_l_path = Path(args.clip_l)
+    t5_path = Path(args.t5)
+    output_path = Path(args.output)
+    comfy_root = Path(args.comfy_root)
+    gguf_node_root = Path(args.gguf_node_root)
+
+    conditioning = encode_conditioning(
+        args.prompt,
+        clip_l_path=clip_l_path,
+        t5_path=t5_path,
+        comfy_root=comfy_root,
+        gguf_node_root=gguf_node_root,
+    )
+    conditioning = save_flux_empty_conditioning_cache(
+        output_path,
+        cross_attn=conditioning.cross_attn,
+        pooled_output=conditioning.pooled_output,
+        metadata=dict(conditioning.metadata, transport="pt_cache"),
+    )
+    return {
+        "status": "ok",
+        "output": str(output_path),
+        "cross_attn_shape": list(conditioning.cross_attn.shape),
+        "pooled_output_shape": list(conditioning.pooled_output.shape),
+        "metadata": conditioning.metadata,
+    }
 
 
 def validate_existing(path: Path) -> dict[str, Any]:

@@ -2,6 +2,7 @@ import os
 import os
 import argparse
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import torch
@@ -19,6 +20,7 @@ from ldm_patched.pfn.architecture.MAT import MAT
 from modules.blending import sin_blend_1d
 import backend.resources as resources
 from modules.util import HWC3
+from backend.flux import FluxEmptyConditioning
 from backend.flux.flux_fill_session import FluxFillSession, FluxPromptConditioningCache
 from backend.flux.flux_runtime import FluxFillPipelineConfig
 
@@ -38,6 +40,14 @@ FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
 FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
 FLUX_FILL_T5XXL_FP16_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.fp16"
+FLUX_FILL_T5XXL_Q8_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.q8_0"
+FLUX_FILL_T5XXL_Q4_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m"
+FLUX_FILL_T5_VARIANT_FP16 = "fp16"
+FLUX_FILL_T5_VARIANT_Q8 = "q8_0"
+FLUX_FILL_T5_VARIANT_Q4 = "q4_k_m"
+FLUX_FILL_LOCAL_FP16_MIN_RAM_MB = 32 * 1024
+FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 16 * 1024
+FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 12 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
 FLUX_FILL_CONDITIONING_BY_KIND = {
@@ -53,10 +63,28 @@ FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
     FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
 }
+FLUX_FILL_T5_ASSET_BY_VARIANT = {
+    FLUX_FILL_T5_VARIANT_FP16: FLUX_FILL_T5XXL_FP16_ASSET_ID,
+    FLUX_FILL_T5_VARIANT_Q8: FLUX_FILL_T5XXL_Q8_ASSET_ID,
+    FLUX_FILL_T5_VARIANT_Q4: FLUX_FILL_T5XXL_Q4_ASSET_ID,
+}
 FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH = os.path.join("flux", "flux_empty_conditioning.pt")
 
 _active_flux_fill_session: FluxFillSession | None = None
-_active_flux_fill_session_signature: tuple[str, str, str, str] | None = None
+_active_flux_fill_session_signature: tuple[str, str, str] | None = None
+
+
+@dataclass(frozen=True)
+class FluxFillRouteReconciliation:
+    decision: str
+    reason: str
+    target_signature: tuple[str, str, str] | None = None
+    active_signature_before: tuple[str, str, str] | None = None
+    active_signature_after: tuple[str, str, str] | None = None
+    session_started: bool = False
+    session_reused: bool = False
+    session_replaced: bool = False
+    session_torn_down: bool = False
 
 
 def normalize_objr_engine(engine: str | None) -> str:
@@ -128,6 +156,65 @@ def _normalize_flux_fill_tier(tier: str | None) -> str:
     if normalized in {"q4", "q4_k_s"}:
         return FLUX_FILL_TIER_Q4
     raise ValueError(f"Unsupported Flux Fill tier: {tier!r}. Expected q8_0 or q4_k_s.")
+
+
+def normalize_flux_fill_t5_variant(variant: str | None) -> str:
+    if variant is None or str(variant).strip() == "":
+        return FLUX_FILL_T5_VARIANT_FP16
+    normalized = str(variant).strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"fp16", "float16", "t5xxl_fp16"}:
+        return FLUX_FILL_T5_VARIANT_FP16
+    if normalized in {"q8", "q8_0", "t5xxl_q8_0"}:
+        return FLUX_FILL_T5_VARIANT_Q8
+    if normalized in {"q4", "q4_k_m", "t5xxl_q4_k_m"}:
+        return FLUX_FILL_T5_VARIANT_Q4
+    raise ValueError(f"Unsupported Flux Fill T5 variant: {variant!r}. Expected fp16, q8_0, or q4_k_m.")
+
+
+def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | None = None) -> str:
+    override = variant
+    if override is None:
+        override = os.environ.get("FOOOCUS_NEX_FLUX_FILL_T5_VARIANT")
+    if override is not None and str(override).strip() != "":
+        return normalize_flux_fill_t5_variant(override)
+
+    if profile is None:
+        try:
+            from backend import memory_governor
+
+            profile = memory_governor.environment_profile()
+        except Exception:
+            profile = None
+    if profile is None:
+        profile = getattr(config, "resolved_memory_environment_profile", None)
+
+    profile_name = str(getattr(profile, "name", "") or "").lower()
+    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or 0.0)
+    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or 0.0)
+
+    try:
+        from backend import environment_profile
+
+        if profile_name in {environment_profile.PROFILE_COLAB_FREE, environment_profile.PROFILE_COLAB_PRO}:
+            return FLUX_FILL_T5_VARIANT_FP16
+        if profile_name == environment_profile.PROFILE_LOCAL_LOW_VRAM:
+            return FLUX_FILL_T5_VARIANT_Q4
+    except Exception:
+        if profile_name in {"colab_free", "colab_pro"}:
+            return FLUX_FILL_T5_VARIANT_FP16
+        if profile_name == "local_low_vram":
+            return FLUX_FILL_T5_VARIANT_Q4
+
+    if total_ram_mb >= FLUX_FILL_LOCAL_FP16_MIN_RAM_MB:
+        return FLUX_FILL_T5_VARIANT_FP16
+    if total_ram_mb >= FLUX_FILL_LOCAL_Q8_MIN_RAM_MB and total_vram_mb >= FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB:
+        return FLUX_FILL_T5_VARIANT_Q8
+    return FLUX_FILL_T5_VARIANT_Q4
+
+
+def get_flux_fill_t5_asset_id(variant: str | None = None, *, profile: Any | None = None) -> str:
+    selected_variant = select_flux_fill_t5_variant(profile, variant=variant)
+    return FLUX_FILL_T5_ASSET_BY_VARIANT[selected_variant]
 
 
 def normalize_flux_fill_conditioning(conditioning: str | None) -> str:
@@ -221,6 +308,7 @@ def generate_flux_fill_prompt_conditioning_cache(
     prompt: str,
     *,
     cache_mode: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    t5_variant: str | None = None,
     progress: bool = True,
 ) -> str:
     prompt_text = str(prompt or "").strip()
@@ -228,7 +316,7 @@ def generate_flux_fill_prompt_conditioning_cache(
         raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
 
     clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
-    t5_path = model_registry.ensure_asset(FLUX_FILL_T5XXL_FP16_ASSET_ID, progress=progress)
+    t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
     output_path = _flux_fill_prompt_cache_path(prompt_text, clip_l_path, t5_path, cache_mode)
     if output_path.exists():
         return str(output_path)
@@ -255,6 +343,41 @@ def generate_flux_fill_prompt_conditioning_cache(
             )
         )
         return str(output_path)
+    finally:
+        gc.collect()
+        try:
+            resources.soft_empty_cache()
+        except Exception:
+            pass
+
+
+def generate_flux_fill_prompt_conditioning(
+    prompt: str,
+    *,
+    t5_variant: str | None = None,
+    progress: bool = True,
+) -> FluxEmptyConditioning:
+    prompt_text = str(prompt or "").strip()
+    if prompt_text == "":
+        raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
+
+    clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
+    t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
+    try:
+        from tools.generate_flux_empty_conditioning import (
+            DEFAULT_COMFY_ROOT,
+            DEFAULT_GGUF_NODE_ROOT,
+            encode_conditioning,
+        )
+
+        comfy_root, gguf_node_root = _resolve_flux_fill_comfy_roots(DEFAULT_COMFY_ROOT, DEFAULT_GGUF_NODE_ROOT)
+        return encode_conditioning(
+            prompt_text,
+            clip_l_path=Path(clip_l_path),
+            t5_path=Path(t5_path),
+            comfy_root=comfy_root,
+            gguf_node_root=gguf_node_root,
+        )
     finally:
         gc.collect()
         try:
@@ -315,17 +438,20 @@ def resolve_flux_fill_asset_paths(
     }
 
 
-def _flux_fill_session_signature(asset_paths: dict[str, str]) -> tuple[str, str, str, str]:
+def _flux_fill_session_signature(asset_paths: dict[str, str]) -> tuple[str, str, str]:
     return (
         str(asset_paths["tier"]),
         str(asset_paths["unet_path"]),
         str(asset_paths["ae_path"]),
-        str(asset_paths["conditioning_cache_path"]),
     )
 
 
 def get_active_flux_fill_session() -> FluxFillSession | None:
     return _active_flux_fill_session
+
+
+def get_active_flux_fill_session_signature() -> tuple[str, str, str] | None:
+    return _active_flux_fill_session_signature
 
 
 def has_active_flux_fill_session() -> bool:
@@ -341,7 +467,10 @@ def _build_flux_fill_session(asset_paths: dict[str, str]) -> FluxFillSession:
         tier=asset_paths["tier"],
         device=None,
     )
-    conditioning_provider = FluxPromptConditioningCache(resolve_cache_path=generate_flux_fill_prompt_conditioning_cache)
+    conditioning_provider = FluxPromptConditioningCache(
+        resolve_conditioning=generate_flux_fill_prompt_conditioning,
+        resolve_cache_path=generate_flux_fill_prompt_conditioning_cache,
+    )
     return FluxFillSession(session_config, conditioning_provider=conditioning_provider)
 
 
@@ -366,6 +495,66 @@ def ensure_active_flux_fill_session(
     _active_flux_fill_session = session
     _active_flux_fill_session_signature = session_signature
     return session
+
+
+def reconcile_active_flux_fill_session(
+    *,
+    route_family: str,
+    selected_engine: str,
+    tier: str | None = None,
+    conditioning: str | None = None,
+    progress: bool = True,
+) -> FluxFillRouteReconciliation:
+    global _active_flux_fill_session, _active_flux_fill_session_signature
+
+    active_signature = get_active_flux_fill_session_signature()
+
+    if route_family != "removal" or selected_engine != OBJR_ENGINE_FLUX_FILL:
+        if get_active_flux_fill_session() is None:
+            return FluxFillRouteReconciliation(
+                decision="ignored",
+                reason=f"non_flux_route:{route_family}",
+                active_signature_before=active_signature,
+            )
+
+        end_active_flux_fill_session(reason=f"route_switch:{route_family}")
+        return FluxFillRouteReconciliation(
+            decision="torn_down",
+            reason=f"route_switch:{route_family}",
+            active_signature_before=active_signature,
+            session_torn_down=True,
+        )
+
+    target_asset_paths = resolve_flux_fill_asset_paths(tier=tier, conditioning=conditioning, progress=progress)
+    target_signature = _flux_fill_session_signature(target_asset_paths)
+
+    if active_signature == target_signature and has_active_flux_fill_session():
+        return FluxFillRouteReconciliation(
+            decision="reused",
+            reason="compatible_flux_residency",
+            target_signature=target_signature,
+            active_signature_before=active_signature,
+            active_signature_after=active_signature,
+            session_reused=True,
+        )
+
+    session_was_active = get_active_flux_fill_session() is not None
+    if session_was_active:
+        end_active_flux_fill_session(reason="flux_session_replaced")
+
+    session = _build_flux_fill_session(target_asset_paths)
+    session.start()
+    _active_flux_fill_session = session
+    _active_flux_fill_session_signature = target_signature
+    return FluxFillRouteReconciliation(
+        decision="started" if not session_was_active else "replaced",
+        reason="flux_session_started" if not session_was_active else "flux_session_replaced",
+        target_signature=target_signature,
+        active_signature_before=active_signature,
+        active_signature_after=target_signature,
+        session_started=not session_was_active,
+        session_replaced=session_was_active,
+    )
 
 
 def end_active_flux_fill_session(*, reason: str | None = None) -> dict[str, Any] | None:
