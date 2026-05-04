@@ -123,6 +123,24 @@ def _save_step1_result(context: PipelineRouteContext, payload, description: str)
         context.yield_result_callback(task_state, img_paths, 100, do_not_show_finished_images=True)
 
 
+def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: bool = False):
+    import modules.objr_engine as objr_engine
+
+    selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, "objr_engine", None))
+    if route.family != "removal" or selected_engine != objr_engine.OBJR_ENGINE_FLUX_FILL:
+        objr_engine.end_active_flux_fill_session(reason=f"route_switch:{route.family}")
+        return None
+
+    try:
+        return objr_engine.ensure_active_flux_fill_session(
+            conditioning=getattr(task_state, "flux_fill_conditioning", None),
+            progress=progress,
+        )
+    except Exception:
+        objr_engine.end_active_flux_fill_session(reason="flux_session_start_failed")
+        return None
+
+
 class ImageInputPreparationStage(PipelineStage):
     stage_id = 'image_input_prepare'
     phase_name = 'image_input_prepare'
@@ -603,11 +621,14 @@ class RemovalStage(PipelineStage):
         from backend import resources
 
         task_state = context.task_state
+        selected_engine = objr_engine.normalize_objr_engine(task_state.objr_engine)
+        use_flux_session = selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL and objr_engine.has_active_flux_fill_session()
         resources.begin_memory_phase('removal', notes={'goals': list(task_state.goals)})
         try:
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, 5, 'Clearing VRAM for Removal Models...')
-            resources.cleanup_memory('removal_preflight', unload_models=True, force_cache=True, trim_host=True, notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.REMOVAL)
+            if not use_flux_session:
+                resources.cleanup_memory('removal_preflight', unload_models=True, force_cache=True, trim_host=True, notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.REMOVAL)
 
             if flags.remove_bg in task_state.goals:
                 if context.progressbar_callback is not None:

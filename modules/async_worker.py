@@ -11,7 +11,7 @@ import modules.default_pipeline as pipeline
 import modules.flags as flags
 from modules.task_state import TaskState
 from modules.pipeline.output import build_image_wall, yield_result
-from modules.pipeline.routes import build_generation_route, describe_route
+from modules.pipeline.routes import build_generation_route, describe_route, sync_flux_fill_route_session
 from modules.pipeline.stage_runtime import PipelineRouteContext, PipelineStageRunner
 
 class AsyncTask:
@@ -187,6 +187,7 @@ def handler(async_task: AsyncTask):
         route = build_generation_route(task_state)
 
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
+    sync_flux_fill_route_session(route, task_state, progress=False)
 
     route_context = PipelineRouteContext(
         async_task=async_task,

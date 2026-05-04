@@ -1,4 +1,5 @@
 import os
+import os
 import argparse
 import hashlib
 from pathlib import Path
@@ -18,6 +19,8 @@ from ldm_patched.pfn.architecture.MAT import MAT
 from modules.blending import sin_blend_1d
 import backend.resources as resources
 from modules.util import HWC3
+from backend.flux.flux_fill_session import FluxFillSession, FluxPromptConditioningCache
+from backend.flux.flux_runtime import FluxFillPipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,9 @@ FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
 }
 FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH = os.path.join("flux", "flux_empty_conditioning.pt")
+
+_active_flux_fill_session: FluxFillSession | None = None
+_active_flux_fill_session_signature: tuple[str, str, str, str] | None = None
 
 
 def normalize_objr_engine(engine: str | None) -> str:
@@ -307,6 +313,75 @@ def resolve_flux_fill_asset_paths(
         "conditioning_asset_id": conditioning_asset_id,
         "conditioning_cache_path": resolved_conditioning_cache_path,
     }
+
+
+def _flux_fill_session_signature(asset_paths: dict[str, str]) -> tuple[str, str, str, str]:
+    return (
+        str(asset_paths["tier"]),
+        str(asset_paths["unet_path"]),
+        str(asset_paths["ae_path"]),
+        str(asset_paths["conditioning_cache_path"]),
+    )
+
+
+def get_active_flux_fill_session() -> FluxFillSession | None:
+    return _active_flux_fill_session
+
+
+def has_active_flux_fill_session() -> bool:
+    session = get_active_flux_fill_session()
+    return session is not None and bool(session.started)
+
+
+def _build_flux_fill_session(asset_paths: dict[str, str]) -> FluxFillSession:
+    session_config = FluxFillPipelineConfig(
+        unet_path=asset_paths["unet_path"],
+        ae_path=asset_paths["ae_path"],
+        conditioning_cache_path=asset_paths["conditioning_cache_path"],
+        tier=asset_paths["tier"],
+        device=None,
+    )
+    conditioning_provider = FluxPromptConditioningCache(resolve_cache_path=generate_flux_fill_prompt_conditioning_cache)
+    return FluxFillSession(session_config, conditioning_provider=conditioning_provider)
+
+
+def ensure_active_flux_fill_session(
+    *,
+    tier: str | None = None,
+    conditioning: str | None = None,
+    progress: bool = True,
+) -> FluxFillSession:
+    global _active_flux_fill_session, _active_flux_fill_session_signature
+
+    selected_tier = _normalize_flux_fill_tier(tier)
+    asset_paths = resolve_flux_fill_asset_paths(tier=selected_tier, conditioning=conditioning, progress=progress)
+    session_signature = _flux_fill_session_signature(asset_paths)
+
+    if _active_flux_fill_session is not None and _active_flux_fill_session_signature == session_signature and _active_flux_fill_session.started:
+        return _active_flux_fill_session
+
+    end_active_flux_fill_session(reason="flux_session_replaced")
+    session = _build_flux_fill_session(asset_paths)
+    session.start()
+    _active_flux_fill_session = session
+    _active_flux_fill_session_signature = session_signature
+    return session
+
+
+def end_active_flux_fill_session(*, reason: str | None = None) -> dict[str, Any] | None:
+    global _active_flux_fill_session, _active_flux_fill_session_signature
+
+    session = _active_flux_fill_session
+    if session is None:
+        return None
+
+    try:
+        if reason:
+            logger.info("Ending active Flux Fill session: %s", reason)
+        return session.end()
+    finally:
+        _active_flux_fill_session = None
+        _active_flux_fill_session_signature = None
 
 
 
@@ -617,6 +692,20 @@ def remove_object_flux_fill(
     flux_mask = prepare_flux_fill_mask(np.asarray(mask), grow=int(mask_dilate), blur=int(mask_blur))
     selected_mode = _select_flux_fill_mode(np.asarray(image), mode)
     selected_blend_mode = normalize_flux_fill_blend_mode(blend_mode)
+    active_session = get_active_flux_fill_session()
+
+    if active_session is not None:
+        result = active_session.generate_removal(
+            HWC3(image),
+            flux_mask,
+            prompt=prompt,
+            seed=int(seed),
+            mode=selected_mode,
+            blend_mode=selected_blend_mode,
+            disable_pbar=True,
+            progress=progress,
+        )
+        return HWC3(np.asarray(result.output_image))
 
     prompt_cache_path = None
     if str(prompt or "").strip():
