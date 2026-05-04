@@ -22,7 +22,7 @@ from backend.flux.flux_fill_pipeline import (  # noqa: E402
     save_flux_empty_conditioning_cache,
 )
 
-DEFAULT_COMFY_ROOT = Path(r"D:\AI\Imagine_sup\ComfyUI_reference")
+DEFAULT_COMFY_ROOT = REPO_ROOT / "ComfyUI_reference"
 DEFAULT_GGUF_NODE_ROOT = DEFAULT_COMFY_ROOT / "custom_nodes" / "ComfyUI-GGUF"
 
 

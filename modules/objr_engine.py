@@ -1,6 +1,4 @@
 import os
-import os
-import argparse
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +21,7 @@ from modules.util import HWC3
 from backend.flux import FluxEmptyConditioning
 from backend.flux.flux_fill_session import FluxFillSession, FluxPromptConditioningCache
 from backend.flux.flux_runtime import FluxFillPipelineConfig
+from backend.flux.text_conditioning import encode_flux_prompt_conditioning, save_flux_prompt_conditioning_cache
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,11 @@ FLUX_FILL_T5_VARIANT_Q4 = "q4_k_m"
 FLUX_FILL_LOCAL_FP16_MIN_RAM_MB = 32 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 16 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 12 * 1024
+FLUX_FILL_RUNTIME_RESIDENT_VRAM_MIN_MB = 14 * 1024
+FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB = 4 * 1024
+FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB = 8 * 1024
+FLUX_FILL_T5_FP16_MIN_BUDGET_MB = 24 * 1024
+FLUX_FILL_T5_Q8_MIN_BUDGET_MB = 12 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
 FLUX_FILL_INPAINT_ROUTE_SDXL = "sdxl"
@@ -74,6 +78,10 @@ FLUX_FILL_EMPTY_CONDITIONING_RELATIVE_PATH = os.path.join("flux", "flux_empty_co
 
 _active_flux_fill_session: FluxFillSession | None = None
 _active_flux_fill_session_signature: tuple[str, str, str] | None = None
+FLUX_FILL_VRAM_CLASS_RESIDENT = "16gb_plus"
+FLUX_FILL_VRAM_CLASS_CONSTRAINED = "8gb_class"
+FLUX_FILL_RUNTIME_POSTURE_RESIDENT = "resident"
+FLUX_FILL_RUNTIME_POSTURE_HYBRID = "hybrid_offload"
 
 
 @dataclass(frozen=True)
@@ -87,6 +95,18 @@ class FluxFillRouteReconciliation:
     session_reused: bool = False
     session_replaced: bool = False
     session_torn_down: bool = False
+
+
+@dataclass(frozen=True)
+class FluxFillHardwareProfile:
+    profile_name: str
+    total_ram_mb: float
+    available_ram_mb: float
+    total_vram_mb: float
+    available_vram_mb: float
+    is_colab: bool
+    vram_class: str
+    runtime_posture: str
 
 
 def normalize_objr_engine(engine: str | None) -> str:
@@ -116,16 +136,65 @@ def normalize_objr_engine(engine: str | None) -> str:
     raise ValueError(f"Unsupported object removal engine: {engine!r}. Expected one of {OBJR_ENGINE_CHOICES}.")
 
 
-def select_flux_fill_tier(profile: Any | None = None) -> str:
+def _resolve_flux_fill_profile(profile: Any | None = None) -> tuple[Any | None, Any | None]:
+    snapshot = None
     if profile is None:
         try:
             from backend import memory_governor
 
             profile = memory_governor.environment_profile()
+            snapshot = memory_governor.capture_snapshot(notes={"purpose": "flux_fill_policy"})
         except Exception:
             profile = None
+            snapshot = None
     if profile is None:
         profile = getattr(config, "resolved_memory_environment_profile", None)
+    return profile, snapshot
+
+
+def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwareProfile:
+    profile, snapshot = _resolve_flux_fill_profile(profile)
+
+    profile_name = str(getattr(profile, "name", "") or "").lower()
+    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or getattr(snapshot, "total_ram_mb", 0.0) or 0.0)
+    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or getattr(snapshot, "total_vram_mb", 0.0) or 0.0)
+    available_ram_mb = float(
+        getattr(profile, "free_ram_mb", 0.0)
+        or getattr(profile, "available_ram_mb", 0.0)
+        or getattr(snapshot, "free_ram_mb", 0.0)
+        or total_ram_mb
+        or 0.0
+    )
+    available_vram_mb = float(
+        getattr(profile, "free_vram_mb", 0.0)
+        or getattr(profile, "available_vram_mb", 0.0)
+        or getattr(snapshot, "free_vram_mb", 0.0)
+        or total_vram_mb
+        or 0.0
+    )
+    is_colab = bool(getattr(profile, "is_colab", False))
+
+    if total_vram_mb >= FLUX_FILL_RUNTIME_RESIDENT_VRAM_MIN_MB:
+        vram_class = FLUX_FILL_VRAM_CLASS_RESIDENT
+        runtime_posture = FLUX_FILL_RUNTIME_POSTURE_RESIDENT
+    else:
+        vram_class = FLUX_FILL_VRAM_CLASS_CONSTRAINED
+        runtime_posture = FLUX_FILL_RUNTIME_POSTURE_HYBRID
+
+    return FluxFillHardwareProfile(
+        profile_name=profile_name,
+        total_ram_mb=total_ram_mb,
+        available_ram_mb=available_ram_mb,
+        total_vram_mb=total_vram_mb,
+        available_vram_mb=available_vram_mb,
+        is_colab=is_colab,
+        vram_class=vram_class,
+        runtime_posture=runtime_posture,
+    )
+
+
+def select_flux_fill_tier(profile: Any | None = None) -> str:
+    profile, _snapshot = _resolve_flux_fill_profile(profile)
 
     profile_name = str(getattr(profile, "name", "") or "").lower()
     total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or 0.0)
@@ -173,6 +242,15 @@ def normalize_flux_fill_t5_variant(variant: str | None) -> str:
     raise ValueError(f"Unsupported Flux Fill T5 variant: {variant!r}. Expected fp16, q8_0, or q4_k_m.")
 
 
+def _flux_fill_t5_budget_mb(hardware: FluxFillHardwareProfile) -> float:
+    reserve_mb = (
+        FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
+        if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT
+        else FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB
+    )
+    return max(0.0, float(hardware.available_ram_mb) - float(reserve_mb))
+
+
 def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | None = None) -> str:
     override = variant
     if override is None:
@@ -180,36 +258,21 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if override is not None and str(override).strip() != "":
         return normalize_flux_fill_t5_variant(override)
 
-    if profile is None:
-        try:
-            from backend import memory_governor
+    hardware = inspect_flux_fill_hardware(profile)
+    budget_mb = _flux_fill_t5_budget_mb(hardware)
 
-            profile = memory_governor.environment_profile()
-        except Exception:
-            profile = None
-    if profile is None:
-        profile = getattr(config, "resolved_memory_environment_profile", None)
-
-    profile_name = str(getattr(profile, "name", "") or "").lower()
-    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or 0.0)
-    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or 0.0)
-
-    try:
-        from backend import environment_profile
-
-        if profile_name in {environment_profile.PROFILE_COLAB_FREE, environment_profile.PROFILE_COLAB_PRO}:
+    if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT:
+        if hardware.profile_name in {"colab_free", "colab_pro"}:
+            # Colab resident-class Flux stays provisional on fp16 until validation
+            # conclusively proves a different default is safer.
             return FLUX_FILL_T5_VARIANT_FP16
-        if profile_name == environment_profile.PROFILE_LOCAL_LOW_VRAM:
-            return FLUX_FILL_T5_VARIANT_Q4
-    except Exception:
-        if profile_name in {"colab_free", "colab_pro"}:
+        if budget_mb >= FLUX_FILL_T5_FP16_MIN_BUDGET_MB:
             return FLUX_FILL_T5_VARIANT_FP16
-        if profile_name == "local_low_vram":
-            return FLUX_FILL_T5_VARIANT_Q4
+        if budget_mb >= FLUX_FILL_T5_Q8_MIN_BUDGET_MB:
+            return FLUX_FILL_T5_VARIANT_Q8
+        return FLUX_FILL_T5_VARIANT_Q4
 
-    if total_ram_mb >= FLUX_FILL_LOCAL_FP16_MIN_RAM_MB:
-        return FLUX_FILL_T5_VARIANT_FP16
-    if total_ram_mb >= FLUX_FILL_LOCAL_Q8_MIN_RAM_MB and total_vram_mb >= FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB:
+    if budget_mb >= FLUX_FILL_T5_FP16_MIN_BUDGET_MB:
         return FLUX_FILL_T5_VARIANT_Q8
     return FLUX_FILL_T5_VARIANT_Q4
 
@@ -308,40 +371,6 @@ def _flux_fill_prompt_cache_path(prompt: str, clip_l_path: str, t5_path: str, ca
         return _primary_clip_root() / "flux" / "generated_conditioning" / filename
     return Path(config.path_temp_outputs) / "flux_conditioning" / filename
 
-
-def _first_existing_path(*candidates: Path | str | None) -> Path:
-    fallback = None
-    for candidate in candidates:
-        if candidate is None or str(candidate).strip() == "":
-            continue
-        path = Path(candidate)
-        if fallback is None:
-            fallback = path
-        if path.exists():
-            return path
-    if fallback is None:
-        raise ValueError("At least one candidate path is required.")
-    return fallback
-
-
-def _resolve_flux_fill_comfy_roots(default_comfy_root: Path, default_gguf_node_root: Path) -> tuple[Path, Path]:
-    comfy_root = _first_existing_path(
-        os.environ.get("FOOOCUS_NEX_COMFY_ROOT"),
-        default_comfy_root,
-        Path.cwd() / "ComfyUI_reference",
-        Path.cwd().parent / "ComfyUI_reference",
-        Path("/content/ComfyUI_reference"),
-        Path("/content/ComfyUI"),
-    )
-    gguf_node_root = _first_existing_path(
-        os.environ.get("FOOOCUS_NEX_GGUF_NODE_ROOT"),
-        comfy_root / "custom_nodes" / "ComfyUI-GGUF",
-        default_gguf_node_root,
-        Path("/content/ComfyUI_reference/custom_nodes/ComfyUI-GGUF"),
-        Path("/content/ComfyUI/custom_nodes/ComfyUI-GGUF"),
-    )
-    return comfy_root, gguf_node_root
-
 def generate_flux_fill_prompt_conditioning_cache(
     prompt: str,
     *,
@@ -361,24 +390,11 @@ def generate_flux_fill_prompt_conditioning_cache(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        from tools.generate_flux_empty_conditioning import (
-            DEFAULT_COMFY_ROOT,
-            DEFAULT_GGUF_NODE_ROOT,
-            generate_empty_conditioning,
-        )
-
-        comfy_root, gguf_node_root = _resolve_flux_fill_comfy_roots(DEFAULT_COMFY_ROOT, DEFAULT_GGUF_NODE_ROOT)
-        generate_empty_conditioning(
-            argparse.Namespace(
-                clip_l=str(clip_l_path),
-                t5=str(t5_path),
-                output=str(output_path),
-                prompt=prompt_text,
-                comfy_root=str(comfy_root),
-                gguf_node_root=str(gguf_node_root),
-                validate_existing=False,
-                traceback=False,
-            )
+        save_flux_prompt_conditioning_cache(
+            prompt_text,
+            clip_l_path=Path(clip_l_path),
+            t5_path=Path(t5_path),
+            output_path=output_path,
         )
         return str(output_path)
     finally:
@@ -402,19 +418,10 @@ def generate_flux_fill_prompt_conditioning(
     clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
     t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
     try:
-        from tools.generate_flux_empty_conditioning import (
-            DEFAULT_COMFY_ROOT,
-            DEFAULT_GGUF_NODE_ROOT,
-            encode_conditioning,
-        )
-
-        comfy_root, gguf_node_root = _resolve_flux_fill_comfy_roots(DEFAULT_COMFY_ROOT, DEFAULT_GGUF_NODE_ROOT)
-        return encode_conditioning(
+        return encode_flux_prompt_conditioning(
             prompt_text,
             clip_l_path=Path(clip_l_path),
             t5_path=Path(t5_path),
-            comfy_root=comfy_root,
-            gguf_node_root=gguf_node_root,
         )
     finally:
         gc.collect()
