@@ -67,6 +67,18 @@ def _has_inpaint_request(task_state) -> bool:
     ) and task_state.inpaint_input_image is not None
 
 
+def _is_flux_fill_inpaint_request(task_state) -> bool:
+    if task_state.current_tab != 'inpaint' or task_state.inpaint_input_image is None:
+        return False
+
+    try:
+        import modules.objr_engine as objr_engine
+
+        return objr_engine.normalize_flux_fill_inpaint_route(getattr(task_state, 'inpaint_route', None)) == objr_engine.FLUX_FILL_INPAINT_ROUTE_FLUX
+    except Exception:
+        return False
+
+
 def _is_upscale_request(task_state) -> bool:
     if not getattr(task_state, 'input_image_checkbox', False):
         return False
@@ -123,10 +135,22 @@ def _save_step1_result(context: PipelineRouteContext, payload, description: str)
         context.yield_result_callback(task_state, img_paths, 100, do_not_show_finished_images=True)
 
 
+def _resolve_inpaint_prompt(task_state) -> str:
+    prompt = str(getattr(task_state, 'prompt', '') or '').strip()
+    additional_prompt = str(getattr(task_state, 'inpaint_additional_prompt', '') or '').strip()
+    if additional_prompt == '':
+        return prompt
+    if prompt == '':
+        return additional_prompt
+    return additional_prompt + '\n' + prompt
+
+
 def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: bool = False):
     import modules.objr_engine as objr_engine
 
     selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, "objr_engine", None))
+    if route.family == "flux_fill":
+        selected_engine = objr_engine.OBJR_ENGINE_FLUX_FILL
     try:
         return objr_engine.reconcile_active_flux_fill_session(
             route_family=route.family,
@@ -523,6 +547,104 @@ class DiffusionTaskStage(PipelineStage):
         return PipelineStageResult(route_complete=True, notes={'completed': True, 'tasks_processed': len(context.prompt_tasks)})
 
 
+class FluxFillInpaintStage(PipelineStage):
+    stage_id = 'flux_inpaint'
+    phase_name = 'diffusion'
+
+    def describe_resources(self, context: PipelineRouteContext):
+        return _describe_route_resources(
+            PipelineResourceRequirement(
+                resource_id='flux_session',
+                description='Resident Flux UNet, AE, and prompt-conditioning cache used for Flux Inpaint.',
+                owner='modules.objr_engine',
+                tags=('flux', 'inpaint'),
+            ),
+            PipelineResourceRequirement(
+                resource_id='inpaint_context',
+                description='Prepared Inpaint tab context and blend mask carried into Flux Fill.',
+                resource_type='artifact',
+                owner='modules.pipeline.image_input',
+                tags=('inpaint', 'flux'),
+            ),
+        )
+
+    def estimate_memory(self, context: PipelineRouteContext):
+        megapixels = _estimated_megapixels(context.task_state)
+        return StageMemoryEstimate(vram_mb=round(max(512.0, megapixels * 640.0), 1), notes={'basis': 'flux-fill-resolution'})
+
+    def execute(self, context: PipelineRouteContext):
+        from backend import resources
+        from modules import objr_engine
+        from modules.pipeline.image_input import prepare_flux_inpaint_context
+        from modules.pipeline.inpaint import InpaintPipeline
+        from modules.pipeline.output import save_and_log
+
+        task_state = context.task_state
+        if len(task_state.goals) > 0:
+            task_state.current_progress += 1
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, task_state.current_progress, 'Preparing Flux Fill Inpaint ...')
+
+        ctx = task_state.inpaint_context
+        if ctx is None:
+            inpaint_image = context.image_input_result.get('inpaint_image')
+            inpaint_mask = context.image_input_result.get('inpaint_mask')
+            ctx = prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask)
+
+        active_session = objr_engine.ensure_active_flux_fill_session(
+            tier=objr_engine.select_flux_fill_tier(),
+            conditioning=getattr(task_state, 'flux_fill_conditioning', None),
+            progress=False,
+        )
+
+        prompt_text = _resolve_inpaint_prompt(task_state)
+        stitcher = InpaintPipeline()
+        output_images: list[np.ndarray] = []
+        total_count = max(1, int(getattr(task_state, 'image_number', 1) or 1))
+        base_seed = int(task_state.seed)
+        for image_index in range(total_count):
+            resources.throw_exception_if_processing_interrupted()
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, task_state.current_progress, f'Flux Fill Inpaint {image_index + 1}/{total_count} ...')
+
+            seed = base_seed if getattr(task_state, 'disable_seed_increment', False) else base_seed + image_index
+            result = active_session.generate_inpaint(
+                ctx.bb_image,
+                ctx.bb_mask,
+                prompt=prompt_text,
+                seed=seed,
+                mode='baseline',
+                disable_pbar=True,
+                progress=False,
+            )
+            output_images.append(stitcher.stitch(ctx, np.asarray(result.output_image)))
+
+        if context.progressbar_callback is not None:
+            context.progressbar_callback(task_state, 100, 'Saving Flux Fill Inpaint to system ...')
+
+        output_height, output_width = ctx.original_image.shape[:2]
+        task_state.width = output_width
+        task_state.height = output_height
+        task_dict = {
+            'log_positive_prompt': prompt_text,
+            'log_negative_prompt': task_state.negative_prompt,
+            'positive': [],
+            'negative': [],
+            'styles': task_state.style_selections,
+            'task_seed': task_state.seed,
+            'description': 'Flux Fill Inpaint',
+        }
+        img_paths = save_and_log(task_state, output_height, output_width, output_images, task_dict, False, task_state.loras)
+        if context.yield_result_callback is not None:
+            context.yield_result_callback(
+                task_state,
+                img_paths,
+                100,
+                do_not_show_finished_images=task_state.disable_intermediate_results,
+            )
+        return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': len(output_images)})
+
+
 class UpscaleStage(PipelineStage):
     stage_id = 'upscale'
     phase_name = 'upscale'
@@ -700,6 +822,15 @@ def build_generation_route(task_state) -> PipelineRoute:
             route_id='outpaint',
             family='image_input',
             display_name='Outpaint',
+            stages=stages,
+        )
+
+    if _is_flux_fill_inpaint_request(task_state):
+        stages = [ImageInputPreparationStage(), FluxFillInpaintStage()]
+        return PipelineRoute(
+            route_id='flux_inpaint',
+            family='flux_fill',
+            display_name='Flux Inpaint',
             stages=stages,
         )
 

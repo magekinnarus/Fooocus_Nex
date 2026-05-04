@@ -97,6 +97,8 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
         d.append(('Scheduler', 'scheduler', task_state.scheduler_name))
         d.append(('VAE', 'vae', task_state.vae_name))
         d.append(('Seed', 'seed', str(task_dict['task_seed'])))
+        if getattr(task_state, 'current_tab', None) == 'inpaint' or 'inpaint' in getattr(task_state, 'goals', []):
+            d.append(('Inpaint Route', 'inpaint_route', getattr(task_state, 'inpaint_route', 'sdxl')))
 
         for li, (n, w) in enumerate(loras):
             if n != 'None':

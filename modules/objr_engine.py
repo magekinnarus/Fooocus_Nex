@@ -50,6 +50,8 @@ FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 16 * 1024
 FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 12 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
+FLUX_FILL_INPAINT_ROUTE_SDXL = "sdxl"
+FLUX_FILL_INPAINT_ROUTE_FLUX = "flux"
 FLUX_FILL_CONDITIONING_BY_KIND = {
     FLUX_FILL_CONDITIONING_EMPTY: FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID,
 }
@@ -243,6 +245,42 @@ def normalize_flux_fill_blend_mode(blend_mode: str | None) -> str:
     if value in {"morphological", "morph", "fooocus"}:
         return FLUX_FILL_BLEND_MORPHOLOGICAL
     return FLUX_FILL_BLEND_ALPHA
+
+
+def normalize_flux_fill_inpaint_route(route: str | None) -> str:
+    if route is None or str(route).strip() == "":
+        return FLUX_FILL_INPAINT_ROUTE_SDXL
+
+    value = str(route).strip().lower().replace("-", "_").replace(" ", "_")
+    if value in {
+        FLUX_FILL_INPAINT_ROUTE_SDXL,
+        "sdxl_inpaint",
+        "sdxl_inpaint_route",
+        "sdxl_inpaint_model",
+        "sdxl_inpaint_pipeline",
+    }:
+        return FLUX_FILL_INPAINT_ROUTE_SDXL
+    if value in {
+        FLUX_FILL_INPAINT_ROUTE_FLUX,
+        "flux_fill",
+        "flux_fill_inpaint",
+        "flux_fill_route",
+        "flux_inpaint",
+    }:
+        return FLUX_FILL_INPAINT_ROUTE_FLUX
+    raise ValueError(
+        "Unsupported Flux Fill inpaint route: "
+        f"{route!r}. Expected sdxl or flux."
+    )
+
+
+def is_flux_fill_inpaint_route(route: str | None) -> bool:
+    return normalize_flux_fill_inpaint_route(route) == FLUX_FILL_INPAINT_ROUTE_FLUX
+
+
+def is_flux_fill_route_family(route_family: str | None) -> bool:
+    value = str(route_family or "").strip().lower()
+    return value in {"removal", "flux_fill"}
 
 
 def _safe_prompt_slug(prompt: str) -> str:
@@ -509,7 +547,7 @@ def reconcile_active_flux_fill_session(
 
     active_signature = get_active_flux_fill_session_signature()
 
-    if route_family != "removal" or selected_engine != OBJR_ENGINE_FLUX_FILL:
+    if not is_flux_fill_route_family(route_family) or selected_engine != OBJR_ENGINE_FLUX_FILL:
         if get_active_flux_fill_session() is None:
             return FluxFillRouteReconciliation(
                 decision="ignored",
@@ -925,6 +963,41 @@ def remove_object_flux_fill(
     )
     result = run_flux_fill_pipeline(flux_config, HWC3(image), flux_mask, disable_pbar=True)
     return HWC3(np.asarray(result.output_image))
+
+
+@torch.inference_mode()
+def run_flux_fill_inpaint(
+    image: np.ndarray,
+    mask: np.ndarray,
+    seed: int = 0,
+    mask_dilate: int = FLUX_FILL_MASK_GROW,
+    *,
+    mask_blur: int = FLUX_FILL_MASK_BLUR,
+    tier: str | None = None,
+    conditioning: str | None = None,
+    prompt: str | None = None,
+    prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
+    guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
+    progress: bool = True,
+    mode: str | None = None,
+) -> np.ndarray:
+    """Run Flux Fill from the Inpaint tab using the same Flux session contract."""
+    return remove_object_flux_fill(
+        image,
+        mask,
+        seed=seed,
+        mask_dilate=mask_dilate,
+        mask_blur=mask_blur,
+        tier=tier,
+        conditioning=conditioning,
+        prompt=prompt,
+        prompt_cache=prompt_cache,
+        blend_mode=blend_mode,
+        guidance=guidance,
+        progress=progress,
+        mode=mode,
+    )
 
 
 def remove_object_with_engine(

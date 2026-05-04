@@ -101,6 +101,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('inpaint_additional_prompt', 'inpaint_additional_prompt', '', str),
     ParamDef('inpaint_mask_image', 'inpaint_mask_image', None),
     ParamDef('inpaint_bb_image', 'inpaint_bb_image', None),
+    ParamDef('inpaint_route', 'inpaint_route', 'sdxl', str),
     ParamDef('inpaint_step2_checkbox', 'inpaint_step2_checkbox', False, bool),
     ParamDef('inpaint_engine', 'inpaint_engine', 'None', str),
     ParamDef('inpaint_strength', 'inpaint_strength', 0.5, float),

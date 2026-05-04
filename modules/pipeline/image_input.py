@@ -20,6 +20,86 @@ class EarlyReturnException(BaseException):
         self.payload = payload
 
 
+def prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask):
+    """
+    Build the prepared inpaint context without running SDXL VAE encode.
+
+    Flux Fill uses the same prepared image/mask inputs but consumes them
+    through the Flux session instead of the SDXL inpaint diffusion path.
+    """
+    denoising_strength = getattr(task_state, 'inpaint_strength', 1.0)
+
+    raw_input_image = getattr(task_state, 'inpaint_input_image', None)
+    raw_context_mask = getattr(task_state, 'inpaint_context_mask_image', None)
+    raw_bb_image = getattr(task_state, 'inpaint_bb_image', None)
+    raw_bb_mask = getattr(task_state, 'inpaint_mask_image', None)
+
+    input_image = mask_proc.unpack_gradio_data(raw_input_image) if raw_input_image is not None else inpaint_image
+    prepared_context_mask = getattr(task_state, 'context_mask', None)
+    if raw_context_mask is not None:
+        context_mask = mask_proc.unpack_gradio_data(raw_context_mask)
+    elif prepared_context_mask is not None:
+        context_mask = prepared_context_mask
+    else:
+        context_mask = inpaint_mask
+    if context_mask is not None:
+        context_mask = mask_proc.to_binary_mask(mask_proc.ensure_numpy(context_mask))
+
+    bb_img_data = mask_proc.unpack_gradio_data(raw_bb_image)
+    if bb_img_data is not None:
+        bb_img_data = HWC3(bb_img_data)
+    bb_mask_2d = mask_proc.combine_masks(
+        mask_proc.unpack_gradio_data(raw_bb_mask),
+        mask_proc.extract_mask_from_layers(raw_bb_image) if isinstance(raw_bb_image, dict) else None,
+    )
+
+    from modules.pipeline.inpaint import InpaintPipeline
+
+    inpaint = InpaintPipeline()
+    if input_image is not None and context_mask is not None:
+        ctx = inpaint.prepare(image=input_image, mask=context_mask, extend_factor=1.2)
+    else:
+        ctx = inpaint.prepare(image=inpaint_image, mask=inpaint_mask, extend_factor=1.2)
+
+    if bb_img_data is not None:
+        # Flux Inpaint reuses the SDXL bucket selected by prepare() so BB edits
+        # still resolve to the same native inference canvas.
+        ctx.bb_image = bb_img_data
+
+    if bb_mask_2d is not None:
+        ctx.bb_mask = bb_mask_2d
+
+    if ctx.bb_image is None:
+        raise ValueError('Inpaint BB image is required before inference')
+    if ctx.bb_mask is None:
+        raise ValueError('Inpaint BB mask is required before inference')
+
+    ctx.bb_image = HWC3(mask_proc.ensure_numpy(ctx.bb_image))
+    ctx.bb_mask = mask_proc.to_binary_mask(mask_proc.ensure_numpy(ctx.bb_mask))
+    ctx.bb_image = resample_image(ctx.bb_image, width=ctx.target_w, height=ctx.target_h)
+    ctx.bb_mask = resample_image(ctx.bb_mask, width=ctx.target_w, height=ctx.target_h)
+
+    y1, y2, x1, x2 = ctx.bb
+    full_mask = np.zeros_like(ctx.original_image[:, :, 0])
+    H, W = full_mask.shape
+    patch_mask_resized = resample_image(ctx.bb_mask, width=x2 - x1, height=y2 - y1)
+
+    iy1, iy2 = max(0, y1), min(H, y2)
+    ix1, ix2 = max(0, x1), min(W, x2)
+    cy1, cy2 = iy1 - y1, iy2 - y1
+    cx1, cx2 = ix1 - x1, ix2 - x1
+
+    full_mask[iy1:iy2, ix1:ix2] = patch_mask_resized[cy1:cy2, cx1:cx2]
+    ctx.blend_mask = inpaint._morphological_open(full_mask)
+
+    task_state.inpaint_context = ctx
+    task_state.width = ctx.target_w
+    task_state.height = ctx.target_h
+    task_state.initial_latent = None
+    task_state.denoising_strength = denoising_strength
+    return ctx
+
+
 
 
 def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask, 
@@ -338,6 +418,12 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         'eva_clip_path': None,
     }
     skip_prompt_processing = False
+    try:
+        from modules.objr_engine import is_flux_fill_inpaint_route
+
+        use_flux_fill_inpaint = task_state.current_tab == 'inpaint' and is_flux_fill_inpaint_route(getattr(task_state, 'inpaint_route', None))
+    except Exception:
+        use_flux_fill_inpaint = False
 
     # UoV handling
     if task_state.current_tab == 'uov' \
@@ -411,6 +497,9 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 
         inpaint_image = HWC3(inpaint_image)
         task_state.goals.append('inpaint')
+
+    if use_flux_fill_inpaint:
+        skip_prompt_processing = True
 
     if ('inpaint' in task_state.goals or 'outpaint' in task_state.goals) and not skip_prompt_processing:
         working_image = outpaint_image if 'outpaint' in task_state.goals else inpaint_image

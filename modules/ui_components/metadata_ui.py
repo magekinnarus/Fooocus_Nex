@@ -119,6 +119,20 @@ def get_outpaint_engine_version(key: str, fallback: str | None, source_dict: dic
         results.append('empty')
         return None
 
+def get_inpaint_route(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
+    try:
+        h = source_dict.get(key, source_dict.get(fallback, default))
+        if h == 'empty':
+            h = modules.config.default_inpaint_route
+        from modules.objr_engine import normalize_flux_fill_inpaint_route
+
+        normalized = normalize_flux_fill_inpaint_route(h)
+        results.append(normalized)
+        return normalized
+    except:
+        results.append('sdxl')
+        return None
+
 def get_inpaint_method(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
@@ -195,6 +209,7 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     get_seed('seed', 'Seed', loaded_parameter_dict, results)
     get_outpaint_engine_version('outpaint_engine_version', 'Outpaint Engine Version', loaded_parameter_dict, results)
     get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results)
+    get_inpaint_route('inpaint_route', 'Inpaint Route', loaded_parameter_dict, results)
 
     if is_generating:
         results.append(gr.update())

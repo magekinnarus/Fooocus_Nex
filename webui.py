@@ -416,6 +416,7 @@ with shared.gradio_root:
                                 debugging_inpaint_preprocessor = inpaint_panel_result['debugging_inpaint_preprocessor']
                                 inpaint_disable_initial_latent = inpaint_panel_result['inpaint_disable_initial_latent']
                                 inpaint_engine = inpaint_panel_result['inpaint_engine']
+                                inpaint_route = inpaint_panel_result['inpaint_route']
                                 inpaint_strength = inpaint_panel_result['inpaint_strength']
                                 inpaint_erode_or_dilate = inpaint_panel_result['inpaint_erode_or_dilate']
 
@@ -519,7 +520,7 @@ with shared.gradio_root:
                 outpaint_ctrls = [outpaint_engine, outpaint_strength,
                                   inpaint_outpaint_expansion_size, outpaint_step2_checkbox]
                 inpaint_ctrls = [debugging_inpaint_preprocessor, inpaint_disable_initial_latent, inpaint_engine,
-                                 inpaint_strength, inpaint_erode_or_dilate, inpaint_step2_checkbox]
+                                 inpaint_route, inpaint_strength, inpaint_erode_or_dilate, inpaint_step2_checkbox]
 
 
 
@@ -532,7 +533,7 @@ with shared.gradio_root:
                              overwrite_width, overwrite_height, guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
                              base_model, vae_model, clip_model, sampler_name, scheduler_name, 
-                             seed_random, image_seed, outpaint_engine_state, inpaint_engine_state,
+                             seed_random, image_seed, outpaint_engine_state, inpaint_engine_state, inpaint_route,
                              generate_button,
                              load_parameter_button] + lora_ctrls
 
@@ -599,6 +600,7 @@ with shared.gradio_root:
             'debugging_inpaint_preprocessor': debugging_inpaint_preprocessor,
             'inpaint_disable_initial_latent': inpaint_disable_initial_latent,
             'inpaint_engine': inpaint_engine,
+            'inpaint_route': inpaint_route,
             'inpaint_strength': inpaint_strength,
             'inpaint_erode_or_dilate': inpaint_erode_or_dilate,
             'inpaint_step2_checkbox': inpaint_step2_checkbox,

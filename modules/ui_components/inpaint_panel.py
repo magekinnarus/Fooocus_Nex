@@ -19,6 +19,12 @@ def build_inpaint_tab():
         choices=flags.inpaint_engine_versions,
         info='Version of Fooocus inpaint model. If set, use performance Quality or Speed (no performance LoRAs) for best results.'
     )
+    results['inpaint_route'] = gr.Dropdown(
+        label='Inpaint Route',
+        value=modules.config.default_inpaint_route,
+        choices=[('SDXL Inpaint', 'sdxl'), ('Flux Fill', 'flux')],
+        info='Choose the SDXL inpaint pipeline or the Flux Fill route.'
+    )
     results['inpaint_strength'] = gr.Slider(
         label='Inpaint Denoising Strength',
         minimum=0.0, maximum=1.0, step=0.001, value=0.5,

@@ -852,6 +852,12 @@ default_inpaint_engine_version = get_config_item_or_set_default(
     validator=lambda x: x in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
+default_inpaint_route = get_config_item_or_set_default(
+    key='default_inpaint_route',
+    default_value=runtime_defaults.get('default_inpaint_route', 'sdxl'),
+    validator=lambda x: x in {'sdxl', 'flux'},
+    expected_type=str
+)
 default_outpaint_engine_version = get_config_item_or_set_default(
     key='default_outpaint_engine_version',
     default_value=runtime_defaults.get('default_outpaint_engine_version', 'v2.6'),
@@ -1024,6 +1030,7 @@ possible_preset_keys = {
     "default_clip": "clip_model",
     # "default_inpaint_method": "inpaint_method", # disabled so inpaint mode doesn't refresh after every preset change
     "default_inpaint_engine_version": "inpaint_engine_version",
+    "default_inpaint_route": "inpaint_route",
     "default_outpaint_engine_version": "outpaint_engine_version",
 }
 

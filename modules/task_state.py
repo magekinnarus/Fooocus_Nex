@@ -42,6 +42,7 @@ class TaskState:
     inpaint_additional_prompt: str = ""
     inpaint_mask_image: Optional[np.ndarray] = None
     inpaint_bb_image: Optional[np.ndarray] = None
+    inpaint_route: str = "sdxl"
     remove_base_image: Optional[np.ndarray] = None
     remove_prompt: str = ""
     remove_mask_data: str = ""
