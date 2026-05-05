@@ -161,7 +161,7 @@ def _should_force_flux_host_cleanup() -> bool:
 
 
 def _build_flux_preview_transform(active_session):
-    previewer_holder = {"previewer": None, "resolved": False}
+    previewer_holder = {"previewer": None, "latent_format": None, "resolved": False}
 
     def decode_preview(preview_payload):
         try:
@@ -177,6 +177,7 @@ def _build_flux_preview_transform(active_session):
             return preview_payload if isinstance(preview_payload, np.ndarray) else None
 
         previewer = previewer_holder["previewer"]
+        latent_format = previewer_holder["latent_format"]
         if not previewer_holder["resolved"]:
             previewer_holder["resolved"] = True
             unet_patcher = getattr(active_session, "unet_patcher", None)
@@ -191,6 +192,7 @@ def _build_flux_preview_transform(active_session):
             if load_device is None and vae is not None:
                 load_device = getattr(getattr(vae, "patcher", None), "load_device", None)
 
+            previewer_holder["latent_format"] = latent_format
             if latent_format is not None:
                 taesd_decoder_path = None
                 taesd_decoder_name = getattr(latent_format, "taesd_decoder_name", None)
@@ -215,12 +217,16 @@ def _build_flux_preview_transform(active_session):
                     except Exception:
                         previewer = None
             previewer_holder["previewer"] = previewer
+            latent_format = previewer_holder["latent_format"]
 
         if previewer is None:
             return None
 
         try:
-            preview_image = previewer.decode_latent_to_preview(preview_payload.detach())
+            preview_latent = preview_payload.detach()
+            if latent_format is not None and hasattr(latent_format, "process_out"):
+                preview_latent = latent_format.process_out(preview_latent)
+            preview_image = previewer.decode_latent_to_preview(preview_latent)
         except Exception:
             return None
 

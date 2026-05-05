@@ -362,6 +362,16 @@ def _flux_fill_prompt_cache_path(prompt: str, clip_l_path: str, t5_path: str, ca
         return _primary_clip_root() / "flux" / "generated_conditioning" / filename
     return Path(config.path_temp_outputs) / "flux_conditioning" / filename
 
+
+def _cleanup_flux_prompt_conditioning_host_memory(reason: str) -> None:
+    resources.cleanup_memory(
+        reason,
+        gc_collect=True,
+        trim_host=True,
+        target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+        notes={"route_family": "flux_fill", "component": "text_conditioning"},
+    )
+
 def generate_flux_fill_prompt_conditioning_cache(
     prompt: str,
     *,
@@ -382,6 +392,8 @@ def generate_flux_fill_prompt_conditioning_cache(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     keep_resident = should_keep_flux_fill_text_encoder_resident()
     try:
+        if not keep_resident:
+            _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_cache_preflight")
         save_flux_prompt_conditioning_cache(
             prompt_text,
             clip_l_path=Path(clip_l_path),
@@ -392,11 +404,7 @@ def generate_flux_fill_prompt_conditioning_cache(
         return str(output_path)
     finally:
         if not keep_resident:
-            gc.collect()
-            try:
-                resources.soft_empty_cache()
-            except Exception:
-                pass
+            _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_cache_postflight")
 
 
 def generate_flux_fill_prompt_conditioning(
@@ -413,6 +421,8 @@ def generate_flux_fill_prompt_conditioning(
     t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
     keep_resident = should_keep_flux_fill_text_encoder_resident()
     try:
+        if not keep_resident:
+            _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_preflight")
         return encode_flux_prompt_conditioning(
             prompt_text,
             clip_l_path=Path(clip_l_path),
@@ -421,11 +431,7 @@ def generate_flux_fill_prompt_conditioning(
         )
     finally:
         if not keep_resident:
-            gc.collect()
-            try:
-                resources.soft_empty_cache()
-            except Exception:
-                pass
+            _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_postflight")
 
 def get_flux_fill_conditioning_cache_path(conditioning: str | None = None, *, progress: bool = True) -> str:
     selected_conditioning = normalize_flux_fill_conditioning(conditioning)
