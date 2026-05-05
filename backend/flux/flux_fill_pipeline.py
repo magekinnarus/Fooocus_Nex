@@ -139,10 +139,10 @@ class FluxFillConfig:
             raise FluxFillValidationError(f"steps must be >= 1, got {self.steps}.")
         if self.cfg != 1.0:
             raise NotImplementedError("Prompt-conditioned/CFG Flux Fill is out of scope for P4-M10-W01.")
-        if self.sampler != "euler":
-            raise NotImplementedError(f"Unsupported Flux Fill sampler: {self.sampler!r}. Expected 'euler'.")
-        if self.scheduler != "normal":
-            raise NotImplementedError(f"Unsupported Flux Fill scheduler: {self.scheduler!r}. Expected 'normal'.")
+        if not str(self.sampler or "").strip():
+            raise FluxFillValidationError("sampler must be a non-empty string.")
+        if not str(self.scheduler or "").strip():
+            raise FluxFillValidationError("scheduler must be a non-empty string.")
         if self.denoise != 1.0:
             raise NotImplementedError("Flux Fill W01 only supports denoise=1.0.")
         if self.guidance <= 0:

@@ -911,6 +911,11 @@ def remove_object_flux_fill(
     prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
+    steps: int = 30,
+    sampler: str = "euler",
+    scheduler: str = "normal",
+    callback: Any | None = None,
+    disable_pbar: bool = True,
     progress: bool = True,
     mode: str | None = None,
 ) -> np.ndarray:
@@ -934,9 +939,14 @@ def remove_object_flux_fill(
             flux_mask,
             prompt=prompt,
             seed=int(seed),
+            steps=int(steps),
+            sampler=sampler,
+            scheduler=scheduler,
+            guidance=float(guidance),
             mode=selected_mode,
             blend_mode=selected_blend_mode,
-            disable_pbar=True,
+            callback=callback,
+            disable_pbar=disable_pbar,
             progress=progress,
         )
         return HWC3(np.asarray(result.output_image))
@@ -964,11 +974,20 @@ def remove_object_flux_fill(
         conditioning_cache_path=asset_paths["conditioning_cache_path"],
         tier=asset_paths["tier"],
         seed=int(seed),
+        steps=int(steps),
+        sampler=str(sampler),
+        scheduler=str(scheduler),
         guidance=float(guidance),
         mode=selected_mode,
         blend_mode=selected_blend_mode,
     )
-    result = run_flux_fill_pipeline(flux_config, HWC3(image), flux_mask, disable_pbar=True)
+    result = run_flux_fill_pipeline(
+        flux_config,
+        HWC3(image),
+        flux_mask,
+        callback=callback,
+        disable_pbar=disable_pbar,
+    )
     return HWC3(np.asarray(result.output_image))
 
 
@@ -986,6 +1005,11 @@ def run_flux_fill_inpaint(
     prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
     guidance: float = FLUX_FILL_GUIDANCE_DEFAULT,
+    steps: int = 30,
+    sampler: str = "euler",
+    scheduler: str = "normal",
+    callback: Any | None = None,
+    disable_pbar: bool = True,
     progress: bool = True,
     mode: str | None = None,
 ) -> np.ndarray:
@@ -1002,6 +1026,11 @@ def run_flux_fill_inpaint(
         prompt_cache=prompt_cache,
         blend_mode=blend_mode,
         guidance=guidance,
+        steps=steps,
+        sampler=sampler,
+        scheduler=scheduler,
+        callback=callback,
+        disable_pbar=disable_pbar,
         progress=progress,
         mode=mode,
     )
@@ -1020,6 +1049,11 @@ def remove_object_with_engine(
     flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
     flux_blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
+    flux_steps: int = 30,
+    flux_sampler: str = "euler",
+    flux_scheduler: str = "normal",
+    flux_callback: Any | None = None,
+    flux_disable_pbar: bool = True,
 ) -> np.ndarray:
     selected_engine = normalize_objr_engine(engine)
     if selected_engine == OBJR_ENGINE_FLUX_FILL:
@@ -1034,6 +1068,11 @@ def remove_object_with_engine(
             prompt=flux_prompt,
             prompt_cache=flux_prompt_cache,
             blend_mode=flux_blend_mode,
+            steps=flux_steps,
+            sampler=flux_sampler,
+            scheduler=flux_scheduler,
+            callback=flux_callback,
+            disable_pbar=flux_disable_pbar,
         )
     return remove_object(image, mask, seed=seed, mask_dilate=mask_dilate)
 
@@ -1050,6 +1089,11 @@ def remove_object_from_file(
     flux_prompt_cache: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     flux_mask_blur: int = FLUX_FILL_MASK_BLUR,
     flux_blend_mode: str | None = FLUX_FILL_BLEND_MORPHOLOGICAL,
+    flux_steps: int = 30,
+    flux_sampler: str = "euler",
+    flux_scheduler: str = "normal",
+    flux_callback: Any | None = None,
+    flux_disable_pbar: bool = True,
 ) -> str:
     """Filepath invariant wrapper with explicit MAT/Flux dispatch."""
     with Image.open(image_path) as img:
@@ -1069,6 +1113,11 @@ def remove_object_from_file(
         flux_prompt_cache=flux_prompt_cache,
         flux_mask_blur=flux_mask_blur,
         flux_blend_mode=flux_blend_mode,
+        flux_steps=flux_steps,
+        flux_sampler=flux_sampler,
+        flux_scheduler=flux_scheduler,
+        flux_callback=flux_callback,
+        flux_disable_pbar=flux_disable_pbar,
     )
 
     return mask_processing.save_to_temp_png(res_np)

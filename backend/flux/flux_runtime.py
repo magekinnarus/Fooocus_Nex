@@ -468,10 +468,10 @@ class FluxFillPipelineConfig:
             raise FluxFillValidationError(f"steps must be >= 1, got {self.steps}.")
         if self.cfg != 1.0:
             raise NotImplementedError("Prompt-conditioned/CFG Flux Fill is out of scope for W04.")
-        if self.sampler != "euler":
-            raise NotImplementedError(f"Unsupported Flux Fill sampler: {self.sampler!r}.")
-        if self.scheduler != "normal":
-            raise NotImplementedError(f"Unsupported Flux Fill scheduler: {self.scheduler!r}.")
+        if not str(self.sampler or "").strip():
+            raise FluxFillValidationError("sampler must be a non-empty string.")
+        if not str(self.scheduler or "").strip():
+            raise FluxFillValidationError("scheduler must be a non-empty string.")
         if self.denoise != 1.0:
             raise NotImplementedError("Flux pipeline baseline only supports denoise=1.0.")
         if self.guidance <= 0:
@@ -874,6 +874,7 @@ class FluxFillPipeline:
         *,
         empty_conditioning: FluxEmptyConditioning,
         unet_patcher: Any | None = None,
+        callback: Any | None = None,
         disable_pbar: bool = True,
         cleanup_unet: bool | None = None,
     ) -> tuple[FluxFillDenoiseResult, dict[str, Any], torch.Tensor]:
@@ -884,6 +885,7 @@ class FluxFillPipeline:
             unet_patcher=unet_patcher,
             load_device=self.device,
             offload_device=None,
+            callback=callback,
             disable_pbar=disable_pbar,
             cleanup_unet=cleanup_unet,
         )
@@ -966,6 +968,7 @@ class FluxFillPipeline:
         image: np.ndarray,
         mask: np.ndarray,
         *,
+        callback: Any | None = None,
         disable_pbar: bool = True,
         unet_patcher: Any | None = None,
         vae: Any | None = None,
@@ -1149,6 +1152,7 @@ class FluxFillPipeline:
             latent_source,
             empty_conditioning=empty_conditioning,
             unet_patcher=unet_patcher,
+            callback=callback,
             disable_pbar=disable_pbar,
             cleanup_unet=owns_unet,
         )
@@ -1280,6 +1284,7 @@ def run_flux_fill_pipeline(
     image: np.ndarray,
     mask: np.ndarray,
     *,
+    callback: Any | None = None,
     disable_pbar: bool = True,
     unet_patcher: Any | None = None,
     vae: Any | None = None,
@@ -1288,6 +1293,7 @@ def run_flux_fill_pipeline(
     return FluxFillPipeline(config).run(
         image,
         mask,
+        callback=callback,
         disable_pbar=disable_pbar,
         unet_patcher=unet_patcher,
         vae=vae,

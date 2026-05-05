@@ -576,6 +576,7 @@ class FluxFillInpaintStage(PipelineStage):
         from backend import resources
         from modules import objr_engine
         from modules.pipeline.image_input import prepare_flux_inpaint_context
+        from modules.pipeline.inference import get_sampling_callback
         from modules.pipeline.inpaint import InpaintPipeline
         from modules.pipeline.output import save_and_log
 
@@ -600,48 +601,66 @@ class FluxFillInpaintStage(PipelineStage):
         prompt_text = _resolve_inpaint_prompt(task_state)
         stitcher = InpaintPipeline()
         output_images: list[np.ndarray] = []
+        img_paths: list[str] = []
         total_count = max(1, int(getattr(task_state, 'image_number', 1) or 1))
         base_seed = int(task_state.seed)
+        output_height, output_width = ctx.original_image.shape[:2]
+        task_state.width = output_width
+        task_state.height = output_height
+        all_steps = max(int(task_state.steps) * total_count, 1)
+        preparation_steps = task_state.current_progress
         for image_index in range(total_count):
             resources.throw_exception_if_processing_interrupted()
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, task_state.current_progress, f'Flux Fill Inpaint {image_index + 1}/{total_count} ...')
 
             seed = base_seed if getattr(task_state, 'disable_seed_increment', False) else base_seed + image_index
+            callback = get_sampling_callback(
+                task_state,
+                context.progressbar_callback,
+                image_index,
+                total_count,
+                preparation_steps,
+                all_steps,
+            )
             result = active_session.generate_inpaint(
                 ctx.bb_image,
                 ctx.bb_mask,
                 prompt=prompt_text,
                 seed=seed,
+                steps=int(task_state.steps),
+                sampler=task_state.sampler_name,
+                scheduler=task_state.scheduler_name,
+                guidance=objr_engine.FLUX_FILL_GUIDANCE_DEFAULT,
                 mode='baseline',
+                callback=callback,
                 disable_pbar=True,
                 progress=False,
             )
-            output_images.append(stitcher.stitch(ctx, np.asarray(result.output_image)))
+            stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
+            output_images.append(stitched_image)
 
-        if context.progressbar_callback is not None:
-            context.progressbar_callback(task_state, 100, 'Saving Flux Fill Inpaint to system ...')
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, 100, f'Saving Flux Fill Inpaint {image_index + 1}/{total_count} to system ...')
 
-        output_height, output_width = ctx.original_image.shape[:2]
-        task_state.width = output_width
-        task_state.height = output_height
-        task_dict = {
-            'log_positive_prompt': prompt_text,
-            'log_negative_prompt': task_state.negative_prompt,
-            'positive': [],
-            'negative': [],
-            'styles': task_state.style_selections,
-            'task_seed': task_state.seed,
-            'description': 'Flux Fill Inpaint',
-        }
-        img_paths = save_and_log(task_state, output_height, output_width, output_images, task_dict, False, task_state.loras)
-        if context.yield_result_callback is not None:
-            context.yield_result_callback(
-                task_state,
-                img_paths,
-                100,
-                do_not_show_finished_images=task_state.disable_intermediate_results,
-            )
+            task_dict = {
+                'log_positive_prompt': prompt_text,
+                'log_negative_prompt': task_state.negative_prompt,
+                'positive': [],
+                'negative': [],
+                'styles': task_state.style_selections,
+                'task_seed': seed,
+                'description': 'Flux Fill Inpaint',
+            }
+            current_img_paths = save_and_log(task_state, output_height, output_width, [stitched_image], task_dict, False, task_state.loras)
+            img_paths.extend(current_img_paths)
+            if context.yield_result_callback is not None:
+                context.yield_result_callback(
+                    task_state,
+                    current_img_paths,
+                    100,
+                    do_not_show_finished_images=task_state.disable_intermediate_results,
+                )
         return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': len(output_images)})
 
 
@@ -739,6 +758,7 @@ class RemovalStage(PipelineStage):
         import modules.bgr_engine as bgr_engine
         import modules.objr_engine as objr_engine
         from backend import resources
+        from modules.pipeline.inference import get_sampling_callback
 
         task_state = context.task_state
         selected_engine = objr_engine.normalize_objr_engine(task_state.objr_engine)
@@ -772,6 +792,17 @@ class RemovalStage(PipelineStage):
             if flags.remove_obj in task_state.goals:
                 if context.progressbar_callback is not None:
                     context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
+                removal_prep_steps = 60 if flags.remove_bg in task_state.goals else 10
+                flux_callback = None
+                if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL:
+                    flux_callback = get_sampling_callback(
+                        task_state,
+                        context.progressbar_callback,
+                        0,
+                        1,
+                        removal_prep_steps,
+                        max(int(task_state.steps), 1),
+                    )
                 res_path = objr_engine.remove_object_from_file(
                     image_path=task_state.remove_base_image,
                     mask_path=task_state.remove_mask_image,
@@ -783,6 +814,11 @@ class RemovalStage(PipelineStage):
                     flux_prompt_cache=task_state.flux_fill_prompt_cache,
                     flux_mask_blur=task_state.objr_mask_blur,
                     flux_blend_mode=task_state.objr_blend_mode,
+                    flux_steps=int(task_state.steps),
+                    flux_sampler=task_state.sampler_name,
+                    flux_scheduler=task_state.scheduler_name,
+                    flux_callback=flux_callback,
+                    flux_disable_pbar=True,
                 )
                 objr_engine.unload_model()
                 if context.yield_result_callback is not None:
