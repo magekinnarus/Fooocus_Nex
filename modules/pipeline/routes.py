@@ -145,6 +145,55 @@ def _resolve_inpaint_prompt(task_state) -> str:
     return additional_prompt + '\n' + prompt
 
 
+def _build_flux_preview_transform(active_session):
+    previewer_holder = {"previewer": None, "resolved": False}
+
+    def decode_preview(preview_payload):
+        try:
+            import torch
+            from PIL import Image
+            from ldm_patched.utils.latent_visualization import get_previewer as get_latent_previewer
+        except Exception:
+            return None
+
+        if not isinstance(preview_payload, torch.Tensor):
+            return preview_payload if isinstance(preview_payload, np.ndarray) else None
+
+        previewer = previewer_holder["previewer"]
+        if not previewer_holder["resolved"]:
+            previewer_holder["resolved"] = True
+            unet_patcher = getattr(active_session, "unet_patcher", None)
+            load_device = getattr(unet_patcher, "load_device", None)
+            patcher_model = getattr(unet_patcher, "model", None)
+            latent_format = getattr(patcher_model, "latent_format", None)
+            if latent_format is None:
+                latent_format = getattr(getattr(patcher_model, "model", None), "latent_format", None)
+            if load_device is not None and latent_format is not None:
+                try:
+                    previewer = get_latent_previewer(load_device, latent_format)
+                except Exception:
+                    previewer = None
+            previewer_holder["previewer"] = previewer
+
+        if previewer is None:
+            return None
+
+        try:
+            preview_image = previewer.decode_latent_to_preview(preview_payload.detach())
+        except Exception:
+            return None
+
+        if isinstance(preview_image, Image.Image):
+            return np.asarray(preview_image.convert("RGB"))
+        try:
+            preview_array = np.asarray(preview_image)
+        except Exception:
+            return None
+        return preview_array if preview_array.ndim == 3 else None
+
+    return decode_preview
+
+
 def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: bool = False):
     import modules.objr_engine as objr_engine
 
@@ -622,6 +671,7 @@ class FluxFillInpaintStage(PipelineStage):
                 total_count,
                 preparation_steps,
                 all_steps,
+                preview_transform=_build_flux_preview_transform(active_session),
             )
             result = active_session.generate_inpaint(
                 ctx.bb_image,
@@ -802,6 +852,7 @@ class RemovalStage(PipelineStage):
                         1,
                         removal_prep_steps,
                         max(int(task_state.steps), 1),
+                        preview_transform=_build_flux_preview_transform(objr_engine.get_active_flux_fill_session()),
                     )
                 res_path = objr_engine.remove_object_from_file(
                     image_path=task_state.remove_base_image,

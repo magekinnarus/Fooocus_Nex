@@ -1,5 +1,6 @@
 import time
 import torch
+import numpy as np
 import modules.core as core
 import modules.default_pipeline as pipeline
 import modules.flags as flags
@@ -8,7 +9,7 @@ import backend.loader as loader
 from modules.pipeline.output import save_and_log, yield_result
 
 
-def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps):
+def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None):
     """
     Returns a callback function for the diffusion sampler to report progress.
     """
@@ -21,11 +22,21 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
         progress_val = int(preparation_steps + task_state.callback_steps)
         status_text = f'Sampling step {step + 1}/{total_steps}, image {current_task_id + 1}/{total_count} ...'
 
-        if y is not None and hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
-            # y is a numpy array (H, W, 3) from the previewer
+        if preview_transform is not None and y is not None:
+            y = preview_transform(y)
+
+        if (
+            y is not None
+            and isinstance(y, np.ndarray)
+            and hasattr(task_state, 'inpaint_context')
+            and task_state.inpaint_context is not None
+        ):
+            # y is an RGB preview array from the previewer.
             from modules.pipeline.inpaint import InpaintPipeline
             inpaint = InpaintPipeline()
             y = inpaint.stitch(task_state.inpaint_context, y)
+        elif not isinstance(y, np.ndarray):
+            y = None
 
         task_state.yields.append(['preview', (progress_val, status_text, y)])
 
