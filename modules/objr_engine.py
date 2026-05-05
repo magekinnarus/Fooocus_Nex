@@ -52,6 +52,7 @@ FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB = 4 * 1024
 FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB = 8 * 1024
 FLUX_FILL_T5_FP16_MIN_BUDGET_MB = 24 * 1024
 FLUX_FILL_T5_Q8_MIN_BUDGET_MB = 12 * 1024
+FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB = 32 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
 FLUX_FILL_INPAINT_ROUTE_SDXL = "sdxl"
@@ -251,30 +252,20 @@ def _flux_fill_t5_budget_mb(hardware: FluxFillHardwareProfile) -> float:
     return max(0.0, float(hardware.available_ram_mb) - float(reserve_mb))
 
 
+def should_keep_flux_fill_text_encoder_resident(profile: Any | None = None) -> bool:
+    hardware = inspect_flux_fill_hardware(profile)
+    if hardware.profile_name == "colab_pro":
+        return True
+    return float(hardware.total_ram_mb) >= float(FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB)
+
+
 def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | None = None) -> str:
     override = variant
     if override is None:
         override = os.environ.get("FOOOCUS_NEX_FLUX_FILL_T5_VARIANT")
     if override is not None and str(override).strip() != "":
         return normalize_flux_fill_t5_variant(override)
-
-    hardware = inspect_flux_fill_hardware(profile)
-    budget_mb = _flux_fill_t5_budget_mb(hardware)
-
-    if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT:
-        if hardware.profile_name in {"colab_free", "colab_pro"}:
-            # Colab resident-class Flux stays provisional on fp16 until validation
-            # conclusively proves a different default is safer.
-            return FLUX_FILL_T5_VARIANT_FP16
-        if budget_mb >= FLUX_FILL_T5_FP16_MIN_BUDGET_MB:
-            return FLUX_FILL_T5_VARIANT_FP16
-        if budget_mb >= FLUX_FILL_T5_Q8_MIN_BUDGET_MB:
-            return FLUX_FILL_T5_VARIANT_Q8
-        return FLUX_FILL_T5_VARIANT_Q4
-
-    if budget_mb >= FLUX_FILL_T5_FP16_MIN_BUDGET_MB:
-        return FLUX_FILL_T5_VARIANT_Q8
-    return FLUX_FILL_T5_VARIANT_Q4
+    return FLUX_FILL_T5_VARIANT_FP16
 
 
 def get_flux_fill_t5_asset_id(variant: str | None = None, *, profile: Any | None = None) -> str:
@@ -389,20 +380,23 @@ def generate_flux_fill_prompt_conditioning_cache(
         return str(output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    keep_resident = should_keep_flux_fill_text_encoder_resident()
     try:
         save_flux_prompt_conditioning_cache(
             prompt_text,
             clip_l_path=Path(clip_l_path),
             t5_path=Path(t5_path),
             output_path=output_path,
+            keep_resident=keep_resident,
         )
         return str(output_path)
     finally:
-        gc.collect()
-        try:
-            resources.soft_empty_cache()
-        except Exception:
-            pass
+        if not keep_resident:
+            gc.collect()
+            try:
+                resources.soft_empty_cache()
+            except Exception:
+                pass
 
 
 def generate_flux_fill_prompt_conditioning(
@@ -417,18 +411,21 @@ def generate_flux_fill_prompt_conditioning(
 
     clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
     t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
+    keep_resident = should_keep_flux_fill_text_encoder_resident()
     try:
         return encode_flux_prompt_conditioning(
             prompt_text,
             clip_l_path=Path(clip_l_path),
             t5_path=Path(t5_path),
+            keep_resident=keep_resident,
         )
     finally:
-        gc.collect()
-        try:
-            resources.soft_empty_cache()
-        except Exception:
-            pass
+        if not keep_resident:
+            gc.collect()
+            try:
+                resources.soft_empty_cache()
+            except Exception:
+                pass
 
 def get_flux_fill_conditioning_cache_path(conditioning: str | None = None, *, progress: bool = True) -> str:
     selected_conditioning = normalize_flux_fill_conditioning(conditioning)

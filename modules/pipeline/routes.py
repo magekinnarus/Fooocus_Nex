@@ -5,6 +5,7 @@ from typing import Sequence
 
 import numpy as np
 
+from backend import environment_profile as environment_profiles
 import modules.flags as flags
 from modules.pipeline.stage_runtime import (
     PipelineResourceRequirement,
@@ -143,6 +144,20 @@ def _resolve_inpaint_prompt(task_state) -> str:
     if prompt == '':
         return additional_prompt
     return additional_prompt + '\n' + prompt
+
+
+def _should_force_flux_host_cleanup() -> bool:
+    try:
+        from backend import resources
+
+        profile = resources.active_memory_environment_profile()
+        profile_name = getattr(profile, "name", None)
+        return profile_name in (
+            environment_profiles.PROFILE_COLAB_FREE,
+            environment_profiles.PROFILE_LOCAL_LOW_VRAM,
+        )
+    except Exception:
+        return False
 
 
 def _build_flux_preview_transform(active_session):
@@ -685,6 +700,7 @@ class FluxFillInpaintStage(PipelineStage):
         all_steps = max(int(task_state.steps) * total_count, 1)
         preparation_steps = task_state.current_progress
         preview_transform = _build_flux_preview_transform(active_session)
+        force_host_cleanup = _should_force_flux_host_cleanup()
         for image_index in range(total_count):
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, task_state.current_progress, f'Flux Fill Inpaint {image_index + 1}/{total_count} ...')
@@ -753,6 +769,14 @@ class FluxFillInpaintStage(PipelineStage):
                     100,
                     do_not_show_finished_images=task_state.disable_intermediate_results,
                 )
+            resources.cleanup_memory(
+                'flux_inpaint_image_complete',
+                gc_collect=force_host_cleanup,
+                trim_host=force_host_cleanup,
+                notes={'task_index': image_index, 'route_id': getattr(context, 'route_id', 'flux_inpaint')},
+                target_phase=resources.MemoryPhase.DIFFUSION,
+                task=task_state,
+            )
         return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': len(output_images)})
 
 

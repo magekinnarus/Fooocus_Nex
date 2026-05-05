@@ -27,6 +27,7 @@ _T5_FIXED_LENGTH = 256
 _CLIP_L_KEY = "text_model.encoder.layers.1.mlp.fc1.weight"
 _T5_KEY = "encoder.block.23.layer.1.DenseReluDense.wi_1.weight"
 _T5_KEY_OLD = "encoder.block.23.layer.1.DenseReluDense.wi.weight"
+_RESIDENT_ENCODER_CACHE: dict[tuple[str, str, str | None], "FluxPromptTextEncoder"] = {}
 
 
 def flux_t5_tokenizer_path() -> Path:
@@ -440,6 +441,33 @@ class FluxPromptTextEncoder:
                     detach()
 
 
+def _resident_encoder_key(
+    *,
+    clip_l_path: str | Path,
+    t5_path: str | Path,
+    embedding_directory: str | Path | None = None,
+) -> tuple[str, str, str | None]:
+    return (
+        str(Path(clip_l_path)),
+        str(Path(t5_path)),
+        str(Path(embedding_directory)) if embedding_directory is not None else None,
+    )
+
+
+def clear_flux_prompt_text_encoder_cache() -> None:
+    cached = list(_RESIDENT_ENCODER_CACHE.values())
+    _RESIDENT_ENCODER_CACHE.clear()
+    for encoder in cached:
+        try:
+            del encoder
+        except Exception:
+            pass
+    try:
+        resources.soft_empty_cache(force=True)
+    except Exception:
+        pass
+
+
 def _load_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     if path.suffix.lower() == ".gguf":
         return gguf_clip_loader(str(path)), {"custom_operations": GGMLOps}
@@ -501,21 +529,56 @@ def load_flux_prompt_text_encoder(
     return FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
 
 
+def get_flux_prompt_text_encoder(
+    *,
+    clip_l_path: str | Path,
+    t5_path: str | Path,
+    embedding_directory: str | Path | None = None,
+    keep_resident: bool = False,
+) -> FluxPromptTextEncoder:
+    if not keep_resident:
+        return load_flux_prompt_text_encoder(
+            clip_l_path=clip_l_path,
+            t5_path=t5_path,
+            embedding_directory=embedding_directory,
+        )
+
+    key = _resident_encoder_key(
+        clip_l_path=clip_l_path,
+        t5_path=t5_path,
+        embedding_directory=embedding_directory,
+    )
+    cached = _RESIDENT_ENCODER_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    clear_flux_prompt_text_encoder_cache()
+    encoder = load_flux_prompt_text_encoder(
+        clip_l_path=clip_l_path,
+        t5_path=t5_path,
+        embedding_directory=embedding_directory,
+    )
+    _RESIDENT_ENCODER_CACHE[key] = encoder
+    return encoder
+
+
 def encode_flux_prompt_conditioning(
     prompt: str,
     *,
     clip_l_path: str | Path,
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
+    keep_resident: bool = False,
 ) -> FluxEmptyConditioning:
     prompt_text = str(prompt or "").strip()
     if prompt_text == "":
         raise ValueError("Flux prompt conditioning requires a non-empty prompt.")
 
-    encoder = load_flux_prompt_text_encoder(
+    encoder = get_flux_prompt_text_encoder(
         clip_l_path=clip_l_path,
         t5_path=t5_path,
         embedding_directory=embedding_directory,
+        keep_resident=keep_resident,
     )
     try:
         cross_attn, pooled_output = encoder.encode(prompt_text)
@@ -530,14 +593,16 @@ def encode_flux_prompt_conditioning(
                 "generator": "backend/flux/text_conditioning.py",
                 "conditioning_kind": "prompt",
                 "transport": "memory",
+                "text_encoder_resident": bool(keep_resident),
             },
         )
     finally:
-        del encoder
-        try:
-            resources.soft_empty_cache()
-        except Exception:
-            pass
+        if not keep_resident:
+            del encoder
+            try:
+                resources.soft_empty_cache()
+            except Exception:
+                pass
 
 
 def save_flux_prompt_conditioning_cache(
@@ -547,12 +612,14 @@ def save_flux_prompt_conditioning_cache(
     t5_path: str | Path,
     output_path: str | Path,
     embedding_directory: str | Path | None = None,
+    keep_resident: bool = False,
 ) -> FluxEmptyConditioning:
     conditioning = encode_flux_prompt_conditioning(
         prompt,
         clip_l_path=clip_l_path,
         t5_path=t5_path,
         embedding_directory=embedding_directory,
+        keep_resident=keep_resident,
     )
     return save_flux_empty_conditioning_cache(
         output_path,
