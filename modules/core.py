@@ -463,7 +463,18 @@ def get_previewer(model):
     global VAE_approx_models
 
     from modules.config import path_vae_approx
-    is_sdxl = isinstance(model.model.latent_format, ldm_patched.modules.latent_formats.SDXL)
+    from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
+
+    latent_format = model.model.latent_format
+    taesd_previewer = resolve_taesd_previewer(model.load_device, latent_format)
+    if taesd_previewer is not None:
+        def preview_function(x0, step, total_steps):
+            preview_image = decode_latent_preview(taesd_previewer, latent_format, x0)
+            return preview_image
+
+        return preview_function
+
+    is_sdxl = isinstance(latent_format, ldm_patched.modules.latent_formats.SDXL)
     vae_approx_filename = os.path.join(path_vae_approx, 'xlvaeapp.pth' if is_sdxl else 'vaeapp_sd15.pth')
 
     if vae_approx_filename in VAE_approx_models:

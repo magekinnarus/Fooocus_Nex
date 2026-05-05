@@ -166,10 +166,7 @@ def _build_flux_preview_transform(active_session):
     def decode_preview(preview_payload):
         try:
             import torch
-            from PIL import Image
-            from ldm_patched.taesd.taesd import TAESD
-            from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, TAESDPreviewerImpl
-            import ldm_patched.utils.path_utils as path_utils
+            from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
         except Exception:
             return None
 
@@ -194,23 +191,8 @@ def _build_flux_preview_transform(active_session):
 
             previewer_holder["latent_format"] = latent_format
             if latent_format is not None:
-                taesd_decoder_path = None
-                taesd_decoder_name = getattr(latent_format, "taesd_decoder_name", None)
-                if taesd_decoder_name:
-                    try:
-                        taesd_decoder_file = next(
-                            (fn for fn in path_utils.get_filename_list("vae_approx") if fn.startswith(taesd_decoder_name)),
-                            "",
-                        )
-                        if taesd_decoder_file:
-                            taesd_decoder_path = path_utils.get_full_path("vae_approx", taesd_decoder_file)
-                    except Exception:
-                        taesd_decoder_path = None
-                if taesd_decoder_path and load_device is not None:
-                    try:
-                        previewer = TAESDPreviewerImpl(TAESD(None, taesd_decoder_path).to(load_device))
-                    except Exception:
-                        previewer = None
+                if load_device is not None:
+                    previewer = resolve_taesd_previewer(load_device, latent_format)
                 if previewer is None and getattr(latent_format, "latent_rgb_factors", None) is not None:
                     try:
                         previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
@@ -223,18 +205,11 @@ def _build_flux_preview_transform(active_session):
             return None
 
         try:
-            preview_latent = preview_payload.detach()
-            if latent_format is not None and hasattr(latent_format, "process_out"):
-                preview_latent = latent_format.process_out(preview_latent)
-            preview_image = previewer.decode_latent_to_preview(preview_latent)
+            preview_array = decode_latent_preview(previewer, latent_format, preview_payload)
         except Exception:
             return None
 
-        if isinstance(preview_image, Image.Image):
-            return np.asarray(preview_image.convert("RGB"))
-        try:
-            preview_array = np.asarray(preview_image)
-        except Exception:
+        if preview_array is None:
             return None
         return preview_array if preview_array.ndim == 3 else None
 
@@ -252,6 +227,7 @@ def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: 
             route_family=route.family,
             selected_engine=selected_engine,
             conditioning=getattr(task_state, "flux_fill_conditioning", None),
+            task_state=task_state,
             progress=progress,
         )
     except Exception:

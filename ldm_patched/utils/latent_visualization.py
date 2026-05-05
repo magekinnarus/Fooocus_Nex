@@ -2,6 +2,7 @@ import torch
 from PIL import Image
 import struct
 import numpy as np
+import torch
 from ldm_patched.modules.args_parser import args, LatentPreviewMethod
 from ldm_patched.taesd.taesd import TAESD
 import ldm_patched.utils.path_utils
@@ -46,31 +47,71 @@ class Latent2RGBPreviewer(LatentPreviewer):
         return Image.fromarray(latents_ubyte.numpy())
 
 
+def _latent_preview_image_to_numpy(preview_image):
+    if isinstance(preview_image, Image.Image):
+        return np.asarray(preview_image.convert("RGB"))
+    try:
+        preview_array = np.asarray(preview_image)
+    except Exception:
+        return None
+    return preview_array if getattr(preview_array, "ndim", 0) == 3 else None
+
+
+def resolve_taesd_previewer(device, latent_format):
+    taesd_decoder_path = None
+    if latent_format is not None and getattr(latent_format, "taesd_decoder_name", None) is not None:
+        taesd_decoder_path = next(
+            (
+                fn
+                for fn in ldm_patched.utils.path_utils.get_filename_list("vae_approx")
+                if fn.startswith(latent_format.taesd_decoder_name)
+            ),
+            "",
+        )
+        taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_path)
+
+    if not taesd_decoder_path:
+        return None
+
+    try:
+        return TAESDPreviewerImpl(TAESD(None, taesd_decoder_path).to(device))
+    except Exception:
+        return None
+
+
+def decode_latent_preview(previewer, latent_format, x0):
+    if previewer is None:
+        return None
+
+    preview_latent = x0.detach() if hasattr(x0, "detach") else x0
+    if latent_format is not None and hasattr(latent_format, "process_out"):
+        preview_latent = latent_format.process_out(preview_latent)
+
+    try:
+        preview_image = previewer.decode_latent_to_preview(preview_latent)
+    except Exception:
+        return None
+
+    return _latent_preview_image_to_numpy(preview_image)
+
+
 def get_previewer(device, latent_format):
     previewer = None
     method = args.preview_option
     if method != LatentPreviewMethod.NoPreviews:
-        # TODO previewer methods
-        taesd_decoder_path = None
-        if latent_format.taesd_decoder_name is not None:
-            taesd_decoder_path = next(
-                (fn for fn in ldm_patched.utils.path_utils.get_filename_list("vae_approx")
-                    if fn.startswith(latent_format.taesd_decoder_name)),
-                ""
-            )
-            taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_path)
+        taesd_previewer = resolve_taesd_previewer(device, latent_format)
 
         if method == LatentPreviewMethod.Auto:
             method = LatentPreviewMethod.Latent2RGB
-            if taesd_decoder_path:
+            if taesd_previewer is not None:
                 method = LatentPreviewMethod.TAESD
 
         if method == LatentPreviewMethod.TAESD:
-            if taesd_decoder_path:
-                taesd = TAESD(None, taesd_decoder_path).to(device)
-                previewer = TAESDPreviewerImpl(taesd)
+            if taesd_previewer is not None:
+                previewer = taesd_previewer
             else:
-                print("Warning: TAESD previews enabled, but could not find models/vae_approx/{}".format(latent_format.taesd_decoder_name))
+                decoder_name = getattr(latent_format, "taesd_decoder_name", None)
+                print("Warning: TAESD previews enabled, but could not find models/vae_approx/{}".format(decoder_name))
 
         if previewer is None:
             if latent_format.latent_rgb_factors is not None:

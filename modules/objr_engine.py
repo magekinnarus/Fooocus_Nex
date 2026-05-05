@@ -83,6 +83,17 @@ FLUX_FILL_VRAM_CLASS_RESIDENT = "16gb_plus"
 FLUX_FILL_VRAM_CLASS_CONSTRAINED = "8gb_class"
 FLUX_FILL_RUNTIME_POSTURE_RESIDENT = "resident"
 FLUX_FILL_RUNTIME_POSTURE_HYBRID = "hybrid_offload"
+FLUX_FILL_TEXT_ENCODER_ROUTE_BUDGET_MB = {
+    "": 0.0,
+    "flux_fill": 0.0,
+    "removal": 2048.0,
+    "upscale": 4096.0,
+    "txt2img": 6144.0,
+    "image_input": 8192.0,
+    "inpaint": 8192.0,
+    "outpaint": 8192.0,
+    "sdxl": 8192.0,
+}
 
 
 @dataclass(frozen=True)
@@ -96,6 +107,10 @@ class FluxFillRouteReconciliation:
     session_reused: bool = False
     session_replaced: bool = False
     session_torn_down: bool = False
+    next_route_family: str | None = None
+    text_encoder_kept: bool | None = None
+    text_encoder_action: str | None = None
+    text_encoder_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +209,49 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwarePr
     )
 
 
+def _normalize_route_family(route_family: Any | None) -> str:
+    value = str(route_family or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if value == "flux":
+        return "flux_fill"
+    return value
+
+
+def _flux_fill_next_route_budget_mb(route_family: Any | None) -> float:
+    normalized_route_family = _normalize_route_family(route_family)
+    return float(FLUX_FILL_TEXT_ENCODER_ROUTE_BUDGET_MB.get(normalized_route_family, 6144.0))
+
+
+def evaluate_flux_fill_text_encoder_residency(
+    profile: Any | None = None,
+    *,
+    next_route_family: Any | None = None,
+) -> dict[str, Any]:
+    hardware = inspect_flux_fill_hardware(profile)
+    baseline_keep = hardware.profile_name == "colab_pro" or float(hardware.total_ram_mb) >= float(FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB)
+    normalized_next_route_family = _normalize_route_family(next_route_family)
+    resident_cost_mb = (
+        FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
+        if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT
+        else FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB
+    )
+    next_route_budget_mb = _flux_fill_next_route_budget_mb(normalized_next_route_family)
+    keep_resident = baseline_keep
+
+    if keep_resident and normalized_next_route_family not in {"", "flux_fill"}:
+        keep_resident = float(hardware.available_ram_mb) - float(resident_cost_mb) >= float(next_route_budget_mb)
+
+    return {
+        "keep_resident": keep_resident,
+        "baseline_keep": baseline_keep,
+        "next_route_family": normalized_next_route_family or None,
+        "resident_cost_mb": float(resident_cost_mb),
+        "next_route_budget_mb": float(next_route_budget_mb),
+        "available_ram_mb": float(hardware.available_ram_mb),
+        "total_ram_mb": float(hardware.total_ram_mb),
+        "hardware": hardware,
+    }
+
+
 def select_flux_fill_tier(profile: Any | None = None) -> str:
     profile, _snapshot = _resolve_flux_fill_profile(profile)
 
@@ -252,11 +310,38 @@ def _flux_fill_t5_budget_mb(hardware: FluxFillHardwareProfile) -> float:
     return max(0.0, float(hardware.available_ram_mb) - float(reserve_mb))
 
 
-def should_keep_flux_fill_text_encoder_resident(profile: Any | None = None) -> bool:
-    hardware = inspect_flux_fill_hardware(profile)
-    if hardware.profile_name == "colab_pro":
-        return True
-    return float(hardware.total_ram_mb) >= float(FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB)
+def should_keep_flux_fill_text_encoder_resident(
+    profile: Any | None = None,
+    *,
+    next_route_family: Any | None = None,
+) -> bool:
+    return bool(
+        evaluate_flux_fill_text_encoder_residency(
+            profile,
+            next_route_family=next_route_family,
+        ).get("keep_resident", False)
+    )
+
+
+def reconcile_flux_fill_text_encoder_residency(
+    *,
+    profile: Any | None = None,
+    next_route_family: Any | None = None,
+) -> dict[str, Any]:
+    decision = evaluate_flux_fill_text_encoder_residency(profile, next_route_family=next_route_family)
+    if decision["keep_resident"]:
+        decision["text_encoder_action"] = "kept"
+        return decision
+
+    try:
+        from backend.flux import text_conditioning as flux_text_conditioning
+
+        flux_text_conditioning.clear_flux_prompt_text_encoder_cache()
+        decision["text_encoder_action"] = "cleared"
+    except Exception as exc:
+        decision["text_encoder_action"] = "clear_failed"
+        decision["text_encoder_error"] = str(exc)
+    return decision
 
 
 def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | None = None) -> str:
@@ -265,6 +350,19 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
         override = os.environ.get("FOOOCUS_NEX_FLUX_FILL_T5_VARIANT")
     if override is not None and str(override).strip() != "":
         return normalize_flux_fill_t5_variant(override)
+
+    profile, _snapshot = _resolve_flux_fill_profile(profile)
+    profile_name = str(getattr(profile, "name", "") or "").lower()
+
+    try:
+        from backend import environment_profile
+
+        if profile_name == environment_profile.PROFILE_COLAB_FREE:
+            return FLUX_FILL_T5_VARIANT_Q8
+    except Exception:
+        if profile_name == "colab_free":
+            return FLUX_FILL_T5_VARIANT_Q8
+
     return FLUX_FILL_T5_VARIANT_FP16
 
 
@@ -551,18 +649,29 @@ def reconcile_active_flux_fill_session(
     selected_engine: str,
     tier: str | None = None,
     conditioning: str | None = None,
+    task_state: Any | None = None,
     progress: bool = True,
 ) -> FluxFillRouteReconciliation:
     global _active_flux_fill_session, _active_flux_fill_session_signature
 
     active_signature = get_active_flux_fill_session_signature()
+    normalized_route_family = _normalize_route_family(route_family)
+    active_profile = resources.active_memory_environment_profile()
 
-    if not is_flux_fill_route_family(route_family) or selected_engine != OBJR_ENGINE_FLUX_FILL:
+    if not is_flux_fill_route_family(normalized_route_family) or selected_engine != OBJR_ENGINE_FLUX_FILL:
+        text_residency = reconcile_flux_fill_text_encoder_residency(
+            profile=active_profile,
+            next_route_family=normalized_route_family or getattr(task_state, "current_tab", None),
+        )
         if get_active_flux_fill_session() is None:
             return FluxFillRouteReconciliation(
                 decision="ignored",
                 reason=f"non_flux_route:{route_family}",
                 active_signature_before=active_signature,
+                next_route_family=normalized_route_family or None,
+                text_encoder_kept=bool(text_residency.get("keep_resident", False)),
+                text_encoder_action=str(text_residency.get("text_encoder_action", "kept")),
+                text_encoder_reason="route_transition_without_active_session",
             )
 
         end_active_flux_fill_session(reason=f"route_switch:{route_family}")
@@ -571,6 +680,10 @@ def reconcile_active_flux_fill_session(
             reason=f"route_switch:{route_family}",
             active_signature_before=active_signature,
             session_torn_down=True,
+            next_route_family=normalized_route_family or None,
+            text_encoder_kept=bool(text_residency.get("keep_resident", False)),
+            text_encoder_action=str(text_residency.get("text_encoder_action", "kept")),
+            text_encoder_reason="route_transition_reconciled",
         )
 
     target_asset_paths = resolve_flux_fill_asset_paths(tier=tier, conditioning=conditioning, progress=progress)

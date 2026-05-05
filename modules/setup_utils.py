@@ -8,6 +8,8 @@ from modules.model_download.runtime import download_file
 vae_approx_filenames = [
     ('xlvaeapp.pth', 'https://huggingface.co/lllyasviel/misc/resolve/main/xlvaeapp.pth'),
     ('vaeapp_sd15.pth', 'https://huggingface.co/lllyasviel/misc/resolve/main/vaeapp_sd15.pt'),
+    ('taesd_decoder.pth', 'https://github.com/madebyollin/taesd/raw/main/taesd_decoder.pth'),
+    ('taesdxl_decoder.pth', 'https://github.com/madebyollin/taesd/raw/main/taesdxl_decoder.pth'),
     ('taef1_decoder.pth', 'https://github.com/madebyollin/taesd/raw/main/taef1_decoder.pth'),
     ('xl-to-v1_interposer-v4.0.safetensors',
      'https://huggingface.co/mashb1t/misc/resolve/main/xl-to-v1_interposer-v4.0.safetensors')
