@@ -224,6 +224,14 @@ def worker():
                         build_image_wall(task.state)
                     task.yields.append(['finish', task.results])
                     pipeline.prepare_text_encoder(async_call=True)
+            except resources.InterruptProcessingException:
+                with resources.memory_phase_scope(
+                    resources.MemoryPhase.FINALIZE,
+                    task=task.state,
+                    notes={'generate_image_grid': False},
+                    end_notes={'completed': True, 'success': False, 'interrupted': True},
+                ):
+                    task.yields.append(['finish', task.results])
             except:
                 traceback.print_exc()
                 with resources.memory_phase_scope(

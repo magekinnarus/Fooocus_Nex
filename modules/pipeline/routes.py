@@ -152,7 +152,9 @@ def _build_flux_preview_transform(active_session):
         try:
             import torch
             from PIL import Image
-            from ldm_patched.utils.latent_visualization import get_previewer as get_latent_previewer
+            from ldm_patched.taesd.taesd import TAESD
+            from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, TAESDPreviewerImpl
+            import ldm_patched.utils.path_utils as path_utils
         except Exception:
             return None
 
@@ -163,16 +165,40 @@ def _build_flux_preview_transform(active_session):
         if not previewer_holder["resolved"]:
             previewer_holder["resolved"] = True
             unet_patcher = getattr(active_session, "unet_patcher", None)
+            vae = getattr(active_session, "vae", None)
             load_device = getattr(unet_patcher, "load_device", None)
             patcher_model = getattr(unet_patcher, "model", None)
             latent_format = getattr(patcher_model, "latent_format", None)
             if latent_format is None:
                 latent_format = getattr(getattr(patcher_model, "model", None), "latent_format", None)
-            if load_device is not None and latent_format is not None:
-                try:
-                    previewer = get_latent_previewer(load_device, latent_format)
-                except Exception:
-                    previewer = None
+            if latent_format is None and vae is not None:
+                latent_format = getattr(vae, "latent_format", None)
+            if load_device is None and vae is not None:
+                load_device = getattr(getattr(vae, "patcher", None), "load_device", None)
+
+            if latent_format is not None:
+                taesd_decoder_path = None
+                taesd_decoder_name = getattr(latent_format, "taesd_decoder_name", None)
+                if taesd_decoder_name:
+                    try:
+                        taesd_decoder_file = next(
+                            (fn for fn in path_utils.get_filename_list("vae_approx") if fn.startswith(taesd_decoder_name)),
+                            "",
+                        )
+                        if taesd_decoder_file:
+                            taesd_decoder_path = path_utils.get_full_path("vae_approx", taesd_decoder_file)
+                    except Exception:
+                        taesd_decoder_path = None
+                if taesd_decoder_path and load_device is not None:
+                    try:
+                        previewer = TAESDPreviewerImpl(TAESD(None, taesd_decoder_path).to(load_device))
+                    except Exception:
+                        previewer = None
+                if previewer is None and getattr(latent_format, "latent_rgb_factors", None) is not None:
+                    try:
+                        previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
+                    except Exception:
+                        previewer = None
             previewer_holder["previewer"] = previewer
 
         if previewer is None:
@@ -658,8 +684,8 @@ class FluxFillInpaintStage(PipelineStage):
         task_state.height = output_height
         all_steps = max(int(task_state.steps) * total_count, 1)
         preparation_steps = task_state.current_progress
+        preview_transform = _build_flux_preview_transform(active_session)
         for image_index in range(total_count):
-            resources.throw_exception_if_processing_interrupted()
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, task_state.current_progress, f'Flux Fill Inpaint {image_index + 1}/{total_count} ...')
 
@@ -671,22 +697,38 @@ class FluxFillInpaintStage(PipelineStage):
                 total_count,
                 preparation_steps,
                 all_steps,
-                preview_transform=_build_flux_preview_transform(active_session),
+                preview_transform=preview_transform,
             )
-            result = active_session.generate_inpaint(
-                ctx.bb_image,
-                ctx.bb_mask,
-                prompt=prompt_text,
-                seed=seed,
-                steps=int(task_state.steps),
-                sampler=task_state.sampler_name,
-                scheduler=task_state.scheduler_name,
-                guidance=objr_engine.FLUX_FILL_GUIDANCE_DEFAULT,
-                mode='baseline',
-                callback=callback,
-                disable_pbar=True,
-                progress=False,
-            )
+            interrupted_action = None
+            try:
+                resources.throw_exception_if_processing_interrupted()
+                result = active_session.generate_inpaint(
+                    ctx.bb_image,
+                    ctx.bb_mask,
+                    prompt=prompt_text,
+                    seed=seed,
+                    steps=int(task_state.steps),
+                    sampler=task_state.sampler_name,
+                    scheduler=task_state.scheduler_name,
+                    guidance=objr_engine.FLUX_FILL_GUIDANCE_DEFAULT,
+                    mode='baseline',
+                    callback=callback,
+                    disable_pbar=True,
+                    progress=False,
+                )
+            except resources.InterruptProcessingException:
+                if task_state.last_stop == 'skip':
+                    print('User skipped')
+                    task_state.last_stop = False
+                    interrupted_action = 'skip'
+                else:
+                    print('User stopped')
+                    interrupted_action = 'stop'
+            if interrupted_action == 'skip':
+                continue
+            if interrupted_action == 'stop':
+                break
+
             stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
             output_images.append(stitched_image)
 
