@@ -153,6 +153,10 @@ def auto_detect_profile_name(*, total_ram_mb: float, total_vram_mb: float, is_co
     return PROFILE_LOCAL_NORMAL
 
 
+def should_skip_eager_model_preload(profile: EnvironmentProfile | None) -> bool:
+    return str(getattr(profile, 'name', '') or '').lower() == PROFILE_COLAB_FREE
+
+
 def resolve_environment_profile(
     *,
     override: str = PROFILE_AUTO,

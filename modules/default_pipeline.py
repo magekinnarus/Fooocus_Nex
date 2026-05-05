@@ -6,6 +6,7 @@ import modules.patch
 import modules.config
 import modules.flags
 from backend import resources, schedulers, lora
+from backend import environment_profile
 import extras.vae_interpose as vae_interpose
 
 
@@ -19,6 +20,14 @@ final_clip = None
 final_vae = None
 
 loaded_ControlNets = {}
+
+
+def _resolved_memory_profile():
+    return getattr(modules.config, 'resolved_memory_environment_profile', None)
+
+
+def _should_skip_eager_pipeline_preload() -> bool:
+    return environment_profile.should_skip_eager_model_preload(_resolved_memory_profile())
 
 
 def _controlnet_residency_summary():
@@ -244,7 +253,8 @@ def clear_all_caches():
 def prepare_text_encoder(async_call=True):
     if async_call:
         # TODO: make sure that this is always called in an async way so that users cannot feel it.
-        pass
+        if _should_skip_eager_pipeline_preload():
+            return
     assert_model_integrity()
     
     if final_clip is None:
@@ -304,16 +314,19 @@ def refresh_everything(base_model_name, loras,
     return
 
 
-try:
-    refresh_everything(
-        base_model_name=modules.config.default_base_model_name,
-        loras=get_enabled_loras(modules.config.default_loras),
-        vae_name=modules.config.default_vae,
-        clip_name=modules.config.default_clip
-    )
-except Exception as e:
-    print(f'[Nex Warning] Failed to load default model at startup: {e}')
-    print('[Nex Warning] The UI will launch without a model. Select one from Advanced > Models.')
+if _should_skip_eager_pipeline_preload():
+    print('[Startup] Skipping eager default SDXL preload for Colab Free memory profile.')
+else:
+    try:
+        refresh_everything(
+            base_model_name=modules.config.default_base_model_name,
+            loras=get_enabled_loras(modules.config.default_loras),
+            vae_name=modules.config.default_vae,
+            clip_name=modules.config.default_clip
+        )
+    except Exception as e:
+        print(f'[Nex Warning] Failed to load default model at startup: {e}')
+        print('[Nex Warning] The UI will launch without a model. Select one from Advanced > Models.')
 
 
 
