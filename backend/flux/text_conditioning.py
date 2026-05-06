@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import logging
 from dataclasses import dataclass
@@ -599,6 +600,7 @@ def encode_flux_prompt_conditioning(
     finally:
         if not keep_resident:
             del encoder
+            gc.collect()
             try:
                 resources.soft_empty_cache()
             except Exception:

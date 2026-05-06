@@ -463,14 +463,18 @@ def get_previewer(model):
     global VAE_approx_models
 
     from modules.config import path_vae_approx
-    from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
+    from ldm_patched.utils.latent_visualization import decode_latent_preview, resolve_taesd_previewer
 
     latent_format = model.model.latent_format
-    taesd_previewer = resolve_taesd_previewer(model.load_device, latent_format)
+    load_device = model.load_device
+
+    # Use the shared resolver with the config-defined download path (no GDrive dir walk).
+    taesd_previewer = resolve_taesd_previewer(load_device, latent_format, vae_approx_path=path_vae_approx)
     if taesd_previewer is not None:
+        @torch.no_grad()
+        @torch.inference_mode()
         def preview_function(x0, step, total_steps):
-            preview_image = decode_latent_preview(taesd_previewer, latent_format, x0)
-            return preview_image
+            return decode_latent_preview(taesd_previewer, latent_format, x0)
 
         return preview_function
 

@@ -192,7 +192,11 @@ def _build_flux_preview_transform(active_session):
             previewer_holder["latent_format"] = latent_format
             if latent_format is not None:
                 if load_device is not None:
-                    previewer = resolve_taesd_previewer(load_device, latent_format)
+                    try:
+                        from modules.config import path_vae_approx
+                    except Exception:
+                        path_vae_approx = None
+                    previewer = resolve_taesd_previewer(load_device, latent_format, vae_approx_path=path_vae_approx)
                 if previewer is None and getattr(latent_format, "latent_rgb_factors", None) is not None:
                     try:
                         previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)

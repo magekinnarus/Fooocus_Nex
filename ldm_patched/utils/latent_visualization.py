@@ -2,7 +2,6 @@ import torch
 from PIL import Image
 import struct
 import numpy as np
-import torch
 from ldm_patched.modules.args_parser import args, LatentPreviewMethod
 from ldm_patched.taesd.taesd import TAESD
 import ldm_patched.utils.path_utils
@@ -57,18 +56,43 @@ def _latent_preview_image_to_numpy(preview_image):
     return preview_array if getattr(preview_array, "ndim", 0) == 3 else None
 
 
-def resolve_taesd_previewer(device, latent_format):
+def resolve_taesd_previewer(device, latent_format, vae_approx_path=None):
+    """Resolve a TAESD previewer for the given latent format.
+
+    Args:
+        device: torch device to load the TAESD decoder onto.
+        latent_format: latent format object with ``taesd_decoder_name`` attribute.
+        vae_approx_path: Optional explicit directory where TAESD decoder files
+            live (e.g. ``config.path_vae_approx``).  When provided, the decoder
+            is resolved with a direct ``os.path.isfile`` call, avoiding the
+            expensive ``path_utils.get_filename_list`` directory walk that causes
+            latency on GDrive mounts.
+    """
+    if latent_format is None or getattr(latent_format, "taesd_decoder_name", None) is None:
+        return None
+
+    import os
+    taesd_decoder_name = latent_format.taesd_decoder_name
     taesd_decoder_path = None
-    if latent_format is not None and getattr(latent_format, "taesd_decoder_name", None) is not None:
-        taesd_decoder_path = next(
+
+    # --- Fast path: direct lookup in the known download directory ---
+    if vae_approx_path is not None:
+        candidate = os.path.join(vae_approx_path, f"{taesd_decoder_name}.pth")
+        if os.path.isfile(candidate):
+            taesd_decoder_path = candidate
+
+    # --- Slow fallback: directory walk via path_utils (legacy callers) ---
+    if taesd_decoder_path is None:
+        taesd_decoder_file = next(
             (
                 fn
                 for fn in ldm_patched.utils.path_utils.get_filename_list("vae_approx")
-                if fn.startswith(latent_format.taesd_decoder_name)
+                if fn.startswith(taesd_decoder_name)
             ),
             "",
         )
-        taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_path)
+        if taesd_decoder_file:
+            taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_file)
 
     if not taesd_decoder_path:
         return None
@@ -95,11 +119,21 @@ def decode_latent_preview(previewer, latent_format, x0):
     return _latent_preview_image_to_numpy(preview_image)
 
 
+def _resolve_vae_approx_path():
+    """Best-effort resolution of the config-defined vae_approx directory."""
+    try:
+        from modules.config import path_vae_approx
+        return path_vae_approx
+    except Exception:
+        return None
+
+
 def get_previewer(device, latent_format):
     previewer = None
     method = args.preview_option
     if method != LatentPreviewMethod.NoPreviews:
-        taesd_previewer = resolve_taesd_previewer(device, latent_format)
+        vae_approx_path = _resolve_vae_approx_path()
+        taesd_previewer = resolve_taesd_previewer(device, latent_format, vae_approx_path=vae_approx_path)
 
         if method == LatentPreviewMethod.Auto:
             method = LatentPreviewMethod.Latent2RGB

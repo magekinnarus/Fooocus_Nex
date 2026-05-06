@@ -465,6 +465,7 @@ def _cleanup_flux_prompt_conditioning_host_memory(reason: str) -> None:
     resources.cleanup_memory(
         reason,
         gc_collect=True,
+        force_cache=True,
         trim_host=True,
         target_phase=resources.MemoryPhase.PROMPT_ENCODE,
         notes={"route_family": "flux_fill", "component": "text_conditioning"},

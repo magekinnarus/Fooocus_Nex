@@ -1102,6 +1102,13 @@ class FluxFillPipeline:
         timings["prepare_concat_pixels"] = time.perf_counter() - stage_start
         debug_summary["stages"]["prepare_concat_pixels"] = concat_pixels_summary
 
+        # Reclaim CPU RAM from text conditioning before loading VAE/UNet state dicts.
+        # In the session path (vae/unet already provided), this is a cheap no-op.
+        if vae is None or unet_patcher is None:
+            import gc as _gc
+            _gc.collect()
+            resources.soft_empty_cache(force=True)
+
         stage_start = time.perf_counter()
         source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae)
         timings["encode_source_latent"] = time.perf_counter() - stage_start
