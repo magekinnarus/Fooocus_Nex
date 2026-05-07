@@ -74,32 +74,40 @@ def resolve_taesd_previewer(device, latent_format, vae_approx_path=None):
     import os
     taesd_decoder_name = latent_format.taesd_decoder_name
     taesd_decoder_path = None
+    print(f"[TAESD-Debug] Resolving for {taesd_decoder_name} ({latent_format.__class__.__name__}, scale={getattr(latent_format, 'scale_factor', 'N/A')}) in {vae_approx_path}")
 
     # --- Fast path: direct lookup in the known download directory ---
     if vae_approx_path is not None:
         candidate = os.path.join(vae_approx_path, f"{taesd_decoder_name}.pth")
         if os.path.isfile(candidate):
             taesd_decoder_path = candidate
+            print(f"[TAESD-Debug] Fast path HIT: {taesd_decoder_path}")
 
     # --- Slow fallback: directory walk via path_utils (legacy callers) ---
     if taesd_decoder_path is None:
+        print(f"[TAESD-Debug] Fast path MISS, trying slow fallback...")
         taesd_decoder_file = next(
             (
                 fn
                 for fn in ldm_patched.utils.path_utils.get_filename_list("vae_approx")
-                if fn.startswith(taesd_decoder_name)
+                if fn == f"{taesd_decoder_name}.pth" or fn == f"{taesd_decoder_name}.pt"
             ),
             "",
         )
         if taesd_decoder_file:
             taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_file)
+            print(f"[TAESD-Debug] Slow path HIT: {taesd_decoder_path}")
 
     if not taesd_decoder_path:
+        print(f"[TAESD-Debug] Resolution FAILED for {taesd_decoder_name}")
         return None
+
+    print(f"[TAESD] Final choice: {os.path.basename(taesd_decoder_path)} for {taesd_decoder_name}")
 
     try:
         return TAESDPreviewerImpl(TAESD(None, taesd_decoder_path).to(device))
-    except Exception:
+    except Exception as e:
+        print(f"[TAESD] Error loading decoder: {e}")
         return None
 
 
