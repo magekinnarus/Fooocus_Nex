@@ -26,11 +26,11 @@ class TAESDPreviewerImpl(LatentPreviewer):
         # The scale_latents method handles the (latent / 6 + 0.5) transformation.
         x_scaled = self.taesd.scale_latents(x0[:1])
         
-        # Decode using the internal sequential decoder block.
-        x_sample = self.taesd.decoder(x_scaled)[0].detach()
+        # Decode using the standard decode method which includes the internal range shift to [-1, 1]
+        x_sample = self.taesd.decode(x_scaled)[0].detach()
         
-        # Output of TAESD.decoder is in 0..1 range.
-        x_sample = torch.clamp(x_sample, min=0.0, max=1.0)
+        # Convert from [-1, 1] back to [0, 1] for image display
+        x_sample = torch.clamp((x_sample + 1.0) / 2.0, min=0.0, max=1.0)
         x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
         x_sample = x_sample.astype(np.uint8)
 
