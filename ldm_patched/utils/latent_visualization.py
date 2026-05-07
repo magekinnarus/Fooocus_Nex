@@ -22,14 +22,7 @@ class TAESDPreviewerImpl(LatentPreviewer):
         self.taesd = taesd
 
     def decode_latent_to_preview(self, x0):
-        # TAESD neural network expects latents to be shifted and scaled to 0..1 range.
-        # The scale_latents method handles the (latent / 6 + 0.5) transformation.
-        x_scaled = self.taesd.scale_latents(x0[:1])
-        
-        # Decode using the standard decode method which includes the internal range shift to [-1, 1]
-        x_sample = self.taesd.decode(x_scaled)[0].detach()
-        
-        # Convert from [-1, 1] back to [0, 1] for image display
+        x_sample = self.taesd.decode(x0[:1])[0].detach()
         x_sample = torch.clamp((x_sample + 1.0) / 2.0, min=0.0, max=1.0)
         x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
         x_sample = x_sample.astype(np.uint8)
@@ -114,8 +107,6 @@ def decode_latent_preview(previewer, latent_format, x0):
         return None
 
     preview_latent = x0.detach() if hasattr(x0, "detach") else x0
-    if latent_format is not None and hasattr(latent_format, "process_out"):
-        preview_latent = latent_format.process_out(preview_latent)
 
     try:
         preview_image = previewer.decode_latent_to_preview(preview_latent)
