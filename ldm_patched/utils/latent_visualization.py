@@ -22,13 +22,19 @@ class TAESDPreviewerImpl(LatentPreviewer):
         self.taesd = taesd
 
     def decode_latent_to_preview(self, x0):
-        x_sample = self.taesd.decode(x0[:1])[0].detach()
-        x_sample = torch.clamp((x_sample + 1.0) / 2.0, min=0.0, max=1.0)
+        # TAESD neural network expects latents to be shifted and scaled to 0..1 range.
+        # The scale_latents method handles the (latent / 6 + 0.5) transformation.
+        x_scaled = self.taesd.scale_latents(x0[:1])
+        
+        # Decode using the internal sequential decoder block.
+        x_sample = self.taesd.decoder(x_scaled)[0].detach()
+        
+        # Output of TAESD.decoder is in 0..1 range.
+        x_sample = torch.clamp(x_sample, min=0.0, max=1.0)
         x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
         x_sample = x_sample.astype(np.uint8)
 
-        preview_image = Image.fromarray(x_sample)
-        return preview_image
+        return Image.fromarray(x_sample)
 
 
 class Latent2RGBPreviewer(LatentPreviewer):
@@ -74,18 +80,15 @@ def resolve_taesd_previewer(device, latent_format, vae_approx_path=None):
     import os
     taesd_decoder_name = latent_format.taesd_decoder_name
     taesd_decoder_path = None
-    print(f"[TAESD-Debug] Resolving for {taesd_decoder_name} ({latent_format.__class__.__name__}, scale={getattr(latent_format, 'scale_factor', 'N/A')}) in {vae_approx_path}")
 
     # --- Fast path: direct lookup in the known download directory ---
     if vae_approx_path is not None:
         candidate = os.path.join(vae_approx_path, f"{taesd_decoder_name}.pth")
         if os.path.isfile(candidate):
             taesd_decoder_path = candidate
-            print(f"[TAESD-Debug] Fast path HIT: {taesd_decoder_path}")
 
     # --- Slow fallback: directory walk via path_utils (legacy callers) ---
     if taesd_decoder_path is None:
-        print(f"[TAESD-Debug] Fast path MISS, trying slow fallback...")
         taesd_decoder_file = next(
             (
                 fn
@@ -96,18 +99,13 @@ def resolve_taesd_previewer(device, latent_format, vae_approx_path=None):
         )
         if taesd_decoder_file:
             taesd_decoder_path = ldm_patched.utils.path_utils.get_full_path("vae_approx", taesd_decoder_file)
-            print(f"[TAESD-Debug] Slow path HIT: {taesd_decoder_path}")
 
     if not taesd_decoder_path:
-        print(f"[TAESD-Debug] Resolution FAILED for {taesd_decoder_name}")
         return None
-
-    print(f"[TAESD] Final choice: {os.path.basename(taesd_decoder_path)} for {taesd_decoder_name}")
 
     try:
         return TAESDPreviewerImpl(TAESD(None, taesd_decoder_path).to(device))
-    except Exception as e:
-        print(f"[TAESD] Error loading decoder: {e}")
+    except Exception:
         return None
 
 
@@ -177,4 +175,3 @@ def prepare_callback(model, steps, x0_output_dict=None):
             preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
         pbar.update_absolute(step + 1, total_steps, preview_bytes)
     return callback
-
