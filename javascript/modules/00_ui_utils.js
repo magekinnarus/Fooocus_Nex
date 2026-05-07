@@ -123,6 +123,10 @@ function localizeWholePage() {
     processNode(gradioApp());
 }
 
+window.cancelGenerateForever = function() {
+    window.nex_interrupt_requested = true;
+};
+
 document.addEventListener("DOMContentLoaded", function () {
     const mutationObserver = new MutationObserver(function (m) {
         if (gradioApp().querySelector('#generate_button')) {
@@ -135,4 +139,14 @@ document.addEventListener("DOMContentLoaded", function () {
     if (hasLocalization()) {
         localizeWholePage();
     }
+
+    // Connection recovery monitor
+    let lastStatus = true;
+    setInterval(() => {
+        const status = window.navigator.onLine;
+        if (!lastStatus && status) {
+            console.log("[Nex] Connection restored. Use 'Reconnect' button if UI is stuck.");
+        }
+        lastStatus = status;
+    }, 5000);
 });

@@ -915,13 +915,14 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
             gr.update(visible=True, interactive=True),
             gr.update(visible=True, interactive=True),
             gr.update(visible=False, interactive=False),
+            gr.update(visible=True, interactive=True),
             gr.update(visible=True, columns=1),
             True,
             gr.update(visible=not disable_preview_value),
             gr.update(visible=disable_preview_value)
         ),
         inputs=[disable_preview],
-        outputs=[stop_button, skip_button, generate_button, gallery, state_is_generating, preview_column, gallery_column],
+        outputs=[stop_button, skip_button, generate_button, reset_button, gallery, state_is_generating, preview_column, gallery_column],
         js="""
         () => {
             ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
@@ -943,25 +944,34 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         )[-1], inputs=[currentTask, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=currentTask) \
         .then(fn=generate_clicked, inputs=[currentTask, image_number, disable_preview],
               outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]) \
-        .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),
-              outputs=[generate_button, stop_button, skip_button, state_is_generating]) \
+        .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),
+              outputs=[generate_button, stop_button, skip_button, reset_button, state_is_generating]) \
         .then(fn=update_history_link, outputs=history_link) \
         .then(fn=lambda: None, js='playNotification').then(fn=lambda: None, js='refresh_grid_delayed')
 
 
-    reset_button.click(lambda: [
-                                worker.AsyncTask(args=[]),
-                                False,
-                                gr.update(visible=True, interactive=True),
-                                gr.update(visible=False),
-                                gr.update(visible=False),
-                                gr.update(visible=False),
-                                gr.update(visible=False),
-                                gr.update(visible=True, value=None),
-                                gr.update(visible=True, value=[], columns=2),
-                                gr.update(visible=False),
-                                gr.update(visible=True)
-                            ],
+    def handle_reconnect_click(task):
+        worker.request_interrupt('stop', task)
+        
+        results = getattr(task, 'results', []) if task else []
+        cols = max(1, int(np.ceil(np.sqrt(len(results))))) if len(results) > 0 else 2
+        
+        return [
+            worker.AsyncTask(args=[]),
+            False,
+            gr.update(visible=True, interactive=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=True, value=None),
+            gr.update(visible=True, value=results, columns=cols),
+            gr.update(visible=False),
+            gr.update(visible=True)
+        ]
+
+    reset_button.click(handle_reconnect_click,
+                       inputs=[currentTask],
                        outputs=[currentTask, state_is_generating, generate_button,
                                 reset_button, stop_button, skip_button,
                                 progress_html, progress_window, gallery, preview_column, gallery_column],
