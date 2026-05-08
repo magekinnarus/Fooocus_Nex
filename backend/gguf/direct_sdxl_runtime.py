@@ -130,6 +130,11 @@ class DirectSDXLGGUFRuntime:
 
     def attach_clip_direct(self) -> None:
         self.load_components()
+        resources.prepare_models_for_stage(
+            [self.clip.patcher],
+            stage_name="text_encode_reconcile",
+            target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+        )
         self.clip.patcher.patch_model(device_to=self.device, lowvram_model_memory=0)
 
     def detach_clip_direct(self) -> None:

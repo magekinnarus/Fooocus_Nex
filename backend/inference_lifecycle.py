@@ -41,14 +41,15 @@ def attach_patcher_for_stage(
 ) -> Dict[str, Any]:
     before = snapshot_inference_state(f"{stage}_before_attach", notes=notes)
     started_at = time.perf_counter()
-    resources.load_models_gpu(
+    resources.prepare_models_for_stage(
         [model_patcher],
+        stage_name=stage,
+        target_phase=target_phase,
         memory_required=memory_required,
         force_patch_weights=force_patch_weights,
         minimum_memory_required=minimum_memory_required,
         force_full_load=force_full_load,
         force_high_vram=force_high_vram,
-        target_phase=target_phase,
     )
     duration_s = time.perf_counter() - started_at
     after = snapshot_inference_state(f"{stage}_after_attach", notes=notes)

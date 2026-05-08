@@ -42,6 +42,8 @@ class NexModelPatcher:
         self.current_device = current_device
         self.weight_inplace_update = weight_inplace_update
         self.force_cast_weights = False
+        self.runtime_reload = kwargs.get("runtime_reload")
+        self.runtime_release_to_meta = bool(kwargs.get("runtime_release_to_meta", False))
         self.patches_uuid = uuid.uuid4()
         self.parent = None
 
@@ -94,6 +96,8 @@ class NexModelPatcher:
         n.parent = self
 
         n.force_cast_weights = self.force_cast_weights
+        n.runtime_reload = self.runtime_reload
+        n.runtime_release_to_meta = self.runtime_release_to_meta
         return n
         
     def is_clone(self, other):
@@ -239,6 +243,36 @@ class NexModelPatcher:
             if hasattr(wrap_func, "to"):
                 self.model_options["model_function_wrapper"] = wrap_func.to(device)
 
+    def can_runtime_release(self):
+        return self.runtime_release_to_meta and callable(self.runtime_reload)
+
+    def _runtime_release_device(self):
+        return torch.device("meta")
+
+    def _current_device_is_meta(self):
+        device = self.current_loaded_device()
+        return getattr(device, "type", None) == "meta"
+
+    def _reload_runtime_weights(self, device_to):
+        if not self.can_runtime_release():
+            return
+        device_to = device_to or self.load_device
+        self.runtime_reload(self.model, device_to)
+        self.model.device = device_to
+
+    def _release_runtime_weights(self):
+        if not self.can_runtime_release():
+            return False
+        diffusion_model = getattr(self.model, "diffusion_model", None)
+        if diffusion_model is None:
+            return False
+        diffusion_model.to(self._runtime_release_device())
+        self.model.device = self._runtime_release_device()
+        self.model.model_loaded_weight_memory = 0
+        self.model.model_lowvram = False
+        self.model.lowvram_patch_counter = 0
+        return True
+
     def model_dtype(self):
         if hasattr(self.model, "get_dtype"):
             return self.model.get_dtype()
@@ -360,6 +394,8 @@ class NexModelPatcher:
 
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
         with self.use_ejected():
+            if self.can_runtime_release() and self._current_device_is_meta():
+                self._reload_runtime_weights(device_to or self.load_device)
             mem_counter = 0
             patch_counter = 0
             lowvram_counter = 0
@@ -578,7 +614,8 @@ class NexModelPatcher:
             unpatch_weights = self.model.current_weight_patches_uuid is not None and (self.model.current_weight_patches_uuid != self.patches_uuid or force_patch_weights)
             # TODO: force_patch_weights should not unload + reload full model
             used = self.model.model_loaded_weight_memory
-            self.unpatch_model(self.offload_device, unpatch_weights=unpatch_weights)
+            unpatch_target = device_to if self.can_runtime_release() else self.offload_device
+            self.unpatch_model(unpatch_target, unpatch_weights=unpatch_weights)
             if unpatch_weights:
                 extra_memory += (used - self.model.model_loaded_weight_memory)
 
@@ -598,6 +635,14 @@ class NexModelPatcher:
             return self.model.model_loaded_weight_memory - current_used
 
     def detach(self, unpatch_all=True):
+        if self.can_runtime_release() and unpatch_all:
+            current_device = self.current_loaded_device()
+            current_device_type = getattr(current_device, "type", None)
+            unpatch_target = self.load_device if current_device_type in ("meta", "cpu") else current_device
+            self.model_patches_to(self.load_device)
+            self.unpatch_model(unpatch_target, unpatch_weights=True)
+            self._release_runtime_weights()
+            return self.model
         self.model_patches_to(self.offload_device)
         if unpatch_all:
             self.unpatch_model(self.offload_device, unpatch_weights=unpatch_all)

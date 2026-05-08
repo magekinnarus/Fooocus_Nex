@@ -47,20 +47,16 @@ def vae_encode_crop_pixels(pixels):
 
 class VAEEncode:
     def encode(self, vae, pixels):
-        resources.load_models_gpu([vae.patcher])
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode(pixels[:,:,:,:3])
         result = ({"samples":t}, )
-        resources.eject_model(vae.patcher)
         return result
 
 class VAEEncodeTiled:
     def encode(self, vae, pixels, tile_size):
-        resources.load_models_gpu([vae.patcher])
         pixels = vae_encode_crop_pixels(pixels)
         t = vae.encode_tiled(pixels[:,:,:,:3], tile_x=tile_size, tile_y=tile_size, )
         result = ({"samples":t}, )
-        resources.eject_model(vae.patcher)
         return result
 
 class EmptyLatentImage:
@@ -394,17 +390,13 @@ def decode_vae(vae, latent_image, tiled=False):
 @torch.inference_mode()
 def encode_vae(vae, pixels):
     overall_start = time.perf_counter()
-    load_start = time.perf_counter()
-    resources.load_models_gpu([vae.patcher])
-    load_duration = time.perf_counter() - load_start
     encode_start = time.perf_counter()
     try:
         return vae.encode(pixels)
     finally:
         encode_duration = time.perf_counter() - encode_start
-        resources.eject_model(vae.patcher)
         perf_message = (
-            f"[Nex-Perf] vae encode load={load_duration:.3f}s "
+            f"[Nex-Perf] vae encode load=cpu-default "
             f"encode={encode_duration:.3f}s total={time.perf_counter() - overall_start:.3f}s"
         )
         print(perf_message)
@@ -421,10 +413,8 @@ def encode_vae_inpaint(vae, pixels, mask):
     w = mask.round()[..., None]
     pixels = pixels * (1 - w) + 0.5 * w
 
-    resources.load_models_gpu([vae.patcher])
     latent = vae.encode(pixels)['samples']
-    resources.eject_model(vae.patcher)
-    
+
     B, C, H, W = latent.shape
 
     latent_mask = mask[:, None, :, :]

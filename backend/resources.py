@@ -143,6 +143,74 @@ def _residency_plan_for_phase(target_phase=None, task=None):
     return memory_governor.plan_for_task(task=task, phase=phase_name)
 
 
+def text_encoder_load_device():
+    """
+    SDXL and SD1.5 text encoders default to CPU residency.
+
+    High-VRAM tiers can still opt into GPU placement explicitly by passing a
+    different load device to the loader, but the default path keeps VRAM
+    reserved for UNet.
+    """
+    return torch.device("cpu")
+
+
+def text_encoder_offload_device():
+    return torch.device("cpu")
+
+
+def model_reconciliation_signature(model_patcher):
+    target_uuid = getattr(model_patcher, "patches_uuid", None)
+    if target_uuid is not None:
+        return str(target_uuid)
+
+    model_obj = getattr(model_patcher, "model", None)
+    return str(getattr(model_obj, "current_weight_patches_uuid", None))
+
+
+def prepare_models_for_stage(
+    models,
+    *,
+    stage_name=None,
+    target_phase=None,
+    memory_required=0,
+    force_patch_weights=False,
+    minimum_memory_required=None,
+    force_full_load=False,
+    force_high_vram=False,
+):
+    """
+    Shared activation / reconciliation helper for stage-owned model use.
+
+    This wraps the existing GPU loader so call sites have one canonical boundary
+    for patch UUID reconciliation and residency activation.
+    """
+    if models is None:
+        return 0
+    if not isinstance(models, (list, tuple, set)):
+        models = [models]
+    models = [model for model in models if model is not None]
+    if len(models) == 0:
+        return 0
+
+    phase_name = normalize_memory_phase(target_phase) if target_phase is not None else current_memory_phase()
+    stage_label = stage_name or "stage"
+    logging.info(
+        "[Nex-Memory] prepare_models_for_stage stage=%s phase=%s models=%d",
+        stage_label,
+        phase_name,
+        len(models),
+    )
+    return load_models_gpu(
+        models,
+        memory_required=memory_required,
+        force_patch_weights=force_patch_weights,
+        minimum_memory_required=minimum_memory_required,
+        force_full_load=force_full_load,
+        force_high_vram=force_high_vram,
+        target_phase=target_phase,
+    )
+
+
 def _emit_residency_log(prefix, *, plan, notes=None, role=None, item=None, action=None):
     payload = {
         'profile': plan.notes.get('profile'),
@@ -622,6 +690,13 @@ class LoadedModel:
 
     def model_unload(self, memory_to_free=None, unpatch_weights=True):
         if memory_to_free is not None:
+            if hasattr(self.model, "can_runtime_release") and self.model.can_runtime_release():
+                self.model.detach(unpatch_weights)
+                if self.model_finalizer:
+                    self.model_finalizer.detach()
+                    self.model_finalizer = None
+                self.real_model = None
+                return True
             if memory_to_free < self.model.loaded_size():
                 freed = self.model.partially_unload(self.model.offload_device, memory_to_free)
                 if freed >= memory_to_free:

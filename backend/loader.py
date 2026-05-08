@@ -2,6 +2,8 @@ import torch
 import logging
 from typing import Any, Dict
 import gc
+from safetensors import safe_open
+import torch
 from .defs import sdxl as sdxl_def
 from .defs import sd15 as sd15_def
 from backend import resources, clip, patching, conditioning
@@ -45,13 +47,100 @@ class EmbeddingFP32Wrapper(nn.Module):
              return super().__getattr__(name) 
         return getattr(self.original, name)
 
-def resolve_source(source):
+def resolve_source(source, device=None):
     """
     Ensures the source is a state dict. If it's a path, loads it.
     """
     if isinstance(source, str):
-        return utils.load_torch_file(source)
+        return utils.load_torch_file(source, device=device)
     return source
+
+
+def _safe_open_device_arg(device):
+    if device is None:
+        return "cpu"
+    if not isinstance(device, torch.device):
+        device = torch.device(device)
+    if device.type == "cpu":
+        return "cpu"
+    if device.type == "cuda":
+        return 0 if device.index is None else int(device.index)
+    return "cpu"
+
+
+def _strip_checkpoint_prefix(key, prefix):
+    new_key = key[len(prefix):]
+    if new_key.startswith("."):
+        new_key = new_key[1:]
+    return new_key
+
+
+def _extract_prefixed_safetensors_state_dict(ckpt_path, prefixes, *, device=None):
+    extracted = {}
+    with safe_open(ckpt_path, framework="pt", device=_safe_open_device_arg(device)) as handle:
+        for key in handle.keys():
+            for prefix in prefixes:
+                if key.startswith(prefix):
+                    extracted[_strip_checkpoint_prefix(key, prefix)] = handle.get_tensor(key)
+                    break
+    return extracted
+
+
+def _extract_prefixed_state_dict(source, prefixes, *, device=None):
+    if isinstance(source, str) and source.lower().endswith(".safetensors"):
+        return _extract_prefixed_safetensors_state_dict(source, prefixes, device=device)
+
+    sd = resolve_source(source)
+    extracted = {}
+    for key, value in sd.items():
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                extracted[_strip_checkpoint_prefix(key, prefix)] = value.to(device=device) if device is not None and hasattr(value, "to") else value
+                break
+    return extracted
+
+
+def _module_is_meta(module):
+    for tensor in list(module.parameters()) + list(module.buffers()):
+        device = getattr(tensor, "device", None)
+        if device is not None:
+            return device.type == "meta"
+    return False
+
+
+def _reload_unet_weights(target_model, source, *, device, dtype=None, prefixes=None):
+    if prefixes is not None:
+        sd = _extract_prefixed_state_dict(source, prefixes, device=device)
+    else:
+        sd = resolve_source(source, device=device)
+
+    diffusion_model = target_model.diffusion_model
+    if _module_is_meta(diffusion_model) and hasattr(diffusion_model, "to_empty"):
+        diffusion_model.to_empty(device=device)
+    if dtype is not None:
+        diffusion_model.to(device=device, dtype=dtype)
+    else:
+        diffusion_model.to(device=device)
+    diffusion_model.load_state_dict(sd, strict=False)
+
+    del sd
+    gc.collect()
+
+
+def _build_unet_runtime_reload(source, *, dtype=None, prefixes=None):
+    if not isinstance(source, str):
+        return None
+
+    def _reload(target_model, target_device):
+        _reload_unet_weights(
+            target_model,
+            source,
+            device=target_device,
+            dtype=dtype,
+            prefixes=prefixes,
+        )
+
+    return _reload
 
 class ModelConfig(supported_models_base.BASE):
     """Mock config object for model instantiation, inheriting from BASE for compatibility."""
@@ -101,17 +190,12 @@ class CLIP:
         return cond
 
     def encode_from_tokens(self, tokens, return_pooled=False):
-        load_device = self.patcher.load_device
-        offload_device = self.patcher.offload_device
-
-        if load_device != offload_device:
-            self.patcher.model.to(load_device)
-
-        try:
-            return self.encode_from_tokens_resident(tokens, return_pooled=return_pooled)
-        finally:
-            if load_device != offload_device:
-                self.patcher.model.to(offload_device)
+        resources.prepare_models_for_stage(
+            [self.patcher],
+            stage_name="text_encode",
+            target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+        )
+        return self.encode_from_tokens_resident(tokens, return_pooled=return_pooled)
 
 class VAE:
     """Isolated VAE container to avoid modules.sd baggage."""
@@ -138,16 +222,18 @@ class VAE:
 
 # --- SDXL Support ---
 
-def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
+def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None, reload_source=None, reload_prefixes=None):
     """
     Loads the SDXL UNet using sdxl_def.UNET_CONFIG.
     Supports .gguf integration.
     """
     load_device = load_device or resources.get_torch_device()
     offload_device = offload_device or resources.unet_offload_device()
+    effective_dtype = dtype or torch.float16
     
     custom_operations = None
     patcher_class = patching.NexModelPatcher
+    runtime_reload = None
 
     if isinstance(source, str) and source.endswith(".gguf"):
         from backend.gguf.loader import gguf_sd_loader
@@ -158,7 +244,12 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
         custom_operations = GGMLOps
         patcher_class = GGUFModelPatcher
     else:
-        sd = resolve_source(source)
+        sd = resolve_source(source, device=load_device)
+        runtime_reload = _build_unet_runtime_reload(
+            reload_source if reload_source is not None else source,
+            dtype=effective_dtype,
+            prefixes=reload_prefixes,
+        )
 
     model = model_base.SDXL(
         model_config=ModelConfig(sdxl_def.UNET_CONFIG, latent_formats.SDXL()),
@@ -166,15 +257,22 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None):
     )
     
     # User Requirement: SDXL UNet should be in fp16 to avoid casting to fp32 (saving RAM/VRAM)
-    if dtype is None:
-        dtype = torch.float16
+    dtype = effective_dtype
         
     if dtype is not None:
-        model.to(dtype)
+        model.diffusion_model.to(device=load_device, dtype=dtype)
+    else:
+        model.diffusion_model.to(device=load_device)
         
     model.diffusion_model.load_state_dict(sd, strict=False)
     
-    return patcher_class(model, load_device=load_device, offload_device=offload_device)
+    return patcher_class(
+        model,
+        load_device=load_device,
+        offload_device=offload_device,
+        runtime_reload=runtime_reload,
+        runtime_release_to_meta=runtime_reload is not None,
+    )
 
 def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
     """
@@ -248,8 +346,8 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
     """
     Loads SDXL CLIP (L and G) and returns a clean CLIP container.
     """
-    load_device = load_device or resources.get_torch_device()
-    offload_device = offload_device or resources.unet_offload_device() 
+    load_device = load_device or resources.text_encoder_load_device()
+    offload_device = offload_device or resources.text_encoder_offload_device()
     
     sd_l = resolve_source(source_l)
     sd_g = resolve_source(source_g)
@@ -304,7 +402,7 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
             latent_format = latent_formats.SD15()
             logging.info(f"VAE: Inferred SD15 latent format from {source}")
 
-    sd = resolve_source(source)
+    sd = resolve_source(source, device=load_device)
 
     if latent_format is None and "decoder.conv_in.weight" in sd:
         latent_channels = sd["decoder.conv_in.weight"].shape[1]
@@ -351,6 +449,52 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     Loads SDXL components sequentially and clears raw data immediately.
     """
     logging.info(f"Loading SDXL checkpoint from: {ckpt_path}")
+    load_device = load_device or resources.get_torch_device()
+
+    if isinstance(ckpt_path, str) and ckpt_path.lower().endswith(".safetensors"):
+        logging.info("Extracting VAE from safetensors checkpoint...")
+        vae_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sdxl_def.PREFIXES["vae"],
+            device=torch.device("cpu"),
+        )
+        vae = load_vae(vae_sd, latent_format=latent_formats.SDXL())
+        del vae_sd
+        gc.collect()
+
+        logging.info("Extracting CLIP from safetensors checkpoint...")
+        clip_l_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sdxl_def.PREFIXES["clip_l"],
+            device=torch.device("cpu"),
+        )
+        clip_g_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sdxl_def.PREFIXES["clip_g"],
+            device=torch.device("cpu"),
+        )
+        clip = load_sdxl_clip(clip_l_sd, clip_g_sd, dtype=unet_dtype)
+        del clip_l_sd
+        del clip_g_sd
+        gc.collect()
+
+        logging.info("Extracting UNet from safetensors checkpoint directly to load device...")
+        unet_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sdxl_def.PREFIXES["unet"],
+            device=load_device,
+        )
+        unet = load_sdxl_unet(
+            unet_sd,
+            load_device=load_device,
+            dtype=unet_dtype,
+            reload_source=ckpt_path,
+            reload_prefixes=sdxl_def.PREFIXES["unet"],
+        )
+        del unet_sd
+        gc.collect()
+        return unet, clip, vae
+
     sd = utils.load_torch_file(ckpt_path)
     gc.collect()
 
@@ -416,7 +560,13 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     gc.collect() 
 
     logging.info("Loading UNet Model...")
-    unet = load_sdxl_unet(unet_sd, load_device=load_device, dtype=unet_dtype)
+    unet = load_sdxl_unet(
+        unet_sd,
+        load_device=load_device,
+        dtype=unet_dtype,
+        reload_source=ckpt_path,
+        reload_prefixes=sdxl_def.PREFIXES["unet"],
+    )
     del unet_sd
     gc.collect()
     
@@ -424,34 +574,45 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
 
 # --- SD 1.5 Support ---
 
-def load_sd15_unet(source, load_device=None, offload_device=None, dtype=None):
+def load_sd15_unet(source, load_device=None, offload_device=None, dtype=None, reload_source=None, reload_prefixes=None):
     """
     Loads the SD 1.5 UNet using sd15_def.UNET_CONFIG.
     """
     load_device = load_device or resources.get_torch_device()
     offload_device = offload_device or resources.unet_offload_device()
+    effective_dtype = dtype or torch.float16
     
-    sd = resolve_source(source)
+    sd = resolve_source(source, device=load_device)
+    runtime_reload = _build_unet_runtime_reload(
+        reload_source if reload_source is not None else source,
+        dtype=effective_dtype,
+        prefixes=reload_prefixes,
+    )
 
     model = model_base.BaseModel(
         model_config=ModelConfig(sd15_def.UNET_CONFIG, latent_formats.SD15()),
     )
     
     # User Requirement: SD1.5 UNet should be in fp16
-    if dtype is None:
-        dtype = torch.float16
+    dtype = effective_dtype
         
-    model.diffusion_model.to(dtype)
+    model.diffusion_model.to(device=load_device, dtype=dtype)
     model.diffusion_model.load_state_dict(sd, strict=False)
     
-    return patching.NexModelPatcher(model, load_device=load_device, offload_device=offload_device)
+    return patching.NexModelPatcher(
+        model,
+        load_device=load_device,
+        offload_device=offload_device,
+        runtime_reload=runtime_reload,
+        runtime_release_to_meta=runtime_reload is not None,
+    )
 
 def load_sd15_clip(source, load_device=None, offload_device=None, dtype=None):
     """
     Loads SD 1.5 CLIP (L only) and returns a clean CLIP container.
     """
-    load_device = load_device or resources.get_torch_device()
-    offload_device = offload_device or resources.unet_offload_device()
+    load_device = load_device or resources.text_encoder_load_device()
+    offload_device = offload_device or resources.text_encoder_offload_device()
     
     sd = resolve_source(source)
     
@@ -465,6 +626,70 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     Loads SD 1.5 components sequentially.
     """
     logging.info(f"Loading SD 1.5 checkpoint from: {ckpt_path}")
+    load_device = load_device or resources.get_torch_device()
+
+    if isinstance(ckpt_path, str) and ckpt_path.lower().endswith(".safetensors"):
+        logging.info("Extracting VAE from safetensors checkpoint...")
+        vae_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sd15_def.PREFIXES["vae"],
+            device=torch.device("cpu"),
+        )
+        vae = load_vae(vae_sd, latent_format=latent_formats.SD15())
+        del vae_sd
+        gc.collect()
+
+        logging.info("Extracting CLIP from safetensors checkpoint...")
+        clip_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sd15_def.PREFIXES["clip"],
+            device=torch.device("cpu"),
+        )
+        clip = load_sd15_clip(clip_sd, dtype=unet_dtype)
+        heal_model_weights(clip.patcher.model, "CLIP")
+        del clip_sd
+        gc.collect()
+
+        # Precision Injection (SD1.5 specific fix for NaN overflows)
+        try:
+            sd1_clip_model = clip.cond_stage_model
+            transformer = None
+
+            if hasattr(sd1_clip_model, 'transformer'):
+                 transformer = sd1_clip_model.transformer
+            elif hasattr(sd1_clip_model, 'clip_l'):
+                 transformer = sd1_clip_model.clip_l.transformer
+            elif hasattr(sd1_clip_model, 'clip'):
+                 transformer = sd1_clip_model.clip.transformer
+
+            if transformer is not None and hasattr(transformer, 'text_model'):
+                 transformer = transformer.text_model
+
+            if transformer is not None and hasattr(transformer, 'embeddings'):
+               embeddings = transformer.embeddings
+               if not isinstance(embeddings, EmbeddingFP32Wrapper):
+                   transformer.embeddings = EmbeddingFP32Wrapper(embeddings)
+        except Exception as e:
+            logging.error(f"FAILED to apply precision injection to CLIP: {e}")
+
+        logging.info("Extracting UNet from safetensors checkpoint directly to load device...")
+        unet_sd = _extract_prefixed_safetensors_state_dict(
+            ckpt_path,
+            sd15_def.PREFIXES["unet"],
+            device=load_device,
+        )
+        unet = load_sd15_unet(
+            unet_sd,
+            load_device=load_device,
+            dtype=unet_dtype,
+            reload_source=ckpt_path,
+            reload_prefixes=sd15_def.PREFIXES["unet"],
+        )
+        heal_model_weights(unet.model, "UNet")
+        del unet_sd
+        gc.collect()
+        return unet, clip, vae
+
     sd = utils.load_torch_file(ckpt_path)
     gc.collect()
 
@@ -544,7 +769,13 @@ def load_sd15_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
     gc.collect() 
 
     logging.info("Loading UNet Model...")
-    unet = load_sd15_unet(unet_sd, load_device=load_device, dtype=unet_dtype)
+    unet = load_sd15_unet(
+        unet_sd,
+        load_device=load_device,
+        dtype=unet_dtype,
+        reload_source=ckpt_path,
+        reload_prefixes=sd15_def.PREFIXES["unet"],
+    )
     heal_model_weights(unet.model, "UNet")
     del unet_sd
     gc.collect()

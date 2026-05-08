@@ -175,14 +175,15 @@ def refresh_loras(loras, base_model_additional_loras=None):
 @torch.no_grad()
 @torch.inference_mode()
 def clip_encode_single(clip, text, verbose=False):
-    cached = clip.fcs_cond_cache.get(text, None)
+    cache_key = (text, clip.layer_idx, resources.model_reconciliation_signature(clip.patcher))
+    cached = clip.fcs_cond_cache.get(cache_key, None)
     if cached is not None:
         if verbose:
             print(f'[CLIP Cached] {text}')
         return cached
     tokens = clip.tokenize(text)
     result = clip.encode_from_tokens(tokens, return_pooled=True)
-    clip.fcs_cond_cache[text] = result
+    clip.fcs_cond_cache[cache_key] = result
     if verbose:
         print(f'[CLIP Encoded] {text}')
     return result
@@ -260,7 +261,11 @@ def prepare_text_encoder(async_call=True):
     if final_clip is None:
         return
 
-    resources.load_models_gpu([final_clip.patcher])
+    resources.prepare_models_for_stage(
+        [final_clip.patcher],
+        stage_name="text_encode",
+        target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+    )
     return
 
 
