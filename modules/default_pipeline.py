@@ -294,6 +294,8 @@ def refresh_everything(base_model_name, loras,
     if refresh_state == current_state and final_unet is not None:
         return
 
+    print(f'[Nex-Pipeline] Reconciling model state (LoRAs: {len(loras)} slots, Additional: {len(base_model_additional_loras)} slots)')
+
     final_unet = None
     final_clip = None
     final_vae = None

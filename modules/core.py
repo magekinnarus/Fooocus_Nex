@@ -202,7 +202,10 @@ class StableDiffusionModel:
         assert isinstance(loras, list)
 
         if self.visited_loras == str(loras):
+            # print(f'[Nex-Model] LoRA state matched. Skipping re-patch.')
             return
+
+        print(f'[Nex-Model] LoRA state changed. Re-patching model...')
 
         self.visited_loras = str(loras)
 

@@ -745,7 +745,13 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
         current_uuid = getattr(model_obj, "current_weight_patches_uuid", None)
         return patcher.patches_uuid != current_uuid
 
-    models_to_load = [m for m in models_to_load if m.model.current_loaded_device() != load_device or force_patch_weights or _needs_patching(m)]
+    def _log_needs_patching(m_wrapper):
+        res = _needs_patching(m_wrapper)
+        if res:
+            logging.info(f"[Nex-Memory] Model {m_wrapper.model.__class__.__name__} needs patch reconciliation (UUID mismatch)")
+        return res
+
+    models_to_load = [m for m in models_to_load if m.model.current_loaded_device() != load_device or force_patch_weights or _log_needs_patching(m)]
     
     if len(models_to_load) == 0:
         return
