@@ -1,11 +1,12 @@
 import os
+import gc
 import logging
 import time
 import einops
 import torch
 import numpy as np
 import ldm_patched.modules.model_detection
-from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, lora, utils as backend_utils
+from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, lora, lora_artifacts, utils as backend_utils
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.latent_formats
 
@@ -179,7 +180,8 @@ class StableDiffusionModel:
         self.catalog_entry_id = catalog_entry_id
         self.unet_with_lora = unet
         self.clip_with_lora = clip
-        self.visited_loras = ''
+        self.visited_loras = ()
+        self.lora_artifact_registry = ()
 
         self.lora_key_map_unet = {}
         self.lora_key_map_clip = {}
@@ -192,66 +194,112 @@ class StableDiffusionModel:
             self.lora_key_map_clip = model_lora_keys_clip(self.clip.cond_stage_model, self.lora_key_map_clip)
             self.lora_key_map_clip.update({x: x for x in self.clip.cond_stage_model.state_dict().keys()})
 
+    def _resolve_lora_filename(self, filename):
+        if filename == 'None':
+            return None
+
+        if os.path.exists(filename):
+            return filename
+
+        resolved = get_file_from_folder_list(filename, modules.config.paths_lora_lookup)
+        if resolved and os.path.exists(resolved):
+            return resolved
+
+        print(f'Lora file not found: {resolved}')
+        return None
+
+    def _build_single_lora_artifact(self, lora_filename, weight):
+        lora_sd = backend_utils.load_torch_file(lora_filename)
+        lora_unet = {}
+        lora_clip = {}
+        try:
+            # Build a Nex-owned artifact first; the inherited patch container is
+            # only used as a temporary application bridge.
+            lora_unet = lora.load_lora(lora_sd, self.lora_key_map_unet, log_missing=False)
+            if self.clip_with_lora is not None:
+                lora_clip = lora.load_lora(lora_sd, self.lora_key_map_clip, log_missing=False)
+
+            loaded_patches = {}
+            loaded_patches.update(lora_unet)
+            loaded_patches.update(lora_clip)
+            return lora_artifacts.normalize_loaded_lora_artifact(
+                source_path=lora_filename,
+                default_scale=weight,
+                loaded_patches=loaded_patches,
+            )
+        finally:
+            # Release temporary containers for this file. The patcher still
+            # retains only the normalized artifact payloads.
+            del lora_sd
+            del lora_unet
+            del lora_clip
+            gc.collect()
+
+    def _apply_lora_artifact(self, artifact):
+        # Transitional bridge: keep the current patcher application backend, but
+        # let the Nex-owned artifact registry own the retained LoRA state.
+        if self.unet_with_lora is not None:
+            lora_unet = lora_artifacts.build_application_patch_dict(
+                artifact,
+                self.lora_key_map_unet,
+                target_family="unet",
+            )
+            if len(lora_unet) > 0:
+                loaded_keys = self.unet_with_lora.add_patches(lora_unet, artifact.default_scale)
+                print(
+                    f'Loaded LoRA artifact [{artifact.source_path}] for UNet [{self.filename}] '
+                    f'with {len(loaded_keys)} keys at weight {artifact.default_scale}.'
+                )
+
+        if self.clip_with_lora is not None:
+            lora_clip = lora_artifacts.build_application_patch_dict(
+                artifact,
+                self.lora_key_map_clip,
+                target_family="clip",
+            )
+            if len(lora_clip) > 0:
+                loaded_keys = self.clip_with_lora.add_patches(lora_clip, artifact.default_scale)
+                print(
+                    f'Loaded LoRA artifact [{artifact.source_path}] for CLIP [{self.filename}] '
+                    f'with {len(loaded_keys)} keys at weight {artifact.default_scale}.'
+                )
+
     @torch.no_grad()
     @torch.inference_mode()
     def refresh_loras(self, loras):
         assert isinstance(loras, list)
 
-        if self.visited_loras == str(loras):
+        loras_to_load = []
+        for filename, weight in loras:
+            lora_filename = self._resolve_lora_filename(filename)
+            if lora_filename is None:
+                continue
+            loras_to_load.append((lora_filename, weight))
+
+        resolved_signature = tuple(loras_to_load)
+        if self.visited_loras == resolved_signature:
             # print(f'[Nex-Model] LoRA state matched. Skipping re-patch.')
             return
 
         print(f'[Nex-Model] LoRA state changed. Re-patching model...')
 
-        self.visited_loras = str(loras)
-
         if self.unet is None:
             return
 
-        print(f'Request to load LoRAs {str(loras)} for model [{self.filename}].')
+        print(f'Request to load LoRAs {str(loras_to_load)} for model [{self.filename}].')
 
-        loras_to_load = []
+        artifact_registry = []
+        for lora_filename, weight in loras_to_load:
+            artifact_registry.append(self._build_single_lora_artifact(lora_filename, weight))
 
-        for filename, weight in loras:
-            if filename == 'None':
-                continue
-
-            if os.path.exists(filename):
-                lora_filename = filename
-            else:
-                lora_filename = get_file_from_folder_list(filename, modules.config.paths_lora_lookup)
-
-            if not os.path.exists(lora_filename):
-                print(f'Lora file not found: {lora_filename}')
-                continue
-
-            loras_to_load.append((lora_filename, weight))
+        self.lora_artifact_registry = tuple(artifact_registry)
+        self.visited_loras = resolved_signature
 
         self.unet_with_lora = self.unet.clone() if self.unet is not None else None
         self.clip_with_lora = self.clip.clone() if self.clip is not None else None
 
-        for lora_filename, weight in loras_to_load:
-            lora_sd = backend_utils.load_torch_file(lora_filename)
-            
-            # Map keys using backend functions
-            lora_keys_unet = lora.model_lora_keys_unet(self.unet.model)
-            lora_keys_clip = lora.model_lora_keys_clip(self.clip.cond_stage_model)
-            
-            # Load patches
-            lora_unet = lora.load_lora(lora_sd, lora_keys_unet, log_missing=False)
-            lora_clip = []
-            if self.clip is not None:
-                lora_clip = lora.load_lora(lora_sd, lora_keys_clip, log_missing=False)
-
-            if self.unet_with_lora is not None and len(lora_unet) > 0:
-                loaded_keys = self.unet_with_lora.add_patches(lora_unet, weight)
-                print(f'Loaded LoRA [{lora_filename}] for UNet [{self.filename}] '
-                      f'with {len(loaded_keys)} keys at weight {weight}.')
-
-            if self.clip_with_lora is not None and len(lora_clip) > 0:
-                loaded_keys = self.clip_with_lora.add_patches(lora_clip, weight)
-                print(f'Loaded LoRA [{lora_filename}] for CLIP [{self.filename}] '
-                      f'with {len(loaded_keys)} keys at weight {weight}.')
+        for artifact in self.lora_artifact_registry:
+            self._apply_lora_artifact(artifact)
 
 
 @torch.no_grad()
