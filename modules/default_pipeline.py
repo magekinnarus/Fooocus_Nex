@@ -5,8 +5,10 @@ import torch
 import modules.patch
 import modules.config
 import modules.flags
-from backend import resources, schedulers, lora
+import modules.model_taxonomy
+from backend import conditioning, resources, schedulers, lora
 from backend import environment_profile
+from backend import sdxl_runtime_policy
 import extras.vae_interpose as vae_interpose
 
 
@@ -106,9 +108,58 @@ def assert_model_integrity():
     return True
 
 
+def _is_sdxl_model_base() -> bool:
+    return getattr(model_base, 'architecture', None) == modules.model_taxonomy.ARCHITECTURE_SDXL
+
+
+def _policy_signature(policy) -> tuple:
+    if policy is None:
+        return ()
+    return (
+        getattr(policy, 'execution_family', None),
+        getattr(policy, 'residency_class', None),
+        getattr(policy, 'clip_residency_mode', None),
+        getattr(policy, 'vae_encode_mode', None),
+        bool(getattr(policy, 'keep_clip_loaded', False)),
+    )
+
+
+def _apply_sdxl_policy_to_model_base(policy) -> None:
+    setattr(model_base, 'sdxl_execution_policy', policy)
+    setattr(model_base, 'sdxl_execution_family', getattr(policy, 'execution_family', None))
+    setattr(model_base, 'sdxl_residency_class', getattr(policy, 'residency_class', None))
+    setattr(model_base, 'sdxl_clip_residency_mode', getattr(policy, 'clip_residency_mode', None))
+    setattr(model_base, 'sdxl_vae_encode_mode', getattr(policy, 'vae_encode_mode', None))
+    setattr(model_base, 'sdxl_keep_clip_loaded', bool(getattr(policy, 'keep_clip_loaded', False)))
+    clip_load_device = resources.get_torch_device() if bool(getattr(policy, 'prefer_clip_gpu', False)) else torch.device('cpu')
+    clip_offload_device = torch.device('cpu')
+    for component in (
+        getattr(model_base, 'clip', None),
+        getattr(model_base, 'clip_with_lora', None),
+    ):
+        if component is not None:
+            setattr(component, 'runtime_policy', policy)
+            patcher = getattr(component, 'patcher', None)
+            if patcher is not None:
+                patcher.load_device = clip_load_device
+                patcher.offload_device = clip_offload_device
+    vae = getattr(model_base, 'vae', None)
+    if vae is not None:
+        setattr(vae, 'runtime_policy', policy)
+
+
+def _clip_device_args_for_policy(policy) -> dict:
+    if not getattr(policy, 'prefer_clip_gpu', False):
+        return {}
+    return {
+        'clip_load_device': resources.get_torch_device(),
+        'clip_offload_device': torch.device('cpu'),
+    }
+
+
 @torch.no_grad()
 @torch.inference_mode()
-def refresh_base_model(name, vae_name=None, clip_name=None):
+def refresh_base_model(name, vae_name=None, clip_name=None, sdxl_policy=None):
     global model_base
 
     if name == 'None':
@@ -123,6 +174,7 @@ def refresh_base_model(name, vae_name=None, clip_name=None):
 
     current_clip_name = getattr(model_base, 'clip_filename', None)
     if model_base.filename == filename and model_base.vae_filename == vae_filename and current_clip_name == clip_name:
+        _apply_sdxl_policy_to_model_base(sdxl_policy)
         return
 
     previous_model_filename = getattr(model_base, 'filename', None)
@@ -146,8 +198,15 @@ def refresh_base_model(name, vae_name=None, clip_name=None):
             },
         )
 
-    model_base = core.load_model(filename, vae_filename, clip_name)
+    model_base = core.load_model(
+        filename,
+        vae_filename,
+        clip_name,
+        sdxl_policy=sdxl_policy,
+        **_clip_device_args_for_policy(sdxl_policy),
+    )
     model_base.clip_filename = clip_name
+    _apply_sdxl_policy_to_model_base(sdxl_policy)
 
     print(f'Base model loaded: {model_base.filename}')
     if model_base.vae_filename:
@@ -172,10 +231,71 @@ def refresh_loras(loras, base_model_additional_loras=None):
     return
 
 
+def _resolve_sdxl_policy(policy=None):
+    resolved = policy
+    if resolved is None:
+        resolved = getattr(model_base, 'sdxl_execution_policy', None)
+    return resolved
+
+
+def _resolve_sdxl_execution_family(execution_family=None, policy=None):
+    if execution_family is not None:
+        return execution_family
+    resolved_policy = _resolve_sdxl_policy(policy)
+    return getattr(resolved_policy, 'execution_family', None)
+
+
+def _resolve_sdxl_clip_residency_mode(clip_residency_mode=None, policy=None):
+    if clip_residency_mode is not None:
+        return clip_residency_mode
+    resolved_policy = _resolve_sdxl_policy(policy)
+    return getattr(resolved_policy, 'clip_residency_mode', None)
+
+
+def _resolve_sdxl_residency_class(residency_class=None):
+    resolved = residency_class
+    if resolved is None:
+        resolved = getattr(model_base, 'sdxl_residency_class', None)
+    if resolved is None:
+        resolved = getattr(model_base, 'residency_class', None)
+    return resources.normalize_sdxl_residency_class(resolved)
+
+
+def _build_sdxl_text_conditioning_fingerprint(clip, text, *, route_family=None, residency_class=None, execution_family=None, clip_residency_mode=None):
+    text_encoder_identity = (
+        type(getattr(clip, 'model', clip)).__name__,
+        getattr(clip, 'layer_idx', None),
+    )
+    return conditioning.build_sdxl_text_conditioning_fingerprint(
+        prompt=text,
+        negative_prompt='',
+        model_identity=getattr(model_base, 'filename', None),
+        text_encoder_identity=text_encoder_identity,
+        clip_patch_uuid=resources.model_reconciliation_signature(clip.patcher),
+        clip_layer_idx=getattr(clip, 'layer_idx', None),
+        lora_artifacts_state=getattr(model_base, 'lora_artifact_registry', ()),
+        route_family_reconciliation_signature=route_family or getattr(model_base, 'compatibility_family', None),
+        residency_class=_resolve_sdxl_residency_class(residency_class),
+        route_family=route_family,
+        execution_family=_resolve_sdxl_execution_family(execution_family),
+        clip_residency_mode=_resolve_sdxl_clip_residency_mode(clip_residency_mode),
+    )
+
+
 @torch.no_grad()
 @torch.inference_mode()
-def clip_encode_single(clip, text, verbose=False):
-    cache_key = (text, clip.layer_idx, resources.model_reconciliation_signature(clip.patcher))
+def clip_encode_single(clip, text, verbose=False, *, route_family=None, residency_class=None, execution_family=None, clip_residency_mode=None):
+    if _is_sdxl_model_base():
+        cache_key = _build_sdxl_text_conditioning_fingerprint(
+            clip,
+            text,
+            route_family=route_family,
+            residency_class=residency_class,
+            execution_family=execution_family,
+            clip_residency_mode=clip_residency_mode,
+        ).digest()
+    else:
+        cache_key = (text, clip.layer_idx, resources.model_reconciliation_signature(clip.patcher))
     cached = clip.fcs_cond_cache.get(cache_key, None)
     if cached is not None:
         if verbose:
@@ -210,7 +330,7 @@ def clone_cond(conds):
 
 @torch.no_grad()
 @torch.inference_mode()
-def clip_encode(texts, pool_top_k=1):
+def clip_encode(texts, pool_top_k=1, *, route_family=None, residency_class=None, execution_family=None, clip_residency_mode=None):
     global final_clip
 
     if final_clip is None:
@@ -224,7 +344,14 @@ def clip_encode(texts, pool_top_k=1):
     pooled_acc = 0
 
     for i, text in enumerate(texts):
-        cond, pooled = clip_encode_single(final_clip, text)
+        cond, pooled = clip_encode_single(
+            final_clip,
+            text,
+            route_family=route_family,
+            residency_class=residency_class,
+            execution_family=execution_family,
+            clip_residency_mode=clip_residency_mode,
+        )
         cond_list.append(cond)
         if i < pool_top_k:
             pooled_acc += pooled
@@ -274,14 +401,15 @@ refresh_state = {
     'loras': None,
     'base_model_additional_loras': None,
     'vae_name': None,
-    'clip_name': None
+    'clip_name': None,
+    'sdxl_policy': None,
 }
 
 
 @torch.no_grad()
 @torch.inference_mode()
 def refresh_everything(base_model_name, loras,
-                       base_model_additional_loras=None, vae_name=None, clip_name=None):
+                       base_model_additional_loras=None, vae_name=None, clip_name=None, sdxl_policy=None):
     global final_unet, final_clip, final_vae, refresh_state
 
     # Sort loras to ensure consistent comparison
@@ -293,10 +421,12 @@ def refresh_everything(base_model_name, loras,
         'loras': loras,
         'base_model_additional_loras': base_model_additional_loras,
         'vae_name': vae_name,
-        'clip_name': clip_name
+        'clip_name': clip_name,
+        'sdxl_policy': _policy_signature(sdxl_policy),
     }
 
     if refresh_state == current_state and final_unet is not None:
+        _apply_sdxl_policy_to_model_base(sdxl_policy)
         return
 
     print(f'[Nex-Pipeline] Reconciling model state (LoRAs: {len(loras)} slots, Additional: {len(base_model_additional_loras)} slots)')
@@ -305,7 +435,7 @@ def refresh_everything(base_model_name, loras,
     final_clip = None
     final_vae = None
 
-    refresh_base_model(base_model_name, vae_name, clip_name)
+    refresh_base_model(base_model_name, vae_name, clip_name, sdxl_policy=sdxl_policy)
 
     refresh_loras(loras, base_model_additional_loras=base_model_additional_loras)
     assert_model_integrity()
@@ -431,4 +561,12 @@ def process_diffusion(positive_cond, negative_cond, steps, width, height, image_
         end_notes={'completed': True},
     ):
         decoded_latent = core.decode_vae(vae=target_vae, latent_image=sampled_latent, tiled=tiled)
-        return core.pytorch_to_numpy(decoded_latent)
+        result = core.pytorch_to_numpy(decoded_latent)
+
+    resources.cleanup_memory(
+        'decode_complete',
+        notes={'tiled': tiled},
+        target_phase=resources.MemoryPhase.FINALIZE,
+        task=task_state,
+    )
+    return result

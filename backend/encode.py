@@ -23,6 +23,8 @@ def encode_pixels(vae, pixels):
     Returns:
         Dict: {'samples': Latent tensor [B, 4, H//8, W//8]}
     """
+    runtime_policy = getattr(vae, "runtime_policy", None)
+    gpu_preferred = bool(getattr(runtime_policy, "prefer_gpu_vae_encode", False))
     device = torch.device("cpu")
     dtype = torch.float32
     output_device = "cpu"
@@ -30,18 +32,28 @@ def encode_pixels(vae, pixels):
     # Normalize and move dim.
     pixels = _process_input(pixels)
 
-    # Keep patcher bookkeeping synchronized if VAE was previously resident on GPU.
-    if vae.patcher.current_loaded_device() != device:
-        vae.patcher.detach()
-
     # Estimate memory usage using CPU available memory because encode is CPU-bound.
     memory_used = (VAE_ENCODE_MEMORY_STRICT * pixels.shape[2] * pixels.shape[3]) * utils.dtype_size(dtype)
+    if gpu_preferred:
+        resources.prepare_models_for_stage(
+            [vae.patcher],
+            stage_name="vae_encode",
+            target_phase=resources.MemoryPhase.VAE_ENCODE,
+            memory_required=memory_used,
+        )
+        device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+    else:
+        # Keep the shared residency boundary authoritative. If the VAE is still
+        # resident on a non-CPU device, release it through the shared helper first.
+        try:
+            if vae.patcher.current_loaded_device() != device:
+                resources.eject_model(vae.patcher)
+        except Exception:
+            pass
+
     free_memory = resources.get_free_memory(device)
     batch_number = int(free_memory / max(1, memory_used))
     batch_number = max(1, batch_number)
-
-    # Keep VAE encode on CPU so GPU headroom stays available for UNet.
-    vae.first_stage_model.to(device=device, dtype=dtype)
 
     latents = []
     for x in range(0, pixels.shape[0], batch_number):

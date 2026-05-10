@@ -55,6 +55,9 @@ class PipelineRouteContext:
     task_state: Any
     route_id: str
     route_family: str
+    execution_family: Optional[str] = None
+    residency_class: Optional[str] = None
+    sdxl_policy: Any = None
     progressbar_callback: Optional[Callable[[Any, int, str], None]] = None
     yield_result_callback: Optional[Callable[..., None]] = None
     base_model_additional_loras: List[Any] = field(default_factory=list)
@@ -93,6 +96,18 @@ class PipelineRouteContext:
     def update_image_input_result(self, payload: Dict[str, Any]) -> None:
         self.image_input_result = dict(payload)
         self.base_model_additional_loras = list(payload.get('base_model_additional_loras', self.base_model_additional_loras))
+
+    def set_route_artifact(self, stage_id: str, payload: Any, *, fingerprint: Any | None = None) -> None:
+        self.route_artifacts[stage_id] = {
+            'fingerprint': fingerprint,
+            'payload': payload,
+        }
+
+    def get_route_artifact(self, stage_id: str) -> Any:
+        artifact = self.route_artifacts.get(stage_id)
+        if isinstance(artifact, dict) and 'payload' in artifact:
+            return artifact['payload']
+        return artifact
 
     def complete_route(self, **notes: Any) -> None:
         self.route_complete = True

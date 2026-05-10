@@ -1,7 +1,98 @@
 import math
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Tuple
 
+import hashlib
 import torch
+
+from backend import lora_artifacts, resources
+
+
+@dataclass(frozen=True)
+class StageFingerprint:
+    stage_name: str
+    residency_class: str
+    components: tuple[tuple[str, Any], ...]
+
+    def as_key(self) -> tuple[str, str, tuple[tuple[str, Any], ...]]:
+        return self.stage_name, self.residency_class, self.components
+
+    def digest(self) -> str:
+        digest = hashlib.sha256()
+        digest.update(repr(self.as_key()).encode("utf-8"))
+        return digest.hexdigest()
+
+
+def build_stage_fingerprint(
+    stage_name: str,
+    *,
+    residency_class: str | None = None,
+    **inputs: Any,
+) -> StageFingerprint:
+    normalized_residency = resources.normalize_sdxl_residency_class(residency_class)
+    components = tuple(
+        (str(key), _freeze_stage_value(value))
+        for key, value in sorted(inputs.items(), key=lambda item: str(item[0]))
+    )
+    return StageFingerprint(
+        stage_name=str(stage_name),
+        residency_class=normalized_residency,
+        components=components,
+    )
+
+
+def build_sdxl_text_conditioning_fingerprint(
+    *,
+    prompt: str,
+    negative_prompt: str,
+    model_identity: Any,
+    text_encoder_identity: Any,
+    clip_patch_uuid: Any,
+    clip_layer_idx: Any,
+    lora_artifacts_state: Any,
+    route_family_reconciliation_signature: Any,
+    residency_class: str | None = None,
+    route_family: str | None = None,
+    execution_family: Any = None,
+    clip_residency_mode: Any = None,
+) -> StageFingerprint:
+    return build_stage_fingerprint(
+        "sdxl_text_conditioning",
+        residency_class=residency_class,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        model_identity=model_identity,
+        text_encoder_identity=text_encoder_identity,
+        clip_patch_uuid=clip_patch_uuid,
+        clip_layer_idx=clip_layer_idx,
+        lora_signature=lora_artifacts.artifact_registry_signature(lora_artifacts_state),
+        route_family_reconciliation_signature=route_family_reconciliation_signature,
+        route_family=route_family,
+        execution_family=execution_family,
+        clip_residency_mode=clip_residency_mode,
+    )
+
+
+def build_sdxl_prepared_payload_fingerprint(
+    stage_name: str,
+    *,
+    residency_class: str | None = None,
+    model_identity: Any,
+    route_family_reconciliation_signature: Any,
+    prepared_artifact_signature: Any,
+    **inputs: Any,
+) -> StageFingerprint:
+    payload = dict(inputs)
+    payload.update(
+        model_identity=model_identity,
+        route_family_reconciliation_signature=route_family_reconciliation_signature,
+        prepared_artifact_signature=prepared_artifact_signature,
+    )
+    return build_stage_fingerprint(
+        stage_name,
+        residency_class=residency_class,
+        **payload,
+    )
 
 
 def get_timestep_embedding(timesteps, dim, max_period=10000):
@@ -21,6 +112,41 @@ def get_timestep_embedding(timesteps, dim, max_period=10000):
     if dim % 2:
         embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     return embedding
+
+
+def _freeze_stage_value(value: Any) -> Any:
+    if hasattr(value, "__dataclass_fields__"):
+        return _freeze_stage_value(asdict(value))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return ("bytes", hashlib.sha256(bytes(value)).hexdigest())
+    if isinstance(value, dict):
+        return tuple((str(key), _freeze_stage_value(item)) for key, item in sorted(value.items(), key=lambda item: str(item[0])))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_stage_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_stage_value(item) for item in value))
+    try:
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            contiguous = np.ascontiguousarray(value)
+            return (
+                "ndarray",
+                tuple(int(dim) for dim in contiguous.shape),
+                str(contiguous.dtype),
+                hashlib.sha256(contiguous.tobytes()).hexdigest(),
+            )
+    except Exception:
+        pass
+    if isinstance(value, torch.Tensor):
+        contiguous = value.detach().cpu().contiguous()
+        return (
+            "tensor",
+            tuple(int(dim) for dim in contiguous.shape),
+            str(contiguous.dtype),
+            hashlib.sha256(contiguous.numpy().tobytes()).hexdigest(),
+        )
+    return value
 
 
 def encode_tokens_sdxl(clip: Any, tokens: Any, *, use_explicit_residency: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:

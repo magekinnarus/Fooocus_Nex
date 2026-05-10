@@ -167,6 +167,35 @@ def model_reconciliation_signature(model_patcher):
     return str(getattr(model_obj, "current_weight_patches_uuid", None))
 
 
+SDXL_RESIDENCY_CLASS_FULL = "full_resident"
+SDXL_RESIDENCY_CLASS_GGUF_STAGED = "gguf_staged_residency"
+SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING = "gguf_true_streaming"
+
+
+def normalize_sdxl_residency_class(residency_class=None, *, gguf=False, staged=False, true_streaming=False):
+    """
+    Normalize the SDXL residency class into a canonical string.
+
+    The classification is intentionally explicit so the route layer can keep
+    standard SDXL, GGUF staged residency, and benchmark-only true streaming
+    separate.
+    """
+    if residency_class is not None:
+        normalized = str(residency_class).strip().lower()
+        if normalized in {
+            SDXL_RESIDENCY_CLASS_FULL,
+            SDXL_RESIDENCY_CLASS_GGUF_STAGED,
+            SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
+        }:
+            return normalized
+
+    if true_streaming:
+        return SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+    if gguf and staged:
+        return SDXL_RESIDENCY_CLASS_GGUF_STAGED
+    return SDXL_RESIDENCY_CLASS_FULL
+
+
 def prepare_models_for_stage(
     models,
     *,

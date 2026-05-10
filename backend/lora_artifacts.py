@@ -42,6 +42,41 @@ class AdapterArtifact:
     artifact_metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def artifact_registry_signature(artifacts: Any) -> tuple[str, ...]:
+    """
+    Return the canonical retained-identity signature for a LoRA artifact set.
+
+    The helper accepts a single artifact, any iterable of artifacts, or a
+    mapping of artifacts. It is intentionally tolerant because the retained
+    registry may be threaded through different call sites during route work.
+    """
+    if artifacts is None:
+        return ()
+
+    if isinstance(artifacts, AdapterArtifact):
+        return (artifacts.artifact_id,)
+
+    if isinstance(artifacts, (str, bytes)):
+        return (str(artifacts),)
+
+    values = artifacts.values() if isinstance(artifacts, Mapping) else artifacts
+    signature: list[str] = []
+    for artifact in values:
+        if artifact is None:
+            continue
+        if isinstance(artifact, AdapterArtifact):
+            signature.append(artifact.artifact_id)
+            continue
+        if isinstance(artifact, Mapping) and "artifact_id" in artifact:
+            signature.append(str(artifact["artifact_id"]))
+            continue
+        if hasattr(artifact, "artifact_id"):
+            signature.append(str(getattr(artifact, "artifact_id")))
+            continue
+        signature.append(str(artifact))
+    return tuple(signature)
+
+
 def build_application_patch_dict(
     artifact: AdapterArtifact,
     key_map: Mapping[str, str],

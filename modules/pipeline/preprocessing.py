@@ -1,13 +1,94 @@
 import math
 import random
+from collections import OrderedDict
 import backend.resources as resources
 import modules.config as config
 import modules.constants as constants
 import modules.core as core
 import modules.default_pipeline as pipeline
+from backend import conditioning
 import modules.util as util
 from modules.sdxl_styles import apply_style, get_random_style, apply_arrays, random_style_name
 from modules.util import safe_str, remove_empty_str, parse_lora_references_from_prompt
+
+
+_PROMPT_TASK_CACHE: OrderedDict[str, dict] = OrderedDict()
+_PROMPT_TASK_CACHE_LIMIT = 16
+
+
+def _resolve_residency_class(task_state, route_context=None, residency_class=None):
+    if residency_class is not None:
+        return resources.normalize_sdxl_residency_class(residency_class)
+    if route_context is not None and getattr(route_context, 'residency_class', None) is not None:
+        return resources.normalize_sdxl_residency_class(route_context.residency_class)
+    return resources.normalize_sdxl_residency_class(getattr(task_state, 'sdxl_residency_class', None))
+
+
+def _clone_prompt_task(task):
+    cloned = dict(task)
+    if cloned.get('c') is not None:
+        cloned['c'] = pipeline.clone_cond(cloned['c'])
+    if cloned.get('uc') is not None:
+        cloned['uc'] = pipeline.clone_cond(cloned['uc'])
+    for key in ('positive', 'negative', 'styles'):
+        if isinstance(cloned.get(key), list):
+            cloned[key] = list(cloned[key])
+    return cloned
+
+
+def _clone_prompt_tasks(tasks):
+    return [_clone_prompt_task(task) for task in tasks]
+
+
+def _freeze_prompt_tasks(tasks):
+    return tuple(
+        tuple(sorted((key, value) for key, value in task.items() if key not in {'c', 'uc', 'task_seed'}))
+        for task in tasks
+    )
+
+
+def _build_prompt_task_fingerprint(task_state, tasks, *, route_family=None, residency_class=None):
+    residency = _resolve_residency_class(task_state, residency_class=residency_class)
+    prompt_blueprint = _freeze_prompt_tasks(tasks)
+    clip = pipeline.final_clip
+    execution_policy = getattr(task_state, 'sdxl_execution_policy', None)
+    return conditioning.build_stage_fingerprint(
+        'sdxl_prompt_encode',
+        residency_class=residency,
+        model_identity=getattr(pipeline.model_base, 'filename', None),
+        text_encoder_identity=(
+            type(getattr(clip, 'model', clip)).__name__ if clip is not None else None,
+            getattr(clip, 'layer_idx', None) if clip is not None else None,
+        ),
+        clip_patch_uuid=resources.model_reconciliation_signature(clip.patcher) if clip is not None else None,
+        clip_layer_idx=getattr(clip, 'layer_idx', None) if clip is not None else None,
+        lora_artifacts_state=getattr(pipeline.model_base, 'lora_artifact_registry', ()),
+        route_family_reconciliation_signature=route_family or getattr(task_state, 'current_tab', None),
+        route_family=route_family or getattr(task_state, 'current_tab', None),
+        execution_family=getattr(execution_policy, 'execution_family', None),
+        clip_residency_mode=getattr(execution_policy, 'clip_residency_mode', None),
+        clip_skip=getattr(task_state, 'clip_skip', None),
+        prompt_blueprint=prompt_blueprint,
+    )
+
+
+def _remember_prompt_tasks(fingerprint, tasks):
+    cache_key = fingerprint.digest()
+    _PROMPT_TASK_CACHE[cache_key] = {
+        'fingerprint': fingerprint,
+        'tasks': _clone_prompt_tasks(tasks),
+    }
+    _PROMPT_TASK_CACHE.move_to_end(cache_key)
+    while len(_PROMPT_TASK_CACHE) > _PROMPT_TASK_CACHE_LIMIT:
+        _PROMPT_TASK_CACHE.popitem(last=False)
+
+
+def _load_prompt_tasks_from_cache(fingerprint):
+    cached = _PROMPT_TASK_CACHE.get(fingerprint.digest())
+    if cached is None:
+        return None
+    _PROMPT_TASK_CACHE.move_to_end(fingerprint.digest())
+    return _clone_prompt_tasks(cached['tasks'])
 
 
 def apply_overrides(task_state):
@@ -59,7 +140,7 @@ def patch_samplers(task_state):
 
 
 
-def process_prompt(task_state, base_model_additional_loras, progressbar_callback=None):
+def process_prompt(task_state, base_model_additional_loras, progressbar_callback=None, *, route_context=None, route_family=None, residency_class=None):
     """
     Gathers prompts, styles, and LoRAs. Encodes prompts via CLIP.
     """
@@ -102,6 +183,8 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     loras, prompt = parse_lora_references_from_prompt(prompt, task_state.loras,
                                                       config.default_max_lora_number)
 
+    sdxl_policy = getattr(task_state, 'sdxl_execution_policy', None)
+
     with resources.memory_phase_scope(
         resources.MemoryPhase.MODEL_REFRESH,
         task=task_state,
@@ -115,7 +198,8 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
         pipeline.refresh_everything(base_model_name=task_state.base_model_name,
                                     loras=loras, base_model_additional_loras=base_model_additional_loras,
                                     vae_name=task_state.vae_name,
-                                    clip_name=task_state.clip_model_name)
+                                    clip_name=task_state.clip_model_name,
+                                    sdxl_policy=sdxl_policy)
         pipeline.set_clip_skip(task_state.clip_skip)
 
     if progressbar_callback:
@@ -178,6 +262,25 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
             styles=task_styles
         ))
 
+    prompt_fingerprint = _build_prompt_task_fingerprint(
+        task_state,
+        tasks,
+        route_family=route_family or getattr(route_context, 'route_family', None),
+        residency_class=residency_class,
+    )
+    cached_tasks = _load_prompt_tasks_from_cache(prompt_fingerprint)
+    if cached_tasks is not None:
+        task_state.use_expansion = use_expansion
+        task_state.loras_processed = loras
+        if len(cached_tasks) > 0:
+            task_state.positive_cond = cached_tasks[0]['c']
+            task_state.negative_cond = cached_tasks[0]['uc']
+        if pipeline.final_clip is not None and not bool(getattr(sdxl_policy, 'keep_clip_loaded', False)):
+            resources.eject_model(pipeline.final_clip.patcher)
+        if route_context is not None:
+            route_context.set_route_artifact('prompt_encode', cached_tasks, fingerprint=prompt_fingerprint)
+        return cached_tasks
+
     with resources.memory_phase_scope(
         resources.MemoryPhase.PROMPT_ENCODE,
         task=task_state,
@@ -188,7 +291,14 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
             task_state.current_progress += 1
             for i, t in enumerate(tasks):
                 progressbar_callback(task_state, task_state.current_progress, f'Encoding positive #{i + 1} ...')
-                t['c'] = pipeline.clip_encode(texts=t['positive'], pool_top_k=t['positive_top_k'])
+                t['c'] = pipeline.clip_encode(
+                    texts=t['positive'],
+                    pool_top_k=t['positive_top_k'],
+                    route_family=route_family or getattr(route_context, 'route_family', None),
+                    residency_class=residency_class,
+                    execution_family=getattr(sdxl_policy, 'execution_family', None),
+                    clip_residency_mode=getattr(sdxl_policy, 'clip_residency_mode', None),
+                )
             
             task_state.current_progress += 1
             for i, t in enumerate(tasks):
@@ -196,14 +306,45 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
                     t['uc'] = pipeline.clone_cond(t['c'])
                 else:
                     progressbar_callback(task_state, task_state.current_progress, f'Encoding negative #{i + 1} ...')
-                    t['uc'] = pipeline.clip_encode(texts=t['negative'], pool_top_k=t['negative_top_k'])
+                    t['uc'] = pipeline.clip_encode(
+                        texts=t['negative'],
+                        pool_top_k=t['negative_top_k'],
+                        route_family=route_family or getattr(route_context, 'route_family', None),
+                        residency_class=residency_class,
+                        execution_family=getattr(sdxl_policy, 'execution_family', None),
+                        clip_residency_mode=getattr(sdxl_policy, 'clip_residency_mode', None),
+                    )
+        else:
+            for i, t in enumerate(tasks):
+                t['c'] = pipeline.clip_encode(
+                    texts=t['positive'],
+                    pool_top_k=t['positive_top_k'],
+                    route_family=route_family or getattr(route_context, 'route_family', None),
+                    residency_class=residency_class,
+                    execution_family=getattr(sdxl_policy, 'execution_family', None),
+                    clip_residency_mode=getattr(sdxl_policy, 'clip_residency_mode', None),
+                )
+                if abs(float(task_state.cfg_scale) - 1.0) < 1e-4:
+                    t['uc'] = pipeline.clone_cond(t['c'])
+                else:
+                    t['uc'] = pipeline.clip_encode(
+                        texts=t['negative'],
+                        pool_top_k=t['negative_top_k'],
+                        route_family=route_family or getattr(route_context, 'route_family', None),
+                        residency_class=residency_class,
+                        execution_family=getattr(sdxl_policy, 'execution_family', None),
+                        clip_residency_mode=getattr(sdxl_policy, 'clip_residency_mode', None),
+                    )
 
         # Offload CLIP after encoding is finished for all tasks
-        if pipeline.final_clip is not None:
+        if pipeline.final_clip is not None and not bool(getattr(sdxl_policy, 'keep_clip_loaded', False)):
             resources.eject_model(pipeline.final_clip.patcher)
 
     task_state.use_expansion = use_expansion
     task_state.loras_processed = loras # Storing back to state if needed
+    _remember_prompt_tasks(prompt_fingerprint, tasks)
+    if route_context is not None:
+        route_context.set_route_artifact('prompt_encode', tasks, fingerprint=prompt_fingerprint)
     
     # For pipeline components (e.g. upscaler) that need conditioning
     if len(tasks) > 0:

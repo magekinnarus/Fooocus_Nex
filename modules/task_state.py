@@ -108,6 +108,12 @@ class TaskState:
     use_expansion: bool = False
     inpaint_context: object = None
     use_style: bool = True
+    sdxl_execution_policy: object = None
+    sdxl_execution_family: str = ""
+    sdxl_residency_class: str = ""
+    sdxl_clip_residency_mode: str = ""
+    sdxl_vae_encode_mode: str = ""
+    sdxl_keep_clip_loaded: bool = False
 
     def __post_init__(self):
         self.ensure_cn_task_maps()

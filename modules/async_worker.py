@@ -7,7 +7,8 @@ import re
 import torch
 
 import backend.resources as resources
-import modules.default_pipeline as pipeline
+from backend import sdxl_runtime_policy
+import modules.config
 import modules.flags as flags
 from modules.task_state import TaskState
 from modules.pipeline.output import build_image_wall, yield_result
@@ -191,11 +192,28 @@ def handler(async_task: AsyncTask):
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
     sync_flux_fill_route_session(route, task_state, progress=False)
 
+    resolved_taxonomy = modules.config.resolve_model_taxonomy(task_state.base_model_name)
+    active_profile = resources.active_memory_environment_profile()
+    task_state.sdxl_execution_policy = sdxl_runtime_policy.resolve_sdxl_execution_policy(
+        architecture=getattr(resolved_taxonomy, 'architecture', None),
+        base_model_name=task_state.base_model_name,
+        profile=active_profile,
+        requested_residency_class=getattr(task_state, 'sdxl_residency_class', None) or None,
+    )
+    task_state.sdxl_execution_family = str(getattr(task_state.sdxl_execution_policy, 'execution_family', '') or '')
+    task_state.sdxl_residency_class = str(getattr(task_state.sdxl_execution_policy, 'residency_class', '') or '')
+    task_state.sdxl_clip_residency_mode = str(getattr(task_state.sdxl_execution_policy, 'clip_residency_mode', '') or '')
+    task_state.sdxl_vae_encode_mode = str(getattr(task_state.sdxl_execution_policy, 'vae_encode_mode', '') or '')
+    task_state.sdxl_keep_clip_loaded = bool(getattr(task_state.sdxl_execution_policy, 'keep_clip_loaded', False))
+
     route_context = PipelineRouteContext(
         async_task=async_task,
         task_state=task_state,
         route_id=route.route_id,
         route_family=route.family,
+        execution_family=getattr(task_state.sdxl_execution_policy, 'execution_family', None),
+        residency_class=resources.normalize_sdxl_residency_class(getattr(task_state, 'sdxl_residency_class', None)),
+        sdxl_policy=task_state.sdxl_execution_policy,
         progressbar_callback=progressbar,
         yield_result_callback=yield_result,
     )
@@ -223,7 +241,6 @@ def worker():
                     if task.state.generate_image_grid:
                         build_image_wall(task.state)
                     task.yields.append(['finish', task.results])
-                    pipeline.prepare_text_encoder(async_call=True)
             except resources.InterruptProcessingException:
                 with resources.memory_phase_scope(
                     resources.MemoryPhase.FINALIZE,

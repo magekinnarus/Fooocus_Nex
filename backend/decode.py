@@ -19,7 +19,6 @@ def _decode_tiled(vae, samples, tile_x=64, tile_y=64, overlap=16, min_free_mem=0
     Decodes in tiles to save VRAM.
     Uses ComfyUI's 3-pass averaged tiling to prevent artifacts.
     """
-    device = vae.patcher.load_device
     dtype = next(vae.first_stage_model.parameters()).dtype
     output_device = "cpu"
 
@@ -28,7 +27,14 @@ def _decode_tiled(vae, samples, tile_x=64, tile_y=64, overlap=16, min_free_mem=0
     logging.info(f"VAE Tiled Decoding: tile_size={tile_x}, overlap={overlap}")
 
     memory_used = (VAE_DECODE_MEMORY_STRICT * tile_x * tile_y * 64) * utils.dtype_size(dtype)
-    resources.load_models_gpu([vae.patcher], memory_required=memory_used, minimum_memory_required=min_free_mem)
+    resources.prepare_models_for_stage(
+        [vae.patcher],
+        stage_name="vae_decode_tiled",
+        target_phase=resources.MemoryPhase.DECODE,
+        memory_required=memory_used,
+        minimum_memory_required=min_free_mem,
+    )
+    device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
     dtype = next(vae.first_stage_model.parameters()).dtype
 
     decode_fn = lambda a: vae.first_stage_model.decode(a.to(dtype).to(device)).float()
@@ -41,22 +47,28 @@ def _decode_tiled(vae, samples, tile_x=64, tile_y=64, overlap=16, min_free_mem=0
     return output
 
 
+def _decode_cpu_fallback(vae, latent, tile_size=64):
+    """
+    Decode on the shared CPU boundary when GPU co-residency is not viable.
+    """
+    resources.eject_model(vae.patcher)
+    return decode_preloaded_vae(vae, latent, tiled=False, tile_size=tile_size)
+
+
 def decode_preloaded_vae(vae, latent, tiled=False, tile_size=64):
     """
     Decode using a VAE that the caller has already attached/placed.
     No implicit load/eject behavior is performed here.
     """
-    device = vae.patcher.load_device
-    output_device = "cpu"
-
     latent = vae.latent_format.process_out(latent)
 
     if tiled:
         pixel_samples = _decode_tiled(vae, latent, tile_x=tile_size, tile_y=tile_size)
     else:
-        vae.first_stage_model.to(device=device, dtype=torch.float32)
         dtype = torch.float32
 
+        device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        output_device = "cpu"
         memory_used = (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
         free_memory = resources.get_free_memory(device)
         batch_number = int(free_memory / max(1, memory_used))
@@ -79,15 +91,20 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
     """
     Compatibility wrapper that manages VAE residency before calling decode_preloaded_vae.
     """
-    device = vae.patcher.load_device
+    device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
     dtype = next(vae.first_stage_model.parameters()).dtype
+    memory_used = (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
 
     try:
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-        memory_used = (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
-        resources.load_models_gpu([vae.patcher], memory_required=memory_used)
+        resources.prepare_models_for_stage(
+            [vae.patcher],
+            stage_name="vae_decode",
+            target_phase=resources.MemoryPhase.DECODE,
+            memory_required=memory_used,
+        )
         pixel_samples = decode_preloaded_vae(vae, latent, tiled=tiled, tile_size=tile_size)
     except (resources.OOM_EXCEPTION, torch.OutOfMemoryError):
         logging.warning("VAE decode OOM. Retrying with tiled decoding.")
@@ -111,17 +128,8 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
                     min_free_mem=512 * 1024 * 1024,
                 ).movedim(1, -1)
             except (resources.OOM_EXCEPTION, torch.OutOfMemoryError):
-                logging.warning("VAE tiled decode (32x32) OOM. Retrying with minimal tiles (16x16).")
+                logging.warning("VAE tiled decode (32x32) OOM. Falling back to CPU decode.")
                 resources.soft_empty_cache()
-                resources.free_memory(1e30, vae.patcher.load_device)
-                pixel_samples = _decode_tiled(
-                    vae,
-                    vae.latent_format.process_out(latent),
-                    tile_x=max(1, tile_size // 4),
-                    tile_y=max(1, tile_size // 4),
-                    min_free_mem=0,
-                ).movedim(1, -1)
-    finally:
-        resources.eject_model(vae.patcher)
+                pixel_samples = _decode_cpu_fallback(vae, latent, tile_size=max(1, tile_size // 4))
 
     return pixel_samples

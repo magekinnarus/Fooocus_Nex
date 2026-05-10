@@ -6,7 +6,7 @@ import einops
 import torch
 import numpy as np
 import ldm_patched.modules.model_detection
-from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, lora, lora_artifacts, utils as backend_utils
+from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, encode as vae_encode, lora, lora_artifacts, utils as backend_utils
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.latent_formats
 
@@ -25,16 +25,12 @@ import modules.config
 # Inlined from ldm_patched.contrib.external
 class VAEDecode:
     def decode(self, vae, samples):
-        resources.load_models_gpu([vae.patcher])
-        result = (vae.decode(samples["samples"]), )
-        resources.eject_model(vae.patcher)
+        result = (decode.decode_latent(vae, samples["samples"], tiled=False), )
         return result
 
 class VAEDecodeTiled:
     def decode(self, vae, samples, tile_size):
-        resources.load_models_gpu([vae.patcher])
-        result = (vae.decode_tiled(samples["samples"], tile_x=tile_size // 8, tile_y=tile_size // 8, ), )
-        resources.eject_model(vae.patcher)
+        result = (decode.decode_latent(vae, samples["samples"], tiled=True, tile_size=tile_size), )
         return result
 
 def vae_encode_crop_pixels(pixels):
@@ -49,7 +45,7 @@ def vae_encode_crop_pixels(pixels):
 class VAEEncode:
     def encode(self, vae, pixels):
         pixels = vae_encode_crop_pixels(pixels)
-        t = vae.encode(pixels[:,:,:,:3])
+        t = vae_encode.encode_pixels(vae, pixels[:,:,:,:3])["samples"]
         result = ({"samples":t}, )
         return result
 
@@ -327,7 +323,15 @@ def _resolve_loaded_architecture(unet):
 
 @torch.no_grad()
 @torch.inference_mode()
-def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
+def load_model(
+    ckpt_filename,
+    vae_filename=None,
+    clip_filename=None,
+    *,
+    sdxl_policy=None,
+    clip_load_device=None,
+    clip_offload_device=None,
+):
     # Check file existence first
     if not os.path.isfile(ckpt_filename):
         print(f'[Nex Error] Model file not found: {ckpt_filename}')
@@ -351,7 +355,11 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
         except Exception as e:
             print(f'[Nex Error] Failed to load GGUF UNet: {e}')
     elif resolved_taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SDXL:
-        unet, clip, vae = loader.load_sdxl_checkpoint(ckpt_filename)
+        unet, clip, vae = loader.load_sdxl_checkpoint(
+            ckpt_filename,
+            clip_load_device=clip_load_device,
+            clip_offload_device=clip_offload_device,
+        )
     else:
         unet, clip, vae = loader.load_sd15_checkpoint(ckpt_filename)
 
@@ -374,7 +382,12 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
             try:
                 if is_sdxl_base:
                     # GGUF and SDXL use the same CLIP loader pattern
-                    clip = loader.load_sdxl_clip(clip_filename_abs, clip_filename_abs)
+                    clip = loader.load_sdxl_clip(
+                        clip_filename_abs,
+                        clip_filename_abs,
+                        load_device=clip_load_device,
+                        offload_device=clip_offload_device,
+                    )
                 else:
                     clip = loader.load_sd15_clip(clip_filename_abs)
                 print(f'[Nex] Force CLIP loaded: {clip_filename}')
@@ -400,7 +413,7 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
     if vae is None:
         print(f'[Nex Warning] No VAE loaded. Please select a VAE in Advanced > Models.')
 
-    return StableDiffusionModel(
+    model = StableDiffusionModel(
         unet=unet,
         clip=clip,
         vae=vae,
@@ -412,6 +425,12 @@ def load_model(ckpt_filename, vae_filename=None, clip_filename=None):
         taxonomy_source=resolved_taxonomy.source,
         catalog_entry_id=resolved_taxonomy.catalog_entry_id,
     )
+    setattr(model, 'sdxl_execution_policy', sdxl_policy)
+    if clip is not None:
+        setattr(clip, 'runtime_policy', sdxl_policy)
+    if vae is not None:
+        setattr(vae, 'runtime_policy', sdxl_policy)
+    return model
 
 
 @torch.no_grad()
@@ -425,7 +444,7 @@ def decode_vae(vae, latent_image, tiled=False):
     overall_start = time.perf_counter()
     decode_start = time.perf_counter()
     try:
-        return vae.decode(latent_image["samples"], tiled=tiled)
+        return decode.decode_latent(vae, latent_image["samples"], tiled=tiled)
     finally:
         total_duration = time.perf_counter() - overall_start
         decode_duration = time.perf_counter() - decode_start
@@ -440,7 +459,7 @@ def encode_vae(vae, pixels):
     overall_start = time.perf_counter()
     encode_start = time.perf_counter()
     try:
-        return vae.encode(pixels)
+        return vae_encode.encode_pixels(vae, pixels)
     finally:
         encode_duration = time.perf_counter() - encode_start
         perf_message = (

@@ -232,17 +232,12 @@ class InpaintPipeline:
 
     def encode(self, context: InpaintContext, vae) -> dict:
         """VAE encode BB image and generate latent-space denoise_mask."""
-        from backend import resources
-        
         # 1. BB Image to tensor
         pixels = numpy_to_pytorch(context.bb_image)
-        
-        # 2. VAE encode with lifecycle management
-        resources.load_models_gpu([vae.patcher])
+
+        # 2. VAE encode through the shared CPU-default helper boundary.
         latent = core.encode_vae(vae=vae, pixels=pixels)['samples']
-        vae.patcher.detach()
-        resources.soft_empty_cache()
-        
+
         # 3. Create denoise_mask in latent space
         mask_np = np.asarray(context.bb_mask)
         if mask_np.ndim == 3:

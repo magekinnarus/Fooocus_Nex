@@ -5,6 +5,7 @@ from typing import Sequence
 
 import numpy as np
 
+from backend import conditioning
 from backend import environment_profile as environment_profiles
 import modules.flags as flags
 from modules.pipeline.stage_runtime import (
@@ -134,6 +135,23 @@ def _save_step1_result(context: PipelineRouteContext, payload, description: str)
     )
     if context.yield_result_callback is not None:
         context.yield_result_callback(task_state, img_paths, 100, do_not_show_finished_images=True)
+
+
+def _record_prepared_route_artifact(context: PipelineRouteContext, stage_name: str, payload, **extra):
+    from modules import default_pipeline as pipeline
+
+    fingerprint = conditioning.build_sdxl_prepared_payload_fingerprint(
+        stage_name,
+        residency_class=context.residency_class,
+        model_identity=getattr(pipeline.model_base, 'filename', None),
+        route_family_reconciliation_signature=context.route_family,
+        prepared_artifact_signature=payload,
+        execution_family=context.execution_family,
+        route_id=context.route_id,
+        **extra,
+    )
+    context.set_route_artifact(stage_name, payload, fingerprint=fingerprint)
+    return fingerprint
 
 
 def _resolve_inpaint_prompt(task_state) -> str:
@@ -270,6 +288,13 @@ class ImageInputPreparationStage(PipelineStage):
         ):
             payload = apply_image_input(task_state, context.base_model_additional_loras, context.progressbar_callback)
         context.update_image_input_result(payload)
+        _record_prepared_route_artifact(
+            context,
+            'image_input_prepare',
+            payload,
+            current_tab=task_state.current_tab,
+            goals=tuple(task_state.goals),
+        )
         return PipelineStageResult(notes={'goals': list(task_state.goals)})
 
 
@@ -352,6 +377,19 @@ class InpaintPreparationStage(PipelineStage):
         except EarlyReturnException as exc:
             _save_step1_result(context, exc.payload, 'Phase 1 Inpaint BB')
             return PipelineStageResult(route_complete=True, notes={'early_return': True, 'route': 'inpaint'})
+        _record_prepared_route_artifact(
+            context,
+            'inpaint_prepare',
+            {
+                'inpaint_context': getattr(task_state, 'inpaint_context', None),
+                'initial_latent': getattr(task_state, 'initial_latent', None),
+                'width': task_state.width,
+                'height': task_state.height,
+                'denoising_strength': getattr(task_state, 'denoising_strength', None),
+            },
+            current_tab=task_state.current_tab,
+            goals=tuple(task_state.goals),
+        )
         return PipelineStageResult()
 
 
@@ -390,6 +428,19 @@ class OutpaintPreparationStage(PipelineStage):
             context.image_input_result.get('outpaint_mask'),
             context.progressbar_callback,
             context.yield_result_callback,
+        )
+        _record_prepared_route_artifact(
+            context,
+            'outpaint_prepare',
+            {
+                'outpaint_context': getattr(task_state, 'inpaint_context', None),
+                'initial_latent': getattr(task_state, 'initial_latent', None),
+                'width': task_state.width,
+                'height': task_state.height,
+                'denoising_strength': getattr(task_state, 'denoising_strength', None),
+            },
+            current_tab=task_state.current_tab,
+            goals=tuple(task_state.goals),
         )
         return PipelineStageResult()
 
@@ -430,7 +481,14 @@ class PromptEncodingStage(PipelineStage):
             context.prompt_tasks = []
             return PipelineStageResult(notes={'prompt_processing': 'skipped'})
 
-        context.prompt_tasks = process_prompt(task_state, context.base_model_additional_loras, context.progressbar_callback)
+        context.prompt_tasks = process_prompt(
+            task_state,
+            context.base_model_additional_loras,
+            context.progressbar_callback,
+            route_context=context,
+            route_family=context.route_family,
+            residency_class=context.residency_class,
+        )
         resources.cleanup_memory('encoding_to_diffusion', notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.DIFFUSION, task=task_state)
         return PipelineStageResult(notes={'task_count': len(context.prompt_tasks)})
 

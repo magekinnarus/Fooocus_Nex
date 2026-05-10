@@ -444,7 +444,14 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
     return VAE(model.eval(), load_device, offload_device, latent_format=latent_format)
 
 
-def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
+def load_sdxl_checkpoint(
+    ckpt_path,
+    load_device=None,
+    unet_dtype=None,
+    *,
+    clip_load_device=None,
+    clip_offload_device=None,
+):
     """
     Loads SDXL components sequentially and clears raw data immediately.
     """
@@ -473,7 +480,13 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
             sdxl_def.PREFIXES["clip_g"],
             device=torch.device("cpu"),
         )
-        clip = load_sdxl_clip(clip_l_sd, clip_g_sd, dtype=unet_dtype)
+        clip = load_sdxl_clip(
+            clip_l_sd,
+            clip_g_sd,
+            load_device=clip_load_device,
+            offload_device=clip_offload_device,
+            dtype=unet_dtype,
+        )
         del clip_l_sd
         del clip_g_sd
         gc.collect()
@@ -535,7 +548,13 @@ def load_sdxl_checkpoint(ckpt_path, load_device=None, unet_dtype=None):
                     clip_g_sd[new_key] = sd.pop(k)
                     break
                     
-    clip = load_sdxl_clip(clip_l_sd, clip_g_sd, dtype=unet_dtype)
+    clip = load_sdxl_clip(
+        clip_l_sd,
+        clip_g_sd,
+        load_device=clip_load_device,
+        offload_device=clip_offload_device,
+        dtype=unet_dtype,
+    )
     del clip_l_sd
     del clip_g_sd
     gc.collect()
