@@ -155,6 +155,7 @@ class RunMetrics:
     image_save: float
     total_wall: float
     image_path: str
+    clip_residency_mode: str = ""
     warm_state_annotation: Dict[str, Any] = field(default_factory=dict)
     checkpoint_records_path: str = ""
     checkpoint_record_count: int = 0
@@ -335,6 +336,7 @@ class HeadlessGGUFRunner:
         *,
         force_high_vram: bool = False,
         explicit_unet_budget_mb: Optional[int] = None,
+        clip_residency_mode: str = "gpu_then_offload",
         checkpoint_enabled: bool = False,
         checkpoint_persist_full_tensors: bool = False,
         checkpoint_persist_steps: Optional[list[int]] = None,
@@ -347,6 +349,7 @@ class HeadlessGGUFRunner:
         self.route_label = route_label
         self.force_high_vram = force_high_vram
         self.explicit_unet_budget_mb = explicit_unet_budget_mb
+        self.clip_residency_mode = clip_residency_mode
         self.checkpoint_enabled = checkpoint_enabled
         self.checkpoint_persist_full_tensors = checkpoint_persist_full_tensors
         self.checkpoint_persist_steps = checkpoint_persist_steps
@@ -391,6 +394,7 @@ class HeadlessGGUFRunner:
                     denoise=self.scenario.denoise,
                     batch_size=self.scenario.batch_size,
                     quality=self.scenario.quality.as_sampling_dict(),
+                    clip_residency_mode=self.clip_residency_mode,
                 ),
                 device=self.device,
                 unet_budget_mb=self.explicit_unet_budget_mb,
@@ -945,7 +949,8 @@ class HeadlessGGUFRunner:
         if self.route_label == "backend_explicit":
             return (notes + " " if notes else "") + "Uses exposed backend lifecycle seams for CLIP attach/encode, sampler cond prep/denoise, and VAE decode."
         if self.route_label == "direct_sdxl_gguf":
-            return (notes + " " if notes else "") + "Uses backend.gguf.direct_sdxl_runtime direct GGUF runtime path."
+            clip_mode_note = f" clip_residency_mode={self.clip_residency_mode}."
+            return (notes + " " if notes else "") + "Uses backend.gguf.direct_sdxl_runtime direct GGUF runtime path." + clip_mode_note
         if self.route_label == "glass_sdxl_gguf":
             return (notes + " " if notes else "") + "Uses backend.gguf.sdxl_glass_pipeline glass pipeline path with explicit denoise boundaries."
         return (notes + " " if notes else "") + "Uses direct patch_model()/decode path without resources.load_models_gpu()."
@@ -1176,6 +1181,7 @@ class HeadlessGGUFRunner:
             batch_size=self.scenario.batch_size,
             process_start=self._process_started,
             cold_model_load_cpu=self._cold_model_load_cpu if run_label == "cold" else 0.0,
+            clip_residency_mode=str(benchmark.get("clip_residency_mode", "")),
             clip_residency_attach=clip_residency_attach,
             clip_residency_offload=clip_residency_offload,
             clip_gpu_load=clip_residency_attach,
@@ -1235,13 +1241,16 @@ class HeadlessGGUFRunner:
 
 def scenario_library() -> Dict[str, ScenarioConfig]:
     imagine_root = Path(r"D:\AI\Imagine\models")
+    illustrious_unet_root = imagine_root / "unet" / "sdxl" / "illustrious"
+    clip_root = imagine_root / "clip" / "sdxl" / "illustrious"
+    vae_root = imagine_root / "vae"
     return {
         "historical_q4_bare": ScenarioConfig(
             name="historical_q4_bare",
-            unet_path=str(imagine_root / "unet" / "IL_dutch_v30_Q4_K_M.gguf"),
-            clip_l_path=str(imagine_root / "clip" / "IL_dutch_v30_clips.safetensors"),
-            clip_g_path=str(imagine_root / "clip" / "IL_dutch_v30_clips.safetensors"),
-            vae_path=str(imagine_root / "vae" / "sdxl_vae.safetensors"),
+            unet_path=str(illustrious_unet_root / "IL_dutch_v30_Q4_K_M.gguf"),
+            clip_l_path=str(clip_root / "IL_dutch_v30_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_dutch_v30_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
             prompt=DEFAULT_POSITIVE_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE_PROMPT,
             width=1024,
@@ -1262,10 +1271,10 @@ def scenario_library() -> Dict[str, ScenarioConfig]:
         ),
         "mission_q4_acceptance": ScenarioConfig(
             name="mission_q4_acceptance",
-            unet_path=str(imagine_root / "unet" / "IL_beretMixReal_v100_Q4_K_M.gguf"),
-            clip_l_path=str(imagine_root / "clip" / "IL_beretMixReal_v100_clips.safetensors"),
-            clip_g_path=str(imagine_root / "clip" / "IL_beretMixReal_v100_clips.safetensors"),
-            vae_path=str(imagine_root / "vae" / "sdxl_vae.safetensors"),
+            unet_path=str(illustrious_unet_root / "IL_beretMixReal_v100_Q4_K_M.gguf"),
+            clip_l_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
             prompt=DEFAULT_POSITIVE_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE_PROMPT,
             width=1024,
@@ -1279,10 +1288,10 @@ def scenario_library() -> Dict[str, ScenarioConfig]:
         ),
         "mission_q5_acceptance": ScenarioConfig(
             name="mission_q5_acceptance",
-            unet_path=str(imagine_root / "unet" / "IL_beretMixReal_v100_Q5_K_M.gguf"),
-            clip_l_path=str(imagine_root / "clip" / "IL_beretMixReal_v100_clips.safetensors"),
-            clip_g_path=str(imagine_root / "clip" / "IL_beretMixReal_v100_clips.safetensors"),
-            vae_path=str(imagine_root / "vae" / "sdxl_vae.safetensors"),
+            unet_path=str(illustrious_unet_root / "IL_beretMixReal_v100_Q5_K_M.gguf"),
+            clip_l_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
             prompt=DEFAULT_POSITIVE_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE_PROMPT,
             width=1024,
@@ -1294,12 +1303,53 @@ def scenario_library() -> Dict[str, ScenarioConfig]:
             seed=12345,
             notes="Mission acceptance Q5_K_M candidate using current local beretMixReal assets.",
         ),
+        "mission_q8_acceptance": ScenarioConfig(
+            name="mission_q8_acceptance",
+            unet_path=str(illustrious_unet_root / "beretMixReal_v100_Q8.gguf"),
+            clip_l_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
+            prompt=DEFAULT_POSITIVE_PROMPT,
+            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+            width=1024,
+            height=1024,
+            steps=10,
+            cfg=7.0,
+            sampler="euler_ancestral",
+            scheduler="karras",
+            seed=12345,
+            notes="Mission acceptance Q8 probe candidate using current local beretMixReal assets.",
+        ),
+        "historical_q8_bare": ScenarioConfig(
+            name="historical_q8_bare",
+            unet_path=str(illustrious_unet_root / "dutch_v30_Q8.gguf"),
+            clip_l_path=str(clip_root / "IL_dutch_v30_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_dutch_v30_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
+            prompt=DEFAULT_POSITIVE_PROMPT,
+            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+            width=1024,
+            height=1024,
+            steps=10,
+            cfg=7.0,
+            sampler="euler_ancestral",
+            scheduler="karras",
+            seed=12345,
+            quality=QualityConfig(
+                sharpness=2.0,
+                adaptive_cfg=7.0,
+                adm_scale_positive=1.5,
+                adm_scale_negative=0.8,
+                adm_scaler_end=0.3,
+            ),
+            notes="Historical-style dutch Q8 bare GGUF probe using current local assets.",
+        ),
         "comfy_q5_parity": ScenarioConfig(
             name="comfy_q5_parity",
             unet_path=r"G:\ComfyUI\models\diffusion_models\hsUltrahdCG_IllEpic_Q5_K_M.gguf",
-            clip_l_path=r"D:\AI\Imagine\models\clip\IL_beretMixReal_v100_clips.safetensors",
-            clip_g_path=r"D:\AI\Imagine\models\clip\IL_beretMixReal_v100_clips.safetensors",
-            vae_path=r"D:\AI\Imagine\models\vae\sdxl_vae.safetensors",
+            clip_l_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            clip_g_path=str(clip_root / "IL_beretMixReal_v100_clips.safetensors"),
+            vae_path=str(vae_root / "sdxl_vae.safetensors"),
             prompt=COMFY_POSITIVE_PROMPT,
             negative_prompt=COMFY_NEGATIVE_PROMPT,
             width=832,

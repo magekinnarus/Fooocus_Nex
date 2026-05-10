@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 import uuid
@@ -38,6 +39,7 @@ class DirectSDXLGGUFRunConfig:
     scheduler: str
     seed: int
     clip_layer: int = -2
+    clip_residency_mode: str = "gpu_then_offload"
     denoise: float = 1.0
     batch_size: int = 1
     quality: Dict[str, float] = field(default_factory=dict)
@@ -141,6 +143,56 @@ class DirectSDXLGGUFRuntime:
         if self.clip is not None:
             self.clip.patcher.detach()
 
+    def _clip_encode_context(self):
+        if self.config.clip_residency_mode == "cpu_only":
+            return contextlib.nullcontext()
+        return precision.autocast_context(self.device, enabled=True)
+
+    def _encode_prompt_pair_gpu_then_offload(self) -> tuple[Dict[str, Dict[str, torch.Tensor]], Dict[str, float]]:
+        attach_start = time.perf_counter()
+        self.attach_clip_direct()
+        clip_residency_attach = time.perf_counter() - attach_start
+
+        encode_start = time.perf_counter()
+        try:
+            with torch.inference_mode(), self._clip_encode_context():
+                encoded_pair = conditioning.encode_prompt_pair_sdxl(
+                    self.clip,
+                    self.config.prompt,
+                    self.config.negative_prompt,
+                    use_explicit_residency=True,
+                )
+        finally:
+            offload_start = time.perf_counter()
+            self.detach_clip_direct()
+            clip_residency_offload = time.perf_counter() - offload_start
+        clip_encode = time.perf_counter() - encode_start
+
+        return encoded_pair, {
+            "clip_residency_mode": "gpu_then_offload",
+            "clip_residency_attach": clip_residency_attach,
+            "clip_residency_offload": clip_residency_offload,
+            "clip_encode": clip_encode,
+        }
+
+    def _encode_prompt_pair_cpu_only(self) -> tuple[Dict[str, Dict[str, torch.Tensor]], Dict[str, float]]:
+        encode_start = time.perf_counter()
+        with torch.inference_mode(), self._clip_encode_context():
+            encoded_pair = conditioning.encode_prompt_pair_sdxl(
+                self.clip,
+                self.config.prompt,
+                self.config.negative_prompt,
+                use_explicit_residency=False,
+            )
+        clip_encode = time.perf_counter() - encode_start
+
+        return encoded_pair, {
+            "clip_residency_mode": "cpu_only",
+            "clip_residency_attach": 0.0,
+            "clip_residency_offload": 0.0,
+            "clip_encode": clip_encode,
+        }
+
     def attach_unet_direct(self) -> None:
         self.load_components()
         budget = self._clean_unet_budget_bytes()
@@ -162,29 +214,9 @@ class DirectSDXLGGUFRuntime:
             self.vae.patcher.detach()
 
     def encode_prompt_pair_direct(self) -> tuple[Dict[str, Dict[str, torch.Tensor]], Dict[str, float]]:
-        attach_start = time.perf_counter()
-        self.attach_clip_direct()
-        clip_residency_attach = time.perf_counter() - attach_start
-
-        encode_start = time.perf_counter()
-        try:
-            encoded_pair = conditioning.encode_prompt_pair_sdxl(
-                self.clip,
-                self.config.prompt,
-                self.config.negative_prompt,
-                use_explicit_residency=True,
-            )
-        finally:
-            offload_start = time.perf_counter()
-            self.detach_clip_direct()
-            clip_residency_offload = time.perf_counter() - offload_start
-        clip_encode = time.perf_counter() - encode_start
-
-        return encoded_pair, {
-            "clip_residency_attach": clip_residency_attach,
-            "clip_residency_offload": clip_residency_offload,
-            "clip_encode": clip_encode,
-        }
+        if self.config.clip_residency_mode == "cpu_only":
+            return self._encode_prompt_pair_cpu_only()
+        return self._encode_prompt_pair_gpu_then_offload()
 
     def build_adm_pair(
         self,
@@ -633,6 +665,7 @@ class DirectSDXLGGUFRuntime:
             latents=denoise_result.samples,
             benchmark={
                 "route_label": self.route_label,
+                "clip_residency_mode": self.config.clip_residency_mode,
                 "cold_model_load_cpu": cold_model_load_cpu,
                 "clip_residency_attach": prep_metrics["clip_residency_attach"],
                 "clip_residency_offload": prep_metrics["clip_residency_offload"],

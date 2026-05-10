@@ -2,10 +2,14 @@
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -74,6 +78,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unet-path", default=None)
     parser.add_argument("--clip-path", default=None, help="Override both clip_l_path and clip_g_path.")
     parser.add_argument("--vae-path", default=None)
+    parser.add_argument(
+        "--clip-residency-mode",
+        choices=["gpu_then_offload", "cpu_only"],
+        default="gpu_then_offload",
+        help="Control whether CLIP is briefly loaded to GPU for encode or kept CPU-only.",
+    )
     parser.add_argument("--notes", default=None, help="Append a free-form note to the scenario.")
     parser.add_argument("--route-checkpoints", action="store_true", help="Enable route checkpoint metadata capture for checkpoint-capable routes.")
     parser.add_argument("--glass-checkpoints", action="store_true", help="Alias for --route-checkpoints retained for W03 glass-route commands.")
@@ -163,6 +173,7 @@ def main() -> int:
             args.route,
             force_high_vram=args.force_high_vram,
             explicit_unet_budget_mb=args.unet_budget_mb,
+            clip_residency_mode=args.clip_residency_mode,
             checkpoint_enabled=args.route_checkpoints or args.glass_checkpoints,
             checkpoint_persist_full_tensors=args.glass_checkpoint_tensors,
             checkpoint_persist_steps=checkpoint_steps,
