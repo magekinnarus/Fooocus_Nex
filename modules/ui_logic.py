@@ -366,7 +366,7 @@ def get_synced_clip_update_for_base_model(base_model_name, current_clip_model):
     clip_choices = ['None'] + modules.config.clip_filenames
     companion_entry = default_model_manager.resolve_companion_clip(base_model_name, installed_only=True)
     if companion_entry is None:
-        return gr.update(choices=clip_choices, value='None')
+        return gr.update(choices=clip_choices, value=current_clip_model if current_clip_model != 'None' else 'None')
 
     companion_record = default_model_manager.inventory_record(companion_entry)
     clip_value = _resolve_dropdown_choice(

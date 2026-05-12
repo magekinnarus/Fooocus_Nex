@@ -194,6 +194,7 @@ class CLIP:
             [self.patcher],
             stage_name="text_encode",
             target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+            force_full_load=True,
         )
         return self.encode_from_tokens_resident(tokens, return_pooled=return_pooled)
 

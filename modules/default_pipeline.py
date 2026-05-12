@@ -6,7 +6,7 @@ import modules.patch
 import modules.config
 import modules.flags
 import modules.model_taxonomy
-from backend import conditioning, resources, schedulers, lora
+from backend import conditioning, process_transition, resources, schedulers, lora
 from backend import environment_profile
 from backend import sdxl_runtime_policy
 import extras.vae_interpose as vae_interpose
@@ -121,6 +121,39 @@ def _policy_signature(policy) -> tuple:
         getattr(policy, 'clip_residency_mode', None),
         getattr(policy, 'vae_encode_mode', None),
         bool(getattr(policy, 'keep_clip_loaded', False)),
+    )
+
+
+def _sdxl_process_class(policy) -> str:
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        return process_transition.PROCESS_CLASS_STANDARD_SDXL
+    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
+    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
+    if execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED:
+        return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
+    if residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
+        return process_transition.PROCESS_CLASS_SDXL_GGUF_TRUE_STREAMING
+    return process_transition.PROCESS_CLASS_STANDARD_SDXL
+
+
+def _sdxl_process_key(
+    *,
+    base_model_name,
+    vae_name=None,
+    clip_name=None,
+    sdxl_policy=None,
+):
+    return process_transition.build_process_key(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        process_class=_sdxl_process_class(sdxl_policy),
+        authoritative_identity=(
+            str(base_model_name or ''),
+            str(vae_name or ''),
+            str(clip_name or ''),
+        ),
+        execution_family=getattr(sdxl_policy, 'execution_family', None) if sdxl_policy is not None else None,
+        residency_class=getattr(sdxl_policy, 'residency_class', None) if sdxl_policy is not None else None,
+        route_family='sdxl',
     )
 
 
@@ -392,8 +425,65 @@ def prepare_text_encoder(async_call=True):
         [final_clip.patcher],
         stage_name="text_encode",
         target_phase=resources.MemoryPhase.PROMPT_ENCODE,
+        force_full_load=True,
     )
     return
+
+
+def release_sdxl_runtime_state(
+    *,
+    current_process_key=None,
+    next_process_key=None,
+    reason=None,
+    hard_reset=False,
+    current_model_name=None,
+    next_model_name=None,
+):
+    global final_unet, final_clip, final_vae, refresh_state
+
+    def _reset_refresh_state():
+        global refresh_state
+        refresh_state = {
+            'base_model_name': None,
+            'loras': None,
+            'base_model_additional_loras': None,
+            'vae_name': None,
+            'clip_name': None,
+            'sdxl_policy': None,
+            'sdxl_process_class': None,
+            'sdxl_process_key': None,
+        }
+
+    def _release_cached_sdxl_state():
+        global final_unet, final_clip, final_vae
+
+        clear_all_caches()
+        final_unet = None
+        final_clip = None
+        final_vae = None
+
+    if hard_reset and (current_process_key is not None or next_process_key is not None):
+        resources.prepare_for_checkpoint_switch(
+            current_model=current_model_name,
+            next_model=next_model_name,
+            release_callback=_release_cached_sdxl_state,
+            notes={
+                'reason': reason or 'sdxl_process_transition',
+                'current_process_key': process_transition.describe_process_key(current_process_key),
+                'next_process_key': process_transition.describe_process_key(next_process_key),
+            },
+        )
+    else:
+        _release_cached_sdxl_state()
+
+    _reset_refresh_state()
+    return {
+        'released': bool(final_unet is None and final_clip is None and final_vae is None),
+        'reason': reason,
+        'hard_reset': bool(hard_reset),
+        'current_process_key': current_process_key,
+        'next_process_key': next_process_key,
+    }
 
 
 refresh_state = {
@@ -403,6 +493,8 @@ refresh_state = {
     'vae_name': None,
     'clip_name': None,
     'sdxl_policy': None,
+    'sdxl_process_class': None,
+    'sdxl_process_key': None,
 }
 
 
@@ -423,17 +515,31 @@ def refresh_everything(base_model_name, loras,
         'vae_name': vae_name,
         'clip_name': clip_name,
         'sdxl_policy': _policy_signature(sdxl_policy),
+        'sdxl_process_class': _sdxl_process_class(sdxl_policy),
+        'sdxl_process_key': _sdxl_process_key(
+            base_model_name=base_model_name,
+            vae_name=vae_name,
+            clip_name=clip_name,
+            sdxl_policy=sdxl_policy,
+        ),
     }
 
     if refresh_state == current_state and final_unet is not None:
         _apply_sdxl_policy_to_model_base(sdxl_policy)
+        process_transition.set_active_process_key(current_state['sdxl_process_key'])
         return
 
     print(f'[Nex-Pipeline] Reconciling model state (LoRAs: {len(loras)} slots, Additional: {len(base_model_additional_loras)} slots)')
 
-    final_unet = None
-    final_clip = None
-    final_vae = None
+    process_key_changed = refresh_state.get('sdxl_process_key') != current_state.get('sdxl_process_key')
+    release_sdxl_runtime_state(
+        current_process_key=refresh_state.get('sdxl_process_key'),
+        next_process_key=current_state.get('sdxl_process_key'),
+        current_model_name=refresh_state.get('base_model_name') or getattr(model_base, 'filename', None),
+        next_model_name=base_model_name,
+        reason='refresh_everything_transition',
+        hard_reset=bool(process_key_changed),
+    )
 
     refresh_base_model(base_model_name, vae_name, clip_name, sdxl_policy=sdxl_policy)
 
@@ -448,6 +554,7 @@ def refresh_everything(base_model_name, loras,
     clear_all_caches()
 
     refresh_state = current_state
+    process_transition.set_active_process_key(refresh_state['sdxl_process_key'])
     return
 
 

@@ -7,6 +7,7 @@ import re
 import torch
 
 import backend.resources as resources
+from backend import process_transition
 from backend import sdxl_runtime_policy
 import modules.config
 import modules.flags as flags
@@ -163,6 +164,134 @@ def _release_route_runtime_state(task_state):
     task_state.ensure_cn_task_maps()
 
 
+def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | None:
+    policy = getattr(task_state, 'sdxl_execution_policy', None)
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        return None
+
+    base_model_name = getattr(task_state, 'base_model_name', None)
+    vae_name = getattr(task_state, 'vae_name', None)
+    clip_name = getattr(task_state, 'clip_model_name', None)
+    if not base_model_name:
+        return None
+
+    return process_transition.build_process_key(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        process_class=getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None),
+        authoritative_identity=(
+            str(base_model_name or ''),
+            str(vae_name or ''),
+            str(clip_name or ''),
+        ),
+        execution_family=getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None),
+        residency_class=getattr(task_state, 'sdxl_residency_class', None) or getattr(policy, 'residency_class', None),
+        route_family='sdxl',
+    )
+
+
+def _resolve_flux_fill_process_key(
+    task_state,
+    *,
+    route_family: str | None = None,
+    selected_engine: str | None = None,
+) -> process_transition.ProcessKey | None:
+    try:
+        import modules.objr_engine as objr_engine
+
+        if selected_engine is None:
+            selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+        if str(route_family or '').strip().lower() == 'flux_fill':
+            selected_engine = objr_engine.OBJR_ENGINE_FLUX_FILL
+        if selected_engine != objr_engine.OBJR_ENGINE_FLUX_FILL:
+            return None
+
+        asset_paths = objr_engine.resolve_flux_fill_asset_paths(
+            tier=objr_engine.select_flux_fill_tier(),
+            conditioning=getattr(task_state, 'flux_fill_conditioning', None),
+            progress=False,
+        )
+        return process_transition.build_process_key(
+            family=process_transition.PROCESS_FAMILY_FLUX_FILL,
+            process_class=process_transition.PROCESS_CLASS_FLUX_FILL,
+            authoritative_identity=tuple(sorted(asset_paths.items())),
+            route_family='flux_fill',
+        )
+    except Exception:
+        return None
+
+
+def _resolve_requested_process_key(task_state, route) -> process_transition.ProcessKey | None:
+    import modules.objr_engine as objr_engine
+
+    selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+    expects_flux_process = route.family == 'flux_fill' or selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL
+    if expects_flux_process:
+        return _resolve_flux_fill_process_key(
+            task_state,
+            route_family=route.family,
+            selected_engine=selected_engine,
+        )
+    if getattr(task_state.sdxl_execution_policy, 'enabled', False):
+        return _resolve_sdxl_process_key(task_state)
+    return None
+
+
+def _release_process_boundary(current_key, requested_key):
+    if current_key is None or requested_key is None:
+        return None
+
+    if current_key.family == process_transition.PROCESS_FAMILY_SDXL:
+        import modules.default_pipeline as default_pipeline
+
+        return default_pipeline.release_sdxl_runtime_state(
+            current_process_key=current_key,
+            next_process_key=requested_key,
+            current_model_name=getattr(current_key, 'authoritative_identity', (None,))[0] if getattr(current_key, 'authoritative_identity', None) else None,
+            next_model_name=getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None,
+            reason='route_transition',
+            hard_reset=True,
+        )
+
+    if current_key.family == process_transition.PROCESS_FAMILY_FLUX_FILL:
+        import modules.objr_engine as objr_engine
+
+        return objr_engine.end_active_flux_fill_session(reason='route_transition')
+
+    return None
+
+
+def _apply_process_transition_gate(requested_key):
+    if requested_key is None:
+        return None
+
+    current_key = process_transition.get_active_process_key()
+    decision = process_transition.evaluate_process_transition(requested_key)
+    if decision.reset_required:
+        _release_process_boundary(current_key, requested_key)
+        process_transition.clear_active_process_key()
+    return decision
+
+
+def _sync_route_process_activation(route, task_state, requested_process_key):
+    if route.family != "flux_fill":
+        return None
+
+    sync_result = sync_flux_fill_route_session(route, task_state, progress=False)
+
+    import modules.objr_engine as objr_engine
+
+    if (
+        requested_process_key is not None
+        and requested_process_key.family == process_transition.PROCESS_FAMILY_FLUX_FILL
+        and objr_engine.has_active_flux_fill_session()
+    ):
+        process_transition.set_active_process_key(requested_process_key)
+    else:
+        process_transition.clear_active_process_key()
+
+    return sync_result
+
+
 @torch.no_grad()
 @torch.inference_mode()
 def handler(async_task: AsyncTask):
@@ -190,8 +319,6 @@ def handler(async_task: AsyncTask):
         route = build_generation_route(task_state)
 
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
-    sync_flux_fill_route_session(route, task_state, progress=False)
-
     resolved_taxonomy = modules.config.resolve_model_taxonomy(task_state.base_model_name)
     active_profile = resources.active_memory_environment_profile()
     task_state.sdxl_execution_policy = sdxl_runtime_policy.resolve_sdxl_execution_policy(
@@ -205,6 +332,12 @@ def handler(async_task: AsyncTask):
     task_state.sdxl_clip_residency_mode = str(getattr(task_state.sdxl_execution_policy, 'clip_residency_mode', '') or '')
     task_state.sdxl_vae_encode_mode = str(getattr(task_state.sdxl_execution_policy, 'vae_encode_mode', '') or '')
     task_state.sdxl_keep_clip_loaded = bool(getattr(task_state.sdxl_execution_policy, 'keep_clip_loaded', False))
+
+    requested_process_key = _resolve_requested_process_key(task_state, route)
+
+    transition_decision = _apply_process_transition_gate(requested_process_key)
+
+    _sync_route_process_activation(route, task_state, requested_process_key)
 
     route_context = PipelineRouteContext(
         async_task=async_task,

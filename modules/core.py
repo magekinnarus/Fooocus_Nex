@@ -351,7 +351,8 @@ def load_model(
         try:
             unet = loader.load_sdxl_unet(ckpt_filename)
             print(f'[Nex] GGUF UNet loaded successfully.')
-            print(f'[Nex Warning] GGUF is UNet-only. Please select CLIP and VAE in the Models tab.')
+            if clip is None or vae is None:
+                print(f'[Nex Warning] GGUF requires separate CLIP/VAE. No matching companion CLIP found; please select one manually.')
         except Exception as e:
             print(f'[Nex Error] Failed to load GGUF UNet: {e}')
     elif resolved_taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SDXL:

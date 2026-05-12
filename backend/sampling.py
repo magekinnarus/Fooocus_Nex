@@ -678,7 +678,7 @@ class CFGGuider:
             prepared_model,
             noise,
             self.conds,
-            prepared_model.get_dtype(),
+            noise.device,
             latent_image=latent_image,
             denoise_mask=denoise_mask,
             seed=seed,

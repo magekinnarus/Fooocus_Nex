@@ -289,6 +289,49 @@ def encode_model_conds(model_function: Callable, conds: List[Dict[str, Any]], no
         conds[t] = x
     return conds
 
+
+def _stage_model_cond_value(value: Any, device: torch.device) -> Any:
+    cond_tensor = getattr(value, "cond", None)
+    if isinstance(cond_tensor, torch.Tensor) and hasattr(value, "_copy_with"):
+        return value._copy_with(cond_tensor.to(device=device))
+    if isinstance(value, torch.Tensor):
+        return value.to(device=device)
+    return value
+
+
+def _stage_condition_payloads(
+    conds: List[Dict[str, Any]],
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> List[Dict[str, Any]]:
+    staged = []
+    for cond in conds:
+        current = cond.copy()
+        model_conds = current.get("model_conds")
+        if isinstance(model_conds, dict):
+            staged_model_conds = {
+                key: _stage_model_cond_value(value, device)
+                for key, value in model_conds.items()
+            }
+            current["model_conds"] = staged_model_conds
+
+            # Once model_conds owns the canonical prepared form, do not keep a
+            # redundant raw tensor that would be re-staged inside calc_cond_batch.
+            if "c_crossattn" in staged_model_conds and "cross_attn" in current:
+                current.pop("cross_attn", None)
+            if "c_concat" in staged_model_conds and "concat" in current:
+                current.pop("concat", None)
+
+        if "cross_attn" in current and isinstance(current["cross_attn"], torch.Tensor):
+            current["cross_attn"] = current["cross_attn"].to(device=device, dtype=dtype)
+        if "concat" in current and isinstance(current["concat"], torch.Tensor):
+            current["concat"] = current["concat"].to(device=device, dtype=dtype)
+        if "pooled_output" in current and isinstance(current["pooled_output"], torch.Tensor):
+            current["pooled_output"] = current["pooled_output"].to(device=device)
+        staged.append(current)
+    return staged
+
 def process_conds(model: Any, noise: torch.Tensor, conds: Dict[str, Any], device: torch.device, latent_image: Optional[torch.Tensor] = None, denoise_mask: Optional[torch.Tensor] = None, seed: Optional[int] = None) -> Dict[str, Any]:
     for k in conds:
         conds[k] = conds[k][:]
@@ -300,6 +343,10 @@ def process_conds(model: Any, noise: torch.Tensor, conds: Dict[str, Any], device
     if hasattr(model, 'extra_conds'):
         for k in conds:
             conds[k] = encode_model_conds(model.extra_conds, conds[k], noise, device, k, latent_image=latent_image, denoise_mask=denoise_mask, seed=seed)
+
+    model_dtype = model.get_dtype() if hasattr(model, "get_dtype") else noise.dtype
+    for k in conds:
+        conds[k] = _stage_condition_payloads(conds[k], device=device, dtype=model_dtype)
 
     return conds
 

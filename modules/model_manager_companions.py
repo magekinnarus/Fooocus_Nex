@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
@@ -109,8 +110,21 @@ class ModelManagerCompanions:
         return candidates[: max(1, int(limit))]
 
     def resolve_companion_clip(self, selector_or_entry: str | ModelCatalogEntry, *, installed_only: bool = False) -> ModelCatalogEntry | None:
-        entry = selector_or_entry if isinstance(selector_or_entry, ModelCatalogEntry) else self._manager.get_entry(str(selector_or_entry))
-        if entry is None or entry.root_key != 'unet':
+        if isinstance(selector_or_entry, ModelCatalogEntry):
+            entry = selector_or_entry
+        else:
+            selector_str = str(selector_or_entry)
+            entry = self._manager.get_entry(selector_str)
+            
+            if entry is None and os.path.isabs(selector_str):
+                # Fallback: if absolute path provided, try to resolve to relative path within unet root
+                for root in self._manager._root_map.get('unet', []):
+                    if selector_str.startswith(str(root)):
+                        rel = os.path.relpath(selector_str, root)
+                        entry = self._manager.get_entry(rel)
+                        break
+
+        if entry is None or entry.root_key != 'unet' or entry.architecture != 'sdxl':
             return None
 
         target_clip_entry = self._find_companion_clip_catalog_entry(entry)

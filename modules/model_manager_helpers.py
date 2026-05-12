@@ -329,7 +329,7 @@ def _normalize_match_name(value: str | None) -> str:
         return ''
     normalized = Path(str(value)).stem.lower()
     normalized = re.sub(r'[\W_]+', ' ', normalized)
-    normalized = re.sub(r'\b(sd15|sd 15|sdxl|xl|checkpoint|model|lora|vae|clip|embedding|embeddings|gguf)\b', ' ', normalized)
+    normalized = re.sub(r'\b(sd15|sd 15|sdxl|xl|checkpoint|model|lora|vae|clip|clips|embedding|embeddings|gguf)\b', ' ', normalized)
     normalized = re.sub(r'\s+', ' ', normalized).strip()
     return normalized
 

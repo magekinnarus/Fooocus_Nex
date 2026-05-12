@@ -14,6 +14,22 @@ def _process_output(image):
     return torch.clamp((image + 1.0) / 2.0, min=0.0, max=1.0)
 
 
+def _decode_memory_required(latent, dtype):
+    return (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
+
+
+def _should_force_fp32_vae_decode(vae) -> bool:
+    latent_format = getattr(vae, "latent_format", None)
+    latent_channels = getattr(latent_format, "latent_channels", None)
+    if latent_channels == 16:
+        return False
+    if str(getattr(latent_format, "taesd_decoder_name", "") or "").strip().lower() == "taef1_decoder":
+        return False
+    if type(latent_format).__name__.strip().lower() == "flux":
+        return False
+    return True
+
+
 def _decode_tiled(vae, samples, tile_x=64, tile_y=64, overlap=16, min_free_mem=0):
     """
     Decodes in tiles to save VRAM.
@@ -27,14 +43,18 @@ def _decode_tiled(vae, samples, tile_x=64, tile_y=64, overlap=16, min_free_mem=0
     logging.info(f"VAE Tiled Decoding: tile_size={tile_x}, overlap={overlap}")
 
     memory_used = (VAE_DECODE_MEMORY_STRICT * tile_x * tile_y * 64) * utils.dtype_size(dtype)
+    force_full_load = _should_force_fp32_vae_decode(vae)
     resources.prepare_models_for_stage(
         [vae.patcher],
         stage_name="vae_decode_tiled",
         target_phase=resources.MemoryPhase.DECODE,
         memory_required=memory_used,
         minimum_memory_required=min_free_mem,
+        force_full_load=force_full_load,
     )
     device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+    if _should_force_fp32_vae_decode(vae):
+        vae.first_stage_model.to(device=device, dtype=torch.float32)
     dtype = next(vae.first_stage_model.parameters()).dtype
 
     decode_fn = lambda a: vae.first_stage_model.decode(a.to(dtype).to(device)).float()
@@ -65,11 +85,14 @@ def decode_preloaded_vae(vae, latent, tiled=False, tile_size=64):
     if tiled:
         pixel_samples = _decode_tiled(vae, latent, tile_x=tile_size, tile_y=tile_size)
     else:
-        dtype = torch.float32
-
         device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        if _should_force_fp32_vae_decode(vae):
+            vae.first_stage_model.to(device=device, dtype=torch.float32)
+            dtype = torch.float32
+        else:
+            dtype = next(vae.first_stage_model.parameters()).dtype
         output_device = "cpu"
-        memory_used = (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
+        memory_used = _decode_memory_required(latent, dtype)
         free_memory = resources.get_free_memory(device)
         batch_number = int(free_memory / max(1, memory_used))
         batch_number = max(1, batch_number)
@@ -91,21 +114,26 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
     """
     Compatibility wrapper that manages VAE residency before calling decode_preloaded_vae.
     """
-    device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
     dtype = next(vae.first_stage_model.parameters()).dtype
-    memory_used = (VAE_DECODE_MEMORY_STRICT * latent.shape[2] * latent.shape[3] * 64) * utils.dtype_size(dtype)
+    memory_used = _decode_memory_required(latent, dtype)
 
     try:
+        device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
+        force_full_load = _should_force_fp32_vae_decode(vae)
         resources.prepare_models_for_stage(
             [vae.patcher],
             stage_name="vae_decode",
             target_phase=resources.MemoryPhase.DECODE,
             memory_required=memory_used,
+            force_full_load=force_full_load,
         )
-        pixel_samples = decode_preloaded_vae(vae, latent, tiled=tiled, tile_size=tile_size)
+        active_device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        active_free_memory = resources.get_free_memory(active_device)
+        use_tiled_decode = tiled or (active_device.type == "cuda" and active_free_memory < memory_used)
+        pixel_samples = decode_preloaded_vae(vae, latent, tiled=use_tiled_decode, tile_size=tile_size)
     except (resources.OOM_EXCEPTION, torch.OutOfMemoryError):
         logging.warning("VAE decode OOM. Retrying with tiled decoding.")
         try:
