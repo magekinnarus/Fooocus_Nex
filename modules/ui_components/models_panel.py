@@ -17,7 +17,12 @@ def build_models_tab():
     base_model_choices = list(modules.config.model_filenames or [])
     if not base_model_choices:
         base_model_choices = ['None']
-    base_model_value = modules.config.default_base_model_name if modules.config.default_base_model_name in base_model_choices else base_model_choices[0]
+    base_model_value = modules.config.resolve_dropdown_choice(
+        modules.config.default_base_model_name,
+        base_model_choices,
+        folder_paths=modules.config.paths_checkpoints,
+        root_keys=('checkpoints', 'unet'),
+    ) or base_model_choices[0]
 
     with gr.Group():
         with gr.Row():
@@ -39,7 +44,12 @@ def build_models_tab():
         results['clip_model'] = gr.Dropdown(
             label='Force CLIP',
             choices=['None'] + modules.config.clip_filenames,
-            value=modules.config.default_clip,
+            value=modules.config.resolve_dropdown_choice(
+                modules.config.default_clip,
+                ['None'] + modules.config.clip_filenames,
+                folder_paths=modules.config.paths_clips,
+                root_keys=('clip',),
+            ) or 'None',
             show_label=True,
             elem_id='model_clip_dropdown',
         )

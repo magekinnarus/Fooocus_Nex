@@ -364,16 +364,46 @@ def get_filtered_lora_choices_for_model(base_model_name):
 
 def get_synced_clip_update_for_base_model(base_model_name, current_clip_model):
     clip_choices = ['None'] + modules.config.clip_filenames
+    current_clip_value = modules.config.resolve_dropdown_choice(
+        current_clip_model,
+        clip_choices,
+        folder_paths=modules.config.paths_clips,
+        root_keys=('clip',),
+    ) or 'None'
     companion_entry = default_model_manager.resolve_companion_clip(base_model_name, installed_only=True)
     if companion_entry is None:
-        return gr.update(choices=clip_choices, value=current_clip_model if current_clip_model != 'None' else 'None')
+        return gr.update(choices=clip_choices, value=current_clip_value)
 
-    companion_record = default_model_manager.inventory_record(companion_entry)
-    clip_value = _resolve_dropdown_choice(
-        companion_record.installed_relative_path or companion_entry.relative_path or companion_entry.name,
-        clip_choices,
-    ) or 'None'
-    return gr.update(choices=clip_choices, value=clip_value)
+    companion_candidates = []
+
+    def add_candidate(candidate):
+        if candidate is not None and candidate not in companion_candidates:
+            companion_candidates.append(candidate)
+
+    for entry in (
+        companion_entry,
+        default_model_manager.resolve_companion_clip(base_model_name, installed_only=False),
+    ):
+        if entry is None:
+            continue
+        record = default_model_manager.inventory_record(entry)
+        add_candidate(getattr(record, 'installed_relative_path', None))
+        add_candidate(getattr(entry, 'relative_path', None))
+        add_candidate(getattr(entry, 'name', None))
+        add_candidate(getattr(entry, 'alias', None))
+        add_candidate(getattr(entry, 'id', None))
+
+    for candidate in companion_candidates:
+        clip_value = modules.config.resolve_dropdown_choice(
+            candidate,
+            clip_choices,
+            folder_paths=modules.config.paths_clips,
+            root_keys=('clip',),
+        )
+        if clip_value is not None:
+            return gr.update(choices=clip_choices, value=clip_value)
+
+    return gr.update(choices=clip_choices, value=current_clip_value)
 
 
 def _get_base_model_dropdown_state(current_base_model=None):
@@ -381,11 +411,23 @@ def _get_base_model_dropdown_state(current_base_model=None):
     if not base_choices:
         return ['None'], 'None'
 
-    if current_base_model in base_choices:
-        return base_choices, current_base_model
+    current_value = modules.config.resolve_dropdown_choice(
+        current_base_model,
+        base_choices,
+        folder_paths=modules.config.paths_checkpoints,
+        root_keys=('checkpoints', 'unet'),
+    )
+    if current_value is not None:
+        return base_choices, current_value
 
-    if modules.config.default_base_model_name in base_choices:
-        return base_choices, modules.config.default_base_model_name
+    default_value = modules.config.resolve_dropdown_choice(
+        modules.config.default_base_model_name,
+        base_choices,
+        folder_paths=modules.config.paths_checkpoints,
+        root_keys=('checkpoints', 'unet'),
+    )
+    if default_value is not None:
+        return base_choices, default_value
 
     return base_choices, base_choices[0]
 
@@ -398,7 +440,13 @@ def _base_model_requires_default_vae(base_model_name):
 def _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_choices):
     if _base_model_requires_default_vae(base_model_name):
         return modules.flags.default_vae
-    return current_vae_model if current_vae_model in vae_choices else modules.flags.default_vae
+    resolved = modules.config.resolve_dropdown_choice(
+        current_vae_model,
+        vae_choices,
+        folder_paths=modules.config.path_vae,
+        root_keys=('vae',),
+    )
+    return resolved or modules.flags.default_vae
 
 
 def update_model_dependent_choices(base_model_name, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
@@ -446,17 +494,19 @@ def _resolve_dropdown_choice(candidate_value, available_choices):
     if candidate_value is None:
         return None
 
-    available_choices = list(available_choices or [])
-    candidate_value = str(candidate_value)
-    candidates = [candidate_value]
-    basename = os.path.basename(candidate_value)
-    if basename and basename not in candidates:
-        candidates.append(basename)
+    return modules.config.resolve_dropdown_choice(candidate_value, available_choices)
 
-    for candidate in candidates:
-        if candidate in available_choices:
-            return candidate
-    return None
+
+def _get_asset_root_paths(root_keys):
+    folder_paths = []
+    for root_key in list(root_keys or []):
+        try:
+            for path in modules.config.get_asset_root_paths(root_key):
+                if path not in folder_paths:
+                    folder_paths.append(path)
+        except KeyError:
+            continue
+    return folder_paths
 
 
 
@@ -472,7 +522,22 @@ def _get_installed_dropdown_value(selector, expected_root_keys, available_choice
     candidate_value = inventory_record.installed_relative_path or entry.relative_path or entry.name
     if available_choices is None:
         return candidate_value
-    return _resolve_dropdown_choice(candidate_value, available_choices)
+    for value in (
+        candidate_value,
+        entry.relative_path,
+        entry.name,
+        getattr(entry, 'alias', None),
+        getattr(entry, 'id', None),
+    ):
+        resolved = modules.config.resolve_dropdown_choice(
+            value,
+            available_choices,
+            folder_paths=_get_asset_root_paths(expected_root_keys),
+            root_keys=tuple(expected_root_keys),
+        )
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _selector_matches_base_architecture(selector, base_model_name):
@@ -504,7 +569,12 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
         current_lora_weights.append(current_lora_ctrl_values[offset + 2] if offset + 2 < len(current_lora_ctrl_values) else 1.0)
 
     vae_value = _resolve_vae_value_for_base_model(base_value, current_vae_model, vae_choices)
-    clip_value = current_clip_model if current_clip_model in clip_choices else 'None'
+    clip_value = modules.config.resolve_dropdown_choice(
+        current_clip_model,
+        clip_choices,
+        folder_paths=modules.config.paths_clips,
+        root_keys=('clip',),
+    ) or 'None'
     lora_choices = get_filtered_lora_choices_for_model(base_value)
 
     drop_selector = ''

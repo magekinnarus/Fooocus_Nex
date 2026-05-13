@@ -175,17 +175,30 @@ def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | Non
     if not base_model_name:
         return None
 
+    execution_family = getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None)
+    residency_class = getattr(task_state, 'sdxl_residency_class', None) or getattr(policy, 'residency_class', None)
+    normalized_execution_family = str(execution_family or '').strip().lower()
+    normalized_residency_class = str(residency_class or '').strip().lower()
+    route_family = 'sdxl'
+    if (
+        normalized_execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
+        or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
+        or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+        or str(base_model_name).strip().lower().endswith('.gguf')
+    ):
+        route_family = 'gguf'
+
     return process_transition.build_process_key(
         family=process_transition.PROCESS_FAMILY_SDXL,
-        process_class=getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None),
+        process_class=execution_family,
         authoritative_identity=(
             str(base_model_name or ''),
             str(vae_name or ''),
             str(clip_name or ''),
         ),
-        execution_family=getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None),
-        residency_class=getattr(task_state, 'sdxl_residency_class', None) or getattr(policy, 'residency_class', None),
-        route_family='sdxl',
+        execution_family=execution_family,
+        residency_class=residency_class,
+        route_family=route_family,
     )
 
 

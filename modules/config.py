@@ -139,6 +139,38 @@ def resolve_model_catalog_entry(name_or_path, root_keys=('checkpoints', 'unet'),
     return None
 
 
+def resolve_dropdown_choice(name_or_path, choices, *, folder_paths=None, root_keys=None):
+    normalized_choices = {}
+    for choice in list(choices or []):
+        normalized = _normalize_model_selector(choice)
+        if normalized is not None and normalized not in normalized_choices:
+            normalized_choices[normalized] = choice
+
+    if not normalized_choices:
+        return None
+
+    candidates = _build_model_selector_candidates(name_or_path, folder_paths or [])
+
+    if root_keys is not None:
+        entry = resolve_model_catalog_entry(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
+        if entry is not None:
+            for value in (
+                getattr(entry, 'relative_path', None),
+                getattr(entry, 'name', None),
+                getattr(entry, 'alias', None),
+                getattr(entry, 'id', None),
+            ):
+                normalized = _normalize_model_selector(value)
+                if normalized and normalized not in candidates:
+                    candidates.append(normalized)
+
+    for candidate in candidates:
+        if candidate in normalized_choices:
+            return normalized_choices[candidate]
+
+    return None
+
+
 def resolve_model_taxonomy(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
     entry = resolve_model_catalog_entry(name_or_path, root_keys=root_keys, folder_paths=folder_paths)
     if entry is not None:

@@ -136,6 +136,20 @@ def _sdxl_process_class(policy) -> str:
     return process_transition.PROCESS_CLASS_STANDARD_SDXL
 
 
+def _sdxl_route_family(policy, base_model_name=None) -> str:
+    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower() if policy is not None else ''
+    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower() if policy is not None else ''
+    base_model_name = str(base_model_name or '').strip().lower()
+    if (
+        execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
+        or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
+        or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+        or base_model_name.endswith('.gguf')
+    ):
+        return 'gguf'
+    return 'sdxl'
+
+
 def _sdxl_process_key(
     *,
     base_model_name,
@@ -153,7 +167,7 @@ def _sdxl_process_key(
         ),
         execution_family=getattr(sdxl_policy, 'execution_family', None) if sdxl_policy is not None else None,
         residency_class=getattr(sdxl_policy, 'residency_class', None) if sdxl_policy is not None else None,
-        route_family='sdxl',
+        route_family=_sdxl_route_family(sdxl_policy, base_model_name),
     )
 
 

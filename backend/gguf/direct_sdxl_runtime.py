@@ -16,6 +16,7 @@ from backend import (
     k_diffusion,
     loader,
     precision,
+    process_transition,
     resources,
     sampling,
     utils as backend_utils,
@@ -43,6 +44,8 @@ class DirectSDXLGGUFRunConfig:
     denoise: float = 1.0
     batch_size: int = 1
     quality: Dict[str, float] = field(default_factory=dict)
+    process_class: str = process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
+    route_family: str = "gguf"
 
 
 @dataclass
@@ -99,6 +102,19 @@ class DirectSDXLGGUFRuntime:
         self.vae = None
         self._loaded = False
         self._cold_model_load_cpu = 0.0
+
+    def build_process_key(self):
+        return process_transition.build_process_key(
+            family=process_transition.PROCESS_FAMILY_SDXL,
+            process_class=self.config.process_class,
+            authoritative_identity=(
+                str(self.config.unet_path or ""),
+                str(self.config.clip_l_path or ""),
+                str(self.config.clip_g_path or ""),
+                str(self.config.vae_path or ""),
+            ),
+            route_family=self.config.route_family,
+        )
 
     def load_components(self) -> float:
         if self._loaded:
