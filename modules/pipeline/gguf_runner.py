@@ -28,7 +28,6 @@ from backend import (
 from backend import lora_artifacts
 from ldm_patched.modules import latent_formats
 from modules import util
-import modules.core as core
 from modules.core import pytorch_to_numpy
 from modules.model_manager import default_model_manager
 from modules.pipeline.inference import get_sampling_callback
@@ -169,8 +168,6 @@ class GGUFPipelineRunner:
             context.progressbar_callback(task_state, task_state.current_progress, 'Loading models ...')
 
         unet = None
-        clip = None
-        vae = None
         task_metrics: list[dict[str, float]] = []
 
         try:
@@ -179,22 +176,22 @@ class GGUFPipelineRunner:
                 task_state.gguf_engine_path = unet_path
                 engine_fingerprint = self._build_engine_fingerprint(task_state)
                 task_state.gguf_engine_fingerprint = engine_fingerprint
+                task_state.gguf_clip_l_path = clip_l_path
+                task_state.gguf_clip_g_path = clip_g_path
+                task_state.gguf_vae_path = vae_path
 
                 unet = self._acquire_warm_gguf_unet(unet_path, quality, engine_fingerprint)
-
-                clip = loader.load_sdxl_clip(clip_l_path, clip_g_path, dtype=torch.float16)
-                clip.clip_layer(-abs(int(task_state.clip_skip or 1)))
-
-                vae = loader.load_vae(
-                    vae_path,
-                    dtype=torch.float32,
-                    latent_format=latent_formats.SDXL(),
+                clip = self._load_transient_clip(
+                    clip_l_path,
+                    clip_g_path,
+                    clip_skip=task_state.clip_skip,
                 )
-
-                resolved_lora_artifacts = self._resolve_gguf_lora_artifacts(unet, clip, processed_loras)
-                task_state.gguf_lora_artifacts = tuple(resolved_lora_artifacts)
-                self._prepare_warm_gguf_delta(unet, resolved_lora_artifacts)
-                self._apply_lora_artifacts_to_clip(clip, resolved_lora_artifacts)
+                try:
+                    resolved_lora_artifacts = self._resolve_gguf_lora_artifacts(unet, clip, processed_loras)
+                    task_state.gguf_lora_artifacts = tuple(resolved_lora_artifacts)
+                    self._prepare_warm_gguf_delta(unet, resolved_lora_artifacts)
+                finally:
+                    self._dispose_transient_clip(clip)
 
             if context.progressbar_callback is not None:
                 task_state.current_progress += 1
@@ -235,7 +232,6 @@ class GGUFPipelineRunner:
                 ):
                     diffusion_ready, artifact_metrics = self._build_diffusion_ready_artifacts(
                         unet,
-                        clip,
                         task_state,
                         task_dict,
                         context.sdxl_policy,
@@ -265,7 +261,7 @@ class GGUFPipelineRunner:
                     end_notes={'completed': True},
                 ):
                     images, vae_attach_duration, vae_decode_duration = self._decode_latent(
-                        vae,
+                        task_state.gguf_vae_path,
                         denoise_result.samples,
                         device,
                     )
@@ -331,10 +327,6 @@ class GGUFPipelineRunner:
         finally:
             if unet is not None:
                 self._release_gguf_unet_for_warm_state(unet)
-            if vae is not None:
-                vae.patcher.detach()
-            if clip is not None:
-                clip.patcher.detach()
             gc.collect()
             resources.soft_empty_cache(force=True)
 
@@ -620,6 +612,25 @@ class GGUFPipelineRunner:
         logger.warning("LoRA file not found: %s", filename)
         return None
 
+    def _load_transient_clip(
+        self,
+        clip_l_path: str,
+        clip_g_path: str,
+        *,
+        clip_skip: Any,
+    ) -> Any:
+        clip = loader.load_sdxl_clip(clip_l_path, clip_g_path, dtype=torch.float16)
+        clip.clip_layer(-abs(int(clip_skip or 1)))
+        return clip
+
+    def _dispose_transient_clip(self, clip: Any) -> None:
+        if clip is None:
+            return
+        try:
+            clip.patcher.detach()
+        except Exception:
+            pass
+
     def _resolve_gguf_lora_artifacts(
         self,
         unet: Any,
@@ -835,7 +846,6 @@ class GGUFPipelineRunner:
     def _build_diffusion_ready_artifacts(
         self,
         unet: Any,
-        clip: Any,
         task_state: Any,
         task_dict: dict[str, Any],
         policy: Any,
@@ -850,21 +860,33 @@ class GGUFPipelineRunner:
 
         cached_conditioning = self._load_cached_conditioning_artifacts(conditioning_fingerprint)
         if cached_conditioning is None:
+            clip = self._load_transient_clip(
+                task_state.gguf_clip_l_path,
+                task_state.gguf_clip_g_path,
+                clip_skip=task_state.clip_skip,
+            )
             with resources.memory_phase_scope(
                 resources.MemoryPhase.PROMPT_ENCODE,
                 task=task_state,
                 notes={'task_seed': task_dict['task_seed']},
                 end_notes={'completed': True},
             ):
-                encoded_prompt_pair, encode_metrics = self._encode_prompt_pair(
-                    clip,
-                    task_dict['positive'],
-                    task_dict['negative'],
-                    task_dict['positive_top_k'],
-                    task_dict['negative_top_k'],
-                    policy,
-                    device,
-                )
+                try:
+                    self._apply_lora_artifacts_to_clip(
+                        clip,
+                        tuple(getattr(task_state, 'gguf_lora_artifacts', ()) or ()),
+                    )
+                    encoded_prompt_pair, encode_metrics = self._encode_prompt_pair(
+                        clip,
+                        task_dict['positive'],
+                        task_dict['negative'],
+                        task_dict['positive_top_k'],
+                        task_dict['negative_top_k'],
+                        policy,
+                        device,
+                    )
+                finally:
+                    self._dispose_transient_clip(clip)
             metrics.clip_encode = encode_metrics['clip_encode']
 
             adm_start = time.perf_counter()
@@ -1354,8 +1376,6 @@ class GGUFPipelineRunner:
         gguf_ops.reset_trace_stats()
         denoise_start = time.perf_counter()
         denoise_cpu_start = time.process_time()
-        previewer = self._resolve_previewer(unet, task_state)
-
         try:
             with torch.inference_mode(), precision.autocast_context(device):
                 model_sampling = unet.model.model_sampling
@@ -1372,21 +1392,16 @@ class GGUFPipelineRunner:
                 total_steps = len(sigmas) - 1
 
                 def k_callback(payload):
+                    self._log_gguf_sampling_progress(payload, total_steps)
                     if sampling_callback is not None:
-                        denoised = payload.get("denoised")
-                        preview_image = None
-                        if previewer is not None and denoised is not None:
-                            try:
-                                preview_image = previewer(denoised, payload["i"], total_steps)
-                            except Exception:
-                                preview_image = None
                         sampling_callback(
                             payload["i"],
-                            denoised,
+                            payload.get("denoised"),
                             payload.get("x"),
                             total_steps,
-                            preview_image,
+                            None,
                         )
+                    self._log_gguf_step_trace(task_state, payload, total_steps)
 
                 samples = sampler_function(
                     self._build_model_callable(unet, diffusion_ready, task_state, quality),
@@ -1414,13 +1429,84 @@ class GGUFPipelineRunner:
             gguf_trace_stats=gguf_trace_stats,
         )
 
-    def _resolve_previewer(self, unet: Any, task_state: Any) -> Optional[Callable[..., Any]]:
-        if bool(getattr(task_state, 'disable_preview', False)):
+    def _should_trace_gguf_steps(self, task_state: Any) -> bool:
+        if bool(getattr(task_state, 'gguf_debug_step_trace', False)):
+            return True
+        env_value = str(os.getenv('NEX_GGUF_STEP_TRACE', '') or '').strip().lower()
+        return env_value in {'1', 'true', 'yes', 'on'}
+
+    def _log_gguf_sampling_progress(self, payload: dict[str, Any], total_steps: int) -> None:
+        step_index = int(payload.get('i', -1))
+        if step_index < 0 or total_steps <= 0:
+            return
+
+        sigma_value = payload.get('sigma')
+        try:
+            if isinstance(sigma_value, torch.Tensor):
+                sigma_value = float(sigma_value.reshape(-1)[0].item())
+            elif sigma_value is not None:
+                sigma_value = float(sigma_value)
+        except Exception:
+            sigma_value = None
+
+        percent = ((step_index + 1) / float(total_steps)) * 100.0
+        message = (
+            f"[Nex-GGUF-Progress] step={step_index + 1}/{total_steps} "
+            f"percent={percent:.1f}"
+        )
+        if sigma_value is not None:
+            message += f" sigma={sigma_value:.6f}"
+        print(message)
+        logging.info(message)
+
+    @staticmethod
+    def _tensor_trace_stats(tensor: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(tensor, torch.Tensor):
             return None
         try:
-            return core.get_previewer(unet)
+            stats_tensor = tensor.detach().float()
+            return {
+                'shape': list(stats_tensor.shape),
+                'mean': float(stats_tensor.mean().item()),
+                'std': float(stats_tensor.std(unbiased=False).item()) if stats_tensor.numel() > 1 else 0.0,
+                'min': float(stats_tensor.min().item()),
+                'max': float(stats_tensor.max().item()),
+            }
         except Exception:
             return None
+
+    def _log_gguf_step_trace(self, task_state: Any, payload: dict[str, Any], total_steps: int) -> None:
+        if not self._should_trace_gguf_steps(task_state):
+            return
+
+        step_index = int(payload.get('i', -1))
+        if step_index < 0:
+            return
+
+        should_log = step_index < 4 or step_index >= max(total_steps - 1, 0)
+        if not should_log:
+            return
+
+        sigma_value = payload.get('sigma')
+        try:
+            if isinstance(sigma_value, torch.Tensor):
+                sigma_value = float(sigma_value.reshape(-1)[0].item())
+            elif sigma_value is not None:
+                sigma_value = float(sigma_value)
+        except Exception:
+            sigma_value = None
+
+        trace_payload = {
+            'step': step_index + 1,
+            'total_steps': total_steps,
+            'sigma': sigma_value,
+            'denoised': self._tensor_trace_stats(payload.get('denoised')),
+            'latent_x': self._tensor_trace_stats(payload.get('x')),
+            'engine_fingerprint': str(getattr(task_state, 'gguf_engine_fingerprint', '') or ''),
+        }
+        message = f"[Nex-GGUF-StepTrace] {json.dumps(trace_payload, sort_keys=True)}"
+        print(message)
+        logging.info(message)
 
     def _resolve_sampler_function(self, sampler_name: str) -> Callable:
         if sampler_name == "dpm_fast":
@@ -1573,7 +1659,12 @@ class GGUFPipelineRunner:
             return cond_pred + (task_state.cfg_scale - 1.0) * (cond_pred - uncond_pred)
         return uncond_pred + (cond_pred - uncond_pred) * task_state.cfg_scale
 
-    def _decode_latent(self, vae: Any, latent: torch.Tensor, device: torch.device) -> Tuple[torch.Tensor, float, float]:
+    def _decode_latent(self, vae_path: str, latent: torch.Tensor, device: torch.device) -> Tuple[torch.Tensor, float, float]:
+        vae = loader.load_vae(
+            vae_path,
+            dtype=torch.float32,
+            latent_format=latent_formats.SDXL(),
+        )
         attach_start = time.perf_counter()
         vae.patcher.patch_model(device_to=device, lowvram_model_memory=0)
         vae.first_stage_model.to(device=device, dtype=torch.float32)

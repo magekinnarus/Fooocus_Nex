@@ -47,6 +47,11 @@ class DirectSDXLGGUFRunConfig:
     process_class: str = process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
     route_family: str = "gguf"
 
+    @property
+    def clip_path(self) -> str:
+        """Dedicated SDXL GGUF path uses one bundled CLIP source."""
+        return str(self.clip_l_path or self.clip_g_path or "")
+
 
 @dataclass
 class DirectSDXLGGUFPreparedInputs:
@@ -107,12 +112,7 @@ class DirectSDXLGGUFRuntime:
         return process_transition.build_process_key(
             family=process_transition.PROCESS_FAMILY_SDXL,
             process_class=self.config.process_class,
-            authoritative_identity=(
-                str(self.config.unet_path or ""),
-                str(self.config.clip_l_path or ""),
-                str(self.config.clip_g_path or ""),
-                str(self.config.vae_path or ""),
-            ),
+            authoritative_identity=(str(self.config.unet_path or ""),),
             route_family=self.config.route_family,
         )
 
@@ -123,8 +123,8 @@ class DirectSDXLGGUFRuntime:
         start = time.perf_counter()
         self.unet = loader.load_sdxl_unet(self.config.unet_path, dtype=torch.float16)
         self.clip = loader.load_sdxl_clip(
-            self.config.clip_l_path,
-            self.config.clip_g_path,
+            self.config.clip_path,
+            self.config.clip_path,
             dtype=torch.float16,
         )
         self.clip.clip_layer(self.config.clip_layer)

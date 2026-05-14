@@ -349,9 +349,15 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
     """
     load_device = load_device or resources.text_encoder_load_device()
     offload_device = offload_device or resources.text_encoder_offload_device()
-    
+
+    same_source = source_g is source_l
+    if not same_source and isinstance(source_l, str) and isinstance(source_g, str):
+        # The app/runtime path passes the same bundled SDXL CLIP file twice.
+        # Keep this cheap fast path so we do not resolve and load it twice.
+        same_source = source_l == source_g
+
     sd_l = resolve_source(source_l)
-    sd_g = resolve_source(source_g)
+    sd_g = sd_l if same_source else resolve_source(source_g)
     
     # Use Nex implementations
     tokenizer = clip.NexSDXLTokenizer()

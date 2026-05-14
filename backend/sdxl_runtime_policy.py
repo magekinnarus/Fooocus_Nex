@@ -105,10 +105,10 @@ def resolve_sdxl_execution_policy(
         else:
             notes.append("high_vram_gpu_preferred")
     elif is_gguf_model and profile_name == environment_profile.PROFILE_LOCAL_LOW_VRAM:
-        clip_residency_mode = CLIP_RESIDENCY_GPU_THEN_OFFLOAD
+        clip_residency_mode = CLIP_RESIDENCY_CPU_ONLY
         vae_encode_mode = VAE_ENCODE_CPU_DEFAULT
         keep_clip_loaded = False
-        notes.append("local_low_vram_gguf_staged")
+        notes.append("local_low_vram_gguf_cpu_phase1")
     elif is_gguf_model:
         clip_residency_mode = CLIP_RESIDENCY_GPU_THEN_OFFLOAD
         vae_encode_mode = VAE_ENCODE_CPU_DEFAULT

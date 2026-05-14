@@ -29,7 +29,15 @@ def _resolved_memory_profile():
 
 
 def _should_skip_eager_pipeline_preload() -> bool:
-    return environment_profile.should_skip_eager_model_preload(_resolved_memory_profile())
+    profile = _resolved_memory_profile()
+    if environment_profile.should_skip_eager_model_preload(profile):
+        return True
+
+    default_model_name = str(getattr(modules.config, 'default_base_model_name', '') or '').strip().lower()
+    return (
+        str(getattr(profile, 'name', '') or '').lower() == environment_profile.PROFILE_LOCAL_LOW_VRAM
+        and default_model_name.endswith('.gguf')
+    )
 
 
 def _controlnet_residency_summary():
@@ -573,7 +581,7 @@ def refresh_everything(base_model_name, loras,
 
 
 if _should_skip_eager_pipeline_preload():
-    print('[Startup] Skipping eager default SDXL preload for Colab Free memory profile.')
+    print('[Startup] Skipping eager default SDXL preload for the active memory/profile route policy.')
 else:
     try:
         refresh_everything(

@@ -103,6 +103,11 @@ class ScenarioConfig:
     quality: QualityConfig = field(default_factory=QualityConfig)
     notes: str = ""
 
+    @property
+    def clip_path(self) -> str:
+        """Dedicated SDXL GGUF scenarios use one bundled CLIP source."""
+        return str(self.clip_l_path or self.clip_g_path or "")
+
 
 @dataclass
 class EnvironmentSnapshot:
@@ -206,8 +211,7 @@ def collect_environment(route_type: str, scenario: ScenarioConfig) -> Environmen
         route_type=route_type,
         model_paths={
             "unet": scenario.unet_path,
-            "clip_l": scenario.clip_l_path,
-            "clip_g": scenario.clip_g_path,
+            "clip": scenario.clip_path,
             "vae": scenario.vae_path,
         },
     )
@@ -378,8 +382,8 @@ class HeadlessGGUFRunner:
             self.direct_runtime = DirectSDXLGGUFRuntime(
                 DirectSDXLGGUFRunConfig(
                     unet_path=self.scenario.unet_path,
-                    clip_l_path=self.scenario.clip_l_path,
-                    clip_g_path=self.scenario.clip_g_path,
+                    clip_l_path=self.scenario.clip_path,
+                    clip_g_path=self.scenario.clip_path,
                     vae_path=self.scenario.vae_path,
                     prompt=self.scenario.prompt,
                     negative_prompt=self.scenario.negative_prompt,
@@ -407,8 +411,8 @@ class HeadlessGGUFRunner:
             self.glass_pipeline = GlassSDXLGGUFPipeline(
                 GlassSDXLGGUFRunConfig(
                     unet_path=self.scenario.unet_path,
-                    clip_l_path=self.scenario.clip_l_path,
-                    clip_g_path=self.scenario.clip_g_path,
+                    clip_l_path=self.scenario.clip_path,
+                    clip_g_path=self.scenario.clip_path,
                     vae_path=self.scenario.vae_path,
                     prompt=self.scenario.prompt,
                     negative_prompt=self.scenario.negative_prompt,
@@ -435,8 +439,8 @@ class HeadlessGGUFRunner:
         else:
             self.unet = loader.load_sdxl_unet(self.scenario.unet_path, dtype=torch.float16)
             self.clip = loader.load_sdxl_clip(
-                self.scenario.clip_l_path,
-                self.scenario.clip_g_path,
+                self.scenario.clip_path,
+                self.scenario.clip_path,
                 dtype=torch.float16,
             )
             self.clip.clip_layer(self.scenario.clip_layer)
