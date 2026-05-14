@@ -42,6 +42,21 @@ class AdapterArtifact:
     artifact_metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ArtifactTargetClassification:
+    target_families: tuple[str, ...]
+    clip_target_keys: tuple[str, ...]
+    unet_target_keys: tuple[str, ...]
+
+    @property
+    def is_clip_side(self) -> bool:
+        return len(self.clip_target_keys) > 0
+
+    @property
+    def is_unet_side(self) -> bool:
+        return len(self.unet_target_keys) > 0
+
+
 def artifact_registry_signature(artifacts: Any) -> tuple[str, ...]:
     """
     Return the canonical retained-identity signature for a LoRA artifact set.
@@ -75,6 +90,66 @@ def artifact_registry_signature(artifacts: Any) -> tuple[str, ...]:
             continue
         signature.append(str(artifact))
     return tuple(signature)
+
+
+def classify_artifact_targets(artifact: AdapterArtifact) -> ArtifactTargetClassification:
+    """
+    Summarize the resolved matched target coverage for a normalized artifact.
+
+    The classification is intentionally variant-agnostic: SDXL base, Pony,
+    Illustrious, and mixed stacks are separated solely by the resolved target
+    keys they actually patch.
+    """
+    clip_target_keys = sorted(
+        entry.target_key
+        for entry in artifact.target_entries
+        if entry.target_family == "clip"
+    )
+    unet_target_keys = sorted(
+        entry.target_key
+        for entry in artifact.target_entries
+        if entry.target_family == "unet"
+    )
+    target_families = tuple(
+        family
+        for family in ("clip", "unet")
+        if (family == "clip" and clip_target_keys) or (family == "unet" and unet_target_keys)
+    )
+    return ArtifactTargetClassification(
+        target_families=target_families,
+        clip_target_keys=tuple(clip_target_keys),
+        unet_target_keys=tuple(unet_target_keys),
+    )
+
+
+def fingerprint_artifact_entries(
+    artifact: AdapterArtifact,
+    *,
+    target_family: str | None = None,
+) -> str:
+    """
+    Build a side-specific content fingerprint for a normalized artifact.
+
+    This allows invalidation logic to react to actual matched target coverage
+    and payload content per side, instead of relying on whole-file identity or
+    source variant labels.
+    """
+    digest = hashlib.sha256()
+    digest.update(repr(float(artifact.default_scale)).encode("ascii"))
+    if target_family is not None:
+        digest.update(str(target_family).encode("utf-8"))
+
+    for entry in artifact.target_entries:
+        if target_family is not None and entry.target_family != target_family:
+            continue
+        digest.update(entry.target_key.encode("utf-8"))
+        digest.update(entry.payload_family.encode("utf-8"))
+        digest.update(str(entry.source_rank).encode("ascii"))
+        digest.update(str(entry.target_group).encode("utf-8"))
+        digest.update(str(entry.target_subgroup).encode("utf-8"))
+        digest.update(str(entry.block_tag).encode("utf-8"))
+        _update_digest(digest, entry.payload)
+    return digest.hexdigest()
 
 
 def build_application_patch_dict(

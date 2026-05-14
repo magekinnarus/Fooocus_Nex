@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gc
+import hashlib
+import json
 import logging
 import math
 import os
@@ -8,6 +10,7 @@ import random
 import time
 import uuid
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -22,6 +25,7 @@ from backend import (
     resources,
     sampling,
 )
+from backend import lora_artifacts
 from ldm_patched.modules import latent_formats
 from modules import util
 import modules.core as core
@@ -63,6 +67,85 @@ class DiffusionReadyArtifactMetrics:
     cond_prepare: float = 0.0
 
 
+@dataclass(frozen=True)
+class ResolvedGGUFLoraArtifact:
+    requested_name: str
+    resolved_path: str
+    artifact: lora_artifacts.AdapterArtifact
+    target_families: tuple[str, ...]
+    clip_target_keys: tuple[str, ...]
+    unet_target_keys: tuple[str, ...]
+
+    @property
+    def is_clip_side(self) -> bool:
+        return len(self.clip_target_keys) > 0
+
+    @property
+    def is_unet_side(self) -> bool:
+        return len(self.unet_target_keys) > 0
+
+
+@dataclass
+class GGUFWarmArtifactState:
+    """
+    Dedicated GGUF warm state that survives across requests.
+
+    W06g Step 1 establishes the persistence authority only. Selective
+    fingerprint-driven reuse is wired in later steps.
+    """
+
+    warm_unet: Any = None
+    engine_fingerprint: Optional[str] = None
+    conditioning_fingerprint: Optional[str] = None
+    delta_fingerprint: Optional[str] = None
+    input_fingerprint: Optional[str] = None
+    controlnet_fingerprint: Optional[str] = None
+    conditioning_artifacts: Optional[dict[str, Any]] = None
+    delta_artifacts: Optional[dict[str, Any]] = None
+    input_artifacts: Optional[dict[str, Any]] = None
+    controlnet_hints: Any = None
+
+    def clear_cached_artifacts(self) -> None:
+        self.conditioning_fingerprint = None
+        self.delta_fingerprint = None
+        self.input_fingerprint = None
+        self.controlnet_fingerprint = None
+        self.conditioning_artifacts = None
+        self.delta_artifacts = None
+        self.input_artifacts = None
+        self.controlnet_hints = None
+
+    def reset(self, *, release_engine: bool = False) -> None:
+        if release_engine:
+            _detach_gguf_warm_unet(self.warm_unet)
+            self.warm_unet = None
+            self.engine_fingerprint = None
+        self.clear_cached_artifacts()
+
+
+_GGUF_WARM_STATE_LOCK = RLock()
+_GGUF_WARM_STATE = GGUFWarmArtifactState()
+
+
+def _detach_gguf_warm_unet(unet: Any) -> None:
+    if unet is None:
+        return
+    try:
+        unet.detach()
+    except Exception:
+        pass
+
+
+def get_gguf_warm_state() -> GGUFWarmArtifactState:
+    with _GGUF_WARM_STATE_LOCK:
+        return _GGUF_WARM_STATE
+
+
+def reset_gguf_warm_state(*, release_engine: bool = False) -> None:
+    with _GGUF_WARM_STATE_LOCK:
+        _GGUF_WARM_STATE.reset(release_engine=release_engine)
+
+
 class GGUFPipelineRunner:
     """
     Dedicated production runner for the low-VRAM SDXL GGUF txt2img path.
@@ -76,6 +159,7 @@ class GGUFPipelineRunner:
 
         prompt_tasks, processed_loras, use_expansion = self._prepare_prompt_tasks(task_state)
         task_state.loras_processed = processed_loras
+        task_state.gguf_lora_artifacts = ()
         task_state.use_expansion = use_expansion
         context.prompt_tasks = list(prompt_tasks)
         context.all_steps = max(int(task_state.steps) * max(len(prompt_tasks), 1), 1)
@@ -87,33 +171,30 @@ class GGUFPipelineRunner:
         unet = None
         clip = None
         vae = None
-        using_shared_pipeline_components = False
         task_metrics: list[dict[str, float]] = []
 
         try:
             with resources.memory_phase_scope(resources.MemoryPhase.MODEL_REFRESH, task=task_state):
-                shared_components = self._try_reuse_loaded_pipeline_components(context, processed_loras)
-                if shared_components is not None:
-                    using_shared_pipeline_components = True
-                    unet, clip, vae = shared_components
-                    clip.clip_layer(-abs(int(task_state.clip_skip or 1)))
-                    loader.patch_unet_for_quality(unet, quality)
-                else:
-                    unet_path, clip_l_path, clip_g_path, vae_path = self._resolve_components(task_state)
-                    unet = loader.load_sdxl_unet(unet_path, dtype=torch.float16)
-                    loader.patch_unet_for_quality(unet, quality)
+                unet_path, clip_l_path, clip_g_path, vae_path = self._resolve_components(task_state)
+                task_state.gguf_engine_path = unet_path
+                engine_fingerprint = self._build_engine_fingerprint(task_state)
+                task_state.gguf_engine_fingerprint = engine_fingerprint
 
-                    clip = loader.load_sdxl_clip(clip_l_path, clip_g_path, dtype=torch.float16)
-                    clip.clip_layer(-abs(int(task_state.clip_skip or 1)))
+                unet = self._acquire_warm_gguf_unet(unet_path, quality, engine_fingerprint)
 
-                    vae = loader.load_vae(
-                        vae_path,
-                        dtype=torch.float32,
-                        latent_format=latent_formats.SDXL(),
-                    )
+                clip = loader.load_sdxl_clip(clip_l_path, clip_g_path, dtype=torch.float16)
+                clip.clip_layer(-abs(int(task_state.clip_skip or 1)))
 
-                    if processed_loras:
-                        self._apply_loras_to_gguf(unet, clip, processed_loras)
+                vae = loader.load_vae(
+                    vae_path,
+                    dtype=torch.float32,
+                    latent_format=latent_formats.SDXL(),
+                )
+
+                resolved_lora_artifacts = self._resolve_gguf_lora_artifacts(unet, clip, processed_loras)
+                task_state.gguf_lora_artifacts = tuple(resolved_lora_artifacts)
+                self._prepare_warm_gguf_delta(unet, resolved_lora_artifacts)
+                self._apply_lora_artifacts_to_clip(clip, resolved_lora_artifacts)
 
             if context.progressbar_callback is not None:
                 task_state.current_progress += 1
@@ -249,13 +330,12 @@ class GGUFPipelineRunner:
             return context
         finally:
             if unet is not None:
-                unet.detach()
+                self._release_gguf_unet_for_warm_state(unet)
             if vae is not None:
                 vae.patcher.detach()
             if clip is not None:
                 clip.patcher.detach()
-            if not using_shared_pipeline_components:
-                gc.collect()
+            gc.collect()
             resources.soft_empty_cache(force=True)
 
     def _build_quality(self, task_state: Any) -> Dict[str, Any]:
@@ -492,41 +572,60 @@ class GGUFPipelineRunner:
         context: PipelineRouteContext,
         processed_loras: list[tuple[str, float]],
     ) -> tuple[Any, Any, Any] | None:
-        try:
-            import modules.default_pipeline as default_pipeline
-        except Exception:
+        return None
+
+    def _acquire_warm_gguf_unet(
+        self,
+        unet_path: str,
+        quality: Dict[str, Any],
+        engine_fingerprint: str,
+    ) -> Any:
+        with _GGUF_WARM_STATE_LOCK:
+            warm_state = _GGUF_WARM_STATE
+            if warm_state.warm_unet is not None and warm_state.engine_fingerprint == engine_fingerprint:
+                loader.patch_unet_for_quality(warm_state.warm_unet, quality)
+                return warm_state.warm_unet
+
+            old_unet = warm_state.warm_unet
+            warm_state.reset(release_engine=False)
+            warm_state.engine_fingerprint = engine_fingerprint
+            warm_state.warm_unet = None
+
+        if old_unet is not None:
+            _detach_gguf_warm_unet(old_unet)
+
+        unet = loader.load_sdxl_unet(unet_path, dtype=torch.float16)
+        loader.patch_unet_for_quality(unet, quality)
+
+        with _GGUF_WARM_STATE_LOCK:
+            _GGUF_WARM_STATE.warm_unet = unet
+            _GGUF_WARM_STATE.engine_fingerprint = engine_fingerprint
+        return unet
+
+    def _release_gguf_unet_for_warm_state(self, unet: Any) -> None:
+        with _GGUF_WARM_STATE_LOCK:
+            if _GGUF_WARM_STATE.warm_unet is unet:
+                _detach_gguf_warm_unet(unet)
+                return
+        _detach_gguf_warm_unet(unet)
+
+    def _resolve_lora_filename(self, filename: str) -> str | None:
+        if filename == 'None':
             return None
+        if os.path.exists(filename):
+            return filename
+        resolved = util.get_file_from_folder_list(filename, modules.config.paths_lora_lookup)
+        if resolved and os.path.exists(resolved):
+            return resolved
+        logger.warning("LoRA file not found: %s", filename)
+        return None
 
-        refresh_state = getattr(default_pipeline, 'refresh_state', None)
-        final_unet = getattr(default_pipeline, 'final_unet', None)
-        final_clip = getattr(default_pipeline, 'final_clip', None)
-        final_vae = getattr(default_pipeline, 'final_vae', None)
-        if not isinstance(refresh_state, dict) or final_unet is None or final_clip is None or final_vae is None:
-            return None
-
-        task_state = context.task_state
-        normalize_selector = lambda value: str(value or '').strip()
-        expected_state = {
-            'base_model_name': normalize_selector(task_state.base_model_name),
-            'loras': sorted(processed_loras),
-            'base_model_additional_loras': sorted(context.base_model_additional_loras or []),
-            'vae_name': normalize_selector(task_state.vae_name),
-            'clip_name': normalize_selector(task_state.clip_model_name),
-        }
-        actual_state = {
-            'base_model_name': normalize_selector(refresh_state.get('base_model_name')),
-            'loras': sorted(refresh_state.get('loras') or []),
-            'base_model_additional_loras': sorted(refresh_state.get('base_model_additional_loras') or []),
-            'vae_name': normalize_selector(refresh_state.get('vae_name')),
-            'clip_name': normalize_selector(refresh_state.get('clip_name')),
-        }
-        if expected_state != actual_state:
-            return None
-
-        print('[Nex-Pipeline] Reusing already-loaded UI SDXL components for dedicated GGUF runner.')
-        return final_unet, final_clip, final_vae
-
-    def _apply_loras_to_gguf(self, unet: Any, clip: Any, loras: List[Tuple[str, float]]) -> None:
+    def _resolve_gguf_lora_artifacts(
+        self,
+        unet: Any,
+        clip: Any,
+        loras: List[Tuple[str, float]],
+    ) -> tuple[ResolvedGGUFLoraArtifact, ...]:
         from backend import lora as lora_backend
         from backend.lora import model_lora_keys_clip, model_lora_keys_unet
 
@@ -536,27 +635,115 @@ class GGUFPipelineRunner:
         clip_keys = model_lora_keys_clip(clip.cond_stage_model, {})
         clip_keys.update({key: key for key in clip.cond_stage_model.state_dict().keys()})
 
+        resolved_artifacts: list[ResolvedGGUFLoraArtifact] = []
         for filename, weight in loras:
-            if filename == 'None':
-                continue
-
-            lora_path = util.get_file_from_folder_list(filename, modules.config.paths_lora_lookup)
-            if not lora_path:
-                logger.warning("LoRA file not found: %s", filename)
+            lora_path = self._resolve_lora_filename(filename)
+            if lora_path is None:
                 continue
 
             lora_sd = loader.utils.load_torch_file(lora_path)
             try:
+                loaded_patches: dict[str, Any] = {}
                 unet_patches = lora_backend.load_lora(lora_sd, unet_keys, log_missing=False)
-                if unet_patches:
-                    unet.add_patches(unet_patches, weight)
-
                 clip_patches = lora_backend.load_lora(lora_sd, clip_keys, log_missing=False)
+                if unet_patches:
+                    loaded_patches.update(unet_patches)
                 if clip_patches:
-                    clip.add_patches(clip_patches, weight)
+                    loaded_patches.update(clip_patches)
+                artifact = lora_artifacts.normalize_loaded_lora_artifact(
+                    source_path=lora_path,
+                    default_scale=weight,
+                    loaded_patches=loaded_patches,
+                )
+                classification = lora_artifacts.classify_artifact_targets(artifact)
+                resolved_artifacts.append(
+                    ResolvedGGUFLoraArtifact(
+                        requested_name=filename,
+                        resolved_path=lora_path,
+                        artifact=artifact,
+                        target_families=classification.target_families,
+                        clip_target_keys=classification.clip_target_keys,
+                        unet_target_keys=classification.unet_target_keys,
+                    )
+                )
             finally:
                 del lora_sd
                 resources.soft_empty_cache(force=False)
+        return tuple(resolved_artifacts)
+
+    def _clear_gguf_unet_lora_state(self, unet: Any) -> None:
+        unet.detach()
+        unet.patches = {}
+        unet.backup.clear()
+        unet.object_patches_backup.clear()
+        unet.gguf_dense_delta_cache = {}
+        unet.patches_uuid = uuid.uuid4()
+
+    def _prepare_warm_gguf_delta(
+        self,
+        unet: Any,
+        resolved_artifacts: tuple[ResolvedGGUFLoraArtifact, ...],
+    ) -> None:
+        delta_fingerprint = self._build_delta_fingerprint(resolved_artifacts)
+
+        with _GGUF_WARM_STATE_LOCK:
+            warm_state = _GGUF_WARM_STATE
+            if warm_state.warm_unet is unet and warm_state.delta_fingerprint == delta_fingerprint:
+                return
+
+        self._clear_gguf_unet_lora_state(unet)
+        self._apply_lora_artifacts_to_unet(unet, resolved_artifacts)
+
+        with _GGUF_WARM_STATE_LOCK:
+            if _GGUF_WARM_STATE.warm_unet is unet:
+                _GGUF_WARM_STATE.delta_fingerprint = delta_fingerprint
+                _GGUF_WARM_STATE.delta_artifacts = {
+                    "artifact_signature": tuple(
+                        resolved.artifact.artifact_id
+                        for resolved in resolved_artifacts
+                        if resolved.is_unet_side
+                    ),
+                }
+
+    def _apply_lora_artifacts_to_unet(
+        self,
+        unet: Any,
+        resolved_artifacts: tuple[ResolvedGGUFLoraArtifact, ...],
+    ) -> None:
+        from backend.lora import model_lora_keys_unet
+
+        unet_keys = model_lora_keys_unet(unet.model, {})
+        unet_keys.update({key: key for key in unet.model.state_dict().keys()})
+
+        for resolved in resolved_artifacts:
+            if resolved.is_unet_side:
+                unet_patches = lora_artifacts.build_application_patch_dict(
+                    resolved.artifact,
+                    unet_keys,
+                    target_family="unet",
+                )
+                if unet_patches:
+                    unet.add_patches(unet_patches, resolved.artifact.default_scale)
+
+    def _apply_lora_artifacts_to_clip(
+        self,
+        clip: Any,
+        resolved_artifacts: tuple[ResolvedGGUFLoraArtifact, ...],
+    ) -> None:
+        from backend.lora import model_lora_keys_clip
+
+        clip_keys = model_lora_keys_clip(clip.cond_stage_model, {})
+        clip_keys.update({key: key for key in clip.cond_stage_model.state_dict().keys()})
+
+        for resolved in resolved_artifacts:
+            if resolved.is_clip_side:
+                clip_patches = lora_artifacts.build_application_patch_dict(
+                    resolved.artifact,
+                    clip_keys,
+                    target_family="clip",
+                )
+                if clip_patches:
+                    clip.add_patches(clip_patches, resolved.artifact.default_scale)
 
     def _encode_prompt_pair(
         self,
@@ -655,35 +842,50 @@ class GGUFPipelineRunner:
         device: torch.device,
     ) -> tuple[DiffusionReadyArtifacts, DiffusionReadyArtifactMetrics]:
         metrics = DiffusionReadyArtifactMetrics()
-
-        with resources.memory_phase_scope(
-            resources.MemoryPhase.PROMPT_ENCODE,
-            task=task_state,
-            notes={'task_seed': task_dict['task_seed']},
-            end_notes={'completed': True},
-        ):
-            encoded_prompt_pair, encode_metrics = self._encode_prompt_pair(
-                clip,
-                task_dict['positive'],
-                task_dict['negative'],
-                task_dict['positive_top_k'],
-                task_dict['negative_top_k'],
-                policy,
-                device,
-            )
-        metrics.clip_encode = encode_metrics['clip_encode']
-
-        adm_start = time.perf_counter()
-        adm_pair = conditioning.build_sdxl_adm_pair(
-            encoded_prompt_pair,
-            task_state.width,
-            task_state.height,
-            target_width=task_state.width,
-            target_height=task_state.height,
-            adm_scale_positive=task_state.adm_scaler_positive,
-            adm_scale_negative=task_state.adm_scaler_negative,
+        conditioning_fingerprint = self._build_conditioning_fingerprint(
+            task_state,
+            task_dict,
+            tuple(getattr(task_state, 'gguf_lora_artifacts', ()) or ()),
         )
-        metrics.adm_build = time.perf_counter() - adm_start
+
+        cached_conditioning = self._load_cached_conditioning_artifacts(conditioning_fingerprint)
+        if cached_conditioning is None:
+            with resources.memory_phase_scope(
+                resources.MemoryPhase.PROMPT_ENCODE,
+                task=task_state,
+                notes={'task_seed': task_dict['task_seed']},
+                end_notes={'completed': True},
+            ):
+                encoded_prompt_pair, encode_metrics = self._encode_prompt_pair(
+                    clip,
+                    task_dict['positive'],
+                    task_dict['negative'],
+                    task_dict['positive_top_k'],
+                    task_dict['negative_top_k'],
+                    policy,
+                    device,
+                )
+            metrics.clip_encode = encode_metrics['clip_encode']
+
+            adm_start = time.perf_counter()
+            adm_pair = conditioning.build_sdxl_adm_pair(
+                encoded_prompt_pair,
+                task_state.width,
+                task_state.height,
+                target_width=task_state.width,
+                target_height=task_state.height,
+                adm_scale_positive=task_state.adm_scaler_positive,
+                adm_scale_negative=task_state.adm_scaler_negative,
+            )
+            metrics.adm_build = time.perf_counter() - adm_start
+            self._store_conditioning_artifacts(
+                conditioning_fingerprint,
+                encoded_prompt_pair,
+                adm_pair,
+            )
+        else:
+            encoded_prompt_pair = cached_conditioning["encoded_prompt_pair"]
+            adm_pair = cached_conditioning["adm_pair"]
 
         positive = [[
             encoded_prompt_pair["positive"]["cond"],
@@ -725,6 +927,11 @@ class GGUFPipelineRunner:
             device,
             self._build_quality(task_state),
         )
+        fingerprints = self._build_diffusion_fingerprints(
+            task_state,
+            task_dict,
+            input_fingerprint=input_fingerprint,
+        )
 
         return DiffusionReadyArtifacts(
             positive_conds=processed_conds.get("positive") or [],
@@ -733,12 +940,214 @@ class GGUFPipelineRunner:
             noise=noise,
             denoise_mask=denoise_mask,
             sigmas=sigmas,
-            conditioning_fingerprint="",
-            delta_fingerprint="",
-            engine_fingerprint=str(getattr(task_state, 'base_model_name', '') or ''),
-            input_fingerprint=input_fingerprint,
-            controlnet_fingerprint=None,
+            conditioning_fingerprint=conditioning_fingerprint,
+            delta_fingerprint=fingerprints["delta_fingerprint"],
+            engine_fingerprint=fingerprints["engine_fingerprint"],
+            input_fingerprint=fingerprints["input_fingerprint"],
+            controlnet_fingerprint=fingerprints["controlnet_fingerprint"],
         ), metrics
+
+    def _load_cached_conditioning_artifacts(
+        self,
+        conditioning_fingerprint: str,
+    ) -> Optional[dict[str, Any]]:
+        with _GGUF_WARM_STATE_LOCK:
+            artifacts = _GGUF_WARM_STATE.conditioning_artifacts or {}
+            cached = artifacts.get(conditioning_fingerprint)
+            if cached is None:
+                return None
+            _GGUF_WARM_STATE.conditioning_fingerprint = conditioning_fingerprint
+            return self._clone_cached_value(cached)
+
+    def _store_conditioning_artifacts(
+        self,
+        conditioning_fingerprint: str,
+        encoded_prompt_pair: dict[str, Any],
+        adm_pair: dict[str, Any],
+    ) -> None:
+        cached = {
+            "encoded_prompt_pair": self._cache_to_cpu(encoded_prompt_pair),
+            "adm_pair": self._cache_to_cpu(adm_pair),
+        }
+        with _GGUF_WARM_STATE_LOCK:
+            artifacts = dict(_GGUF_WARM_STATE.conditioning_artifacts or {})
+            artifacts[conditioning_fingerprint] = cached
+            _GGUF_WARM_STATE.conditioning_artifacts = artifacts
+            _GGUF_WARM_STATE.conditioning_fingerprint = conditioning_fingerprint
+
+    def _build_diffusion_fingerprints(
+        self,
+        task_state: Any,
+        task_dict: dict[str, Any],
+        *,
+        input_fingerprint: Optional[str],
+    ) -> dict[str, Optional[str]]:
+        resolved_lora_artifacts = tuple(getattr(task_state, 'gguf_lora_artifacts', ()) or ())
+        return {
+            "conditioning_fingerprint": self._build_conditioning_fingerprint(
+                task_state,
+                task_dict,
+                resolved_lora_artifacts,
+            ),
+            "delta_fingerprint": self._build_delta_fingerprint(resolved_lora_artifacts),
+            "engine_fingerprint": self._build_engine_fingerprint(task_state),
+            "input_fingerprint": self._build_input_fingerprint(task_state, input_fingerprint),
+            "controlnet_fingerprint": self._build_controlnet_fingerprint(task_state),
+        }
+
+    def _build_conditioning_fingerprint(
+        self,
+        task_state: Any,
+        task_dict: dict[str, Any],
+        resolved_lora_artifacts: tuple[ResolvedGGUFLoraArtifact, ...],
+    ) -> str:
+        clip_loras = []
+        for resolved in resolved_lora_artifacts:
+            if not resolved.is_clip_side:
+                continue
+            clip_loras.append(
+                {
+                    "artifact_id": resolved.artifact.artifact_id,
+                    "side_hash": lora_artifacts.fingerprint_artifact_entries(
+                        resolved.artifact,
+                        target_family="clip",
+                    ),
+                    "strength": float(resolved.artifact.default_scale),
+                    "target_keys": list(resolved.clip_target_keys),
+                }
+            )
+
+        payload = {
+            "positive_workloads": list(task_dict.get("positive") or []),
+            "negative_workloads": list(task_dict.get("negative") or []),
+            "styles": [str(style) for style in (task_dict.get("styles") or [])],
+            "clip_skip": int(getattr(task_state, "clip_skip", 1) or 1),
+            "positive_top_k": int(task_dict.get("positive_top_k") or 0),
+            "negative_top_k": int(task_dict.get("negative_top_k") or 0),
+            "clip_side_loras": clip_loras,
+        }
+        return self._fingerprint_json_payload(payload)
+
+    def _build_delta_fingerprint(
+        self,
+        resolved_lora_artifacts: tuple[ResolvedGGUFLoraArtifact, ...],
+    ) -> str:
+        unet_loras = []
+        for resolved in resolved_lora_artifacts:
+            if not resolved.is_unet_side:
+                continue
+            unet_loras.append(
+                {
+                    "artifact_id": resolved.artifact.artifact_id,
+                    "side_hash": lora_artifacts.fingerprint_artifact_entries(
+                        resolved.artifact,
+                        target_family="unet",
+                    ),
+                    "strength": float(resolved.artifact.default_scale),
+                    "target_keys": list(resolved.unet_target_keys),
+                }
+            )
+        return self._fingerprint_json_payload({"unet_side_loras": unet_loras})
+
+    def _build_engine_fingerprint(self, task_state: Any) -> str:
+        engine_path = str(getattr(task_state, "gguf_engine_path", "") or "")
+        engine_payload = {
+            "selector": str(getattr(task_state, "base_model_name", "") or ""),
+            "resolved_path": engine_path,
+        }
+        if engine_path and os.path.isfile(engine_path):
+            try:
+                stat = os.stat(engine_path)
+                engine_payload["size"] = int(stat.st_size)
+                engine_payload["mtime_ns"] = int(stat.st_mtime_ns)
+            except OSError:
+                pass
+        return self._fingerprint_json_payload(engine_payload)
+
+    def _build_input_fingerprint(
+        self,
+        task_state: Any,
+        prepared_input_fingerprint: Optional[str],
+    ) -> Optional[str]:
+        if prepared_input_fingerprint:
+            return prepared_input_fingerprint
+
+        raw_inputs = {}
+        for attr_name in (
+            "input_image",
+            "uov_input_image",
+            "inpaint_image",
+            "input_mask",
+            "inpaint_mask",
+        ):
+            value = getattr(task_state, attr_name, None)
+            if value is not None:
+                raw_inputs[attr_name] = self._fingerprint_value(value)
+
+        if not raw_inputs:
+            return None
+        return self._fingerprint_json_payload(raw_inputs)
+
+    def _build_controlnet_fingerprint(self, task_state: Any) -> str:
+        has_controlnet = bool(getattr(task_state, "controlnet_tasks", None))
+        payload = {
+            "reserved": True,
+            "implemented": False,
+            "requested": has_controlnet,
+        }
+        return self._fingerprint_json_payload(payload)
+
+    def _fingerprint_json_payload(self, payload: Any) -> str:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _fingerprint_value(self, value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            digest = hashlib.sha256()
+            tensor = value.detach().cpu().contiguous()
+            digest.update(str(tuple(int(dim) for dim in tensor.shape)).encode("utf-8"))
+            digest.update(str(tensor.dtype).encode("utf-8"))
+            digest.update(tensor.numpy().tobytes())
+            return {"tensor_sha256": digest.hexdigest()}
+        if isinstance(value, dict):
+            return {str(key): self._fingerprint_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+        if isinstance(value, (list, tuple)):
+            return [self._fingerprint_value(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, bytes):
+            return {"bytes_sha256": hashlib.sha256(value).hexdigest()}
+        if hasattr(value, "tobytes") and hasattr(value, "shape"):
+            try:
+                digest = hashlib.sha256()
+                digest.update(str(tuple(int(dim) for dim in value.shape)).encode("utf-8"))
+                digest.update(value.tobytes())
+                return {"array_sha256": digest.hexdigest()}
+            except Exception:
+                pass
+        return repr(value)
+
+    def _cache_to_cpu(self, value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            return value.detach().to(device=torch.device("cpu")).contiguous()
+        if isinstance(value, dict):
+            return {key: self._cache_to_cpu(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._cache_to_cpu(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._cache_to_cpu(item) for item in value)
+        return value
+
+    def _clone_cached_value(self, value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            return value.clone()
+        if isinstance(value, dict):
+            return {key: self._clone_cached_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._clone_cached_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._clone_cached_value(item) for item in value)
+        return value
 
     def _prepare_phase0_inputs(
         self,
@@ -749,24 +1158,18 @@ class GGUFPipelineRunner:
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[str]]:
         prepared = getattr(task_state, 'initial_latent', None)
         if isinstance(prepared, dict) and isinstance(prepared.get("samples"), torch.Tensor):
-            dtype = unet.model.get_dtype()
-            latent = prepared["samples"].to(device=device, dtype=dtype)
-            denoise_mask = prepared.get("noise_mask")
-            if isinstance(denoise_mask, torch.Tensor):
-                denoise_mask = denoise_mask.to(device=device, dtype=dtype)
-            generator = torch.Generator(device=device)
-            generator.manual_seed(seed)
-            noise = torch.randn(
-                latent.shape,
-                generator=generator,
-                device=device,
-                dtype=dtype,
+            input_fingerprint = self._fingerprint_json_payload(
+                {
+                    "prepared_latent": self._fingerprint_value(prepared["samples"]),
+                    "noise_mask": self._fingerprint_value(prepared.get("noise_mask")),
+                }
             )
-            input_fingerprint = (
-                f"prepared:{tuple(int(dim) for dim in latent.shape)}:"
-                f"{tuple(int(dim) for dim in denoise_mask.shape) if isinstance(denoise_mask, torch.Tensor) else 'none'}"
-            )
-            return latent, noise, denoise_mask, input_fingerprint
+            cached_phase0 = self._load_cached_phase0_input(input_fingerprint)
+            if cached_phase0 is None:
+                self._store_phase0_input(input_fingerprint, prepared)
+                cached_phase0 = self._load_cached_phase0_input(input_fingerprint)
+            if cached_phase0 is not None:
+                return self._materialize_cached_phase0_input(unet, cached_phase0, seed, device, input_fingerprint)
 
         latent, noise = self._create_latent_and_noise(
             unet,
@@ -776,6 +1179,49 @@ class GGUFPipelineRunner:
             device,
         )
         return latent, noise, None, None
+
+    def _load_cached_phase0_input(self, input_fingerprint: str) -> Optional[dict[str, Any]]:
+        with _GGUF_WARM_STATE_LOCK:
+            artifacts = _GGUF_WARM_STATE.input_artifacts or {}
+            cached = artifacts.get(input_fingerprint)
+            if cached is None:
+                return None
+            _GGUF_WARM_STATE.input_fingerprint = input_fingerprint
+            return self._clone_cached_value(cached)
+
+    def _store_phase0_input(self, input_fingerprint: str, prepared: dict[str, Any]) -> None:
+        cached = {
+            "samples": self._cache_to_cpu(prepared.get("samples")),
+            "noise_mask": self._cache_to_cpu(prepared.get("noise_mask")),
+        }
+        with _GGUF_WARM_STATE_LOCK:
+            artifacts = dict(_GGUF_WARM_STATE.input_artifacts or {})
+            artifacts[input_fingerprint] = cached
+            _GGUF_WARM_STATE.input_artifacts = artifacts
+            _GGUF_WARM_STATE.input_fingerprint = input_fingerprint
+
+    def _materialize_cached_phase0_input(
+        self,
+        unet: Any,
+        cached_phase0: dict[str, Any],
+        seed: int,
+        device: torch.device,
+        input_fingerprint: str,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[str]]:
+        dtype = unet.model.get_dtype()
+        latent = cached_phase0["samples"].to(device=device, dtype=dtype)
+        denoise_mask = cached_phase0.get("noise_mask")
+        if isinstance(denoise_mask, torch.Tensor):
+            denoise_mask = denoise_mask.to(device=device, dtype=dtype)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(seed)
+        noise = torch.randn(
+            latent.shape,
+            generator=generator,
+            device=device,
+            dtype=dtype,
+        )
+        return latent, noise, denoise_mask, input_fingerprint
 
     def _prepare_direct_conds(
         self,
