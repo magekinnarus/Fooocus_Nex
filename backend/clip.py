@@ -186,10 +186,11 @@ class CLIPTextModel_(nn.Module):
 class NexTokenizer:
     def __init__(self, tokenizer_path=None, max_length=77, pad_with_end=True, embedding_directory=None, embedding_size=768, tokenizer_class=CLIPTokenizer):
         if tokenizer_path is None:
-             # Fallback to local path if available, or default
-             # Use absolute path to ldm_patched/modules/sd1_tokenizer if needed
-             # For now, we assume tokenizer_path is passed in correctly
-             pass
+             local_tokenizer_path = os.path.abspath(
+                 os.path.join(os.path.dirname(__file__), '..', 'ldm_patched', 'modules', 'sd1_tokenizer')
+             )
+             if os.path.isdir(local_tokenizer_path):
+                 tokenizer_path = local_tokenizer_path
              
         self.tokenizer = tokenizer_class.from_pretrained(tokenizer_path or "openai/clip-vit-large-patch14") # Default if None
         self.max_length = max_length

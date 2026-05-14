@@ -3,6 +3,17 @@ import time
 import collections
 from typing import Any, Callable, List, Dict, Optional, Union, Tuple, NamedTuple
 
+
+def _cast_tensor_if_needed(value: torch.Tensor, *, device: torch.device, dtype: torch.dtype | None = None) -> torch.Tensor:
+    needs_device = value.device != device
+    needs_dtype = dtype is not None and value.dtype != dtype
+    if not needs_device and not needs_dtype:
+        return value
+    kwargs = {"device": device}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    return value.to(**kwargs)
+
 def add_area_dims(area: List[int], num_dims: int) -> List[int]:
     while (len(area) // 2) < num_dims:
         area = [2147483648] + area[:len(area) // 2] + [0] + area[len(area) // 2:]
@@ -70,16 +81,16 @@ def get_area_and_mult(conds: Dict[str, Any], x_in: torch.Tensor, timestep_in: to
 
     conditioning = {}
     if 'cross_attn' in conds:
-        conditioning['c_crossattn'] = conds['cross_attn'].to(device=x_in.device, dtype=x_in.dtype)
+        conditioning['c_crossattn'] = _cast_tensor_if_needed(conds['cross_attn'], device=x_in.device, dtype=x_in.dtype)
     if 'concat' in conds:
-        conditioning['c_concat'] = conds['concat'].to(device=x_in.device, dtype=x_in.dtype)
+        conditioning['c_concat'] = _cast_tensor_if_needed(conds['concat'], device=x_in.device, dtype=x_in.dtype)
 
     model_conds = conds.get("model_conds", {})
     for c in model_conds:
         if hasattr(model_conds[c], "process_cond"):
             conditioning[c] = model_conds[c].process_cond(batch_size=x_in.shape[0], device=x_in.device, area=area)
         else:
-            conditioning[c] = model_conds[c].to(device=x_in.device, dtype=x_in.dtype)
+            conditioning[c] = _cast_tensor_if_needed(model_conds[c], device=x_in.device, dtype=x_in.dtype)
 
     cond_obj = collections.namedtuple('cond_obj', ['input_x', 'mult', 'conditioning', 'area', 'uuid'])
     return cond_obj(input_x, mult, conditioning, area, conds.get('uuid'))

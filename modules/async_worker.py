@@ -188,14 +188,20 @@ def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | Non
     ):
         route_family = 'gguf'
 
-    return process_transition.build_process_key(
-        family=process_transition.PROCESS_FAMILY_SDXL,
-        process_class=execution_family,
-        authoritative_identity=(
+    authoritative_identity = (
+        (str(base_model_name or ''),)
+        if route_family == 'gguf'
+        else (
             str(base_model_name or ''),
             str(vae_name or ''),
             str(clip_name or ''),
-        ),
+        )
+    )
+
+    return process_transition.build_process_key(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        process_class=execution_family,
+        authoritative_identity=authoritative_identity,
         execution_family=execution_family,
         residency_class=residency_class,
         route_family=route_family,
@@ -348,9 +354,11 @@ def handler(async_task: AsyncTask):
 
     requested_process_key = _resolve_requested_process_key(task_state, route)
 
-    transition_decision = _apply_process_transition_gate(requested_process_key)
+    _apply_process_transition_gate(requested_process_key)
 
     _sync_route_process_activation(route, task_state, requested_process_key)
+
+    from modules.pipeline.gguf_runner import GGUFPipelineRunner
 
     route_context = PipelineRouteContext(
         async_task=async_task,
@@ -363,10 +371,27 @@ def handler(async_task: AsyncTask):
         progressbar_callback=progressbar,
         yield_result_callback=yield_result,
     )
-    PipelineStageRunner().run(route, route_context)
+
+    is_lowvram_gguf = (
+        active_profile.total_vram_mb <= 6144
+        and route.route_id == 'txt2img'
+        and route.family == 'txt2img'
+        and requested_process_key is not None
+        and requested_process_key.route_family == 'gguf'
+        and getattr(task_state.sdxl_execution_policy, 'enabled', False)
+    )
+
+    if is_lowvram_gguf:
+        print(f"[Dispatch] Selecting dedicated GGUF Low-VRAM runner (VRAM: {active_profile.total_vram_mb:.0f}MB)")
+        GGUFPipelineRunner().run(route, route_context)
+        process_transition.set_active_process_key(requested_process_key)
+    else:
+        PipelineStageRunner().run(route, route_context)
 
     task_state.processing = False
     _release_route_runtime_state(task_state)
+
+
 def worker():
     pid = os.getpid()
     print(f'Started worker with PID {pid}')
@@ -410,6 +435,3 @@ def worker():
                 resources.end_memory_phase('task', notes={'completed': True})
 
 threading.Thread(target=worker, daemon=True).start()
-
-
-

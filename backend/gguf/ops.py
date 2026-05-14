@@ -155,6 +155,7 @@ class GGMLTensor(torch.Tensor):
         self.tensor_type = tensor_type
         self.tensor_shape = tensor_shape
         self.patches = patches
+        self.gguf_dense_delta = getattr(self, "gguf_dense_delta", None)
 
     def __new__(cls, *args, tensor_type, tensor_shape, patches=[], **kwargs):
         return super().__new__(cls, *args, **kwargs)
@@ -164,6 +165,7 @@ class GGMLTensor(torch.Tensor):
         new.tensor_type = getattr(self, "tensor_type", None)
         new.tensor_shape = getattr(self, "tensor_shape", new.data.shape)
         new.patches = getattr(self, "patches", []).copy()
+        new.gguf_dense_delta = getattr(self, "gguf_dense_delta", None)
         return new
 
     def clone(self, *args, **kwargs):
@@ -182,12 +184,14 @@ class GGMLTensor(torch.Tensor):
     def new_empty(self, size, *args, **kwargs):
         # Intel Arc fix, ref#50
         new_tensor = super().new_empty(size, *args, **kwargs)
-        return GGMLTensor(
-                new_tensor,
-                tensor_type = getattr(self, "tensor_type", None),
-                tensor_shape = size,
-                patches = getattr(self, "patches", []).copy()
+        wrapped = GGMLTensor(
+            new_tensor,
+            tensor_type=getattr(self, "tensor_type", None),
+            tensor_shape=size,
+            patches=getattr(self, "patches", []).copy(),
         )
+        wrapped.gguf_dense_delta = getattr(self, "gguf_dense_delta", None)
+        return wrapped
 
     @property
     def shape(self):
@@ -293,11 +297,8 @@ class GGMLLayer(torch.nn.Module):
             else:
                 _gguf_trace_stats["source_quantized_other_calls"] += 1
 
-        # consolidate and load patches to GPU in async
-        patch_list = []
-        device = tensor.device
-        for function, patches, key in getattr(tensor, "patches", []):
-            patch_list += move_patch_to_device(patches, device)
+        if getattr(tensor, "patches", []):
+            raise RuntimeError("GGUF legacy denoise-time patch payloads are no longer supported; normalize dense deltas before sampling.")
 
         # dequantize tensor while patches load
         dequant_start = time.perf_counter()
@@ -311,15 +312,10 @@ class GGMLLayer(torch.nn.Module):
             weight = torch.Tensor(weight)
 
         patch_duration = 0.0
-        # apply patches
-        if patch_list:
+        dense_delta = getattr(tensor, "gguf_dense_delta", None)
+        if dense_delta is not None:
             patch_start = time.perf_counter()
-            if self.patch_dtype is None:
-                weight = function(patch_list, weight, key)
-            else:
-                # for testing, may degrade image quality
-                patch_dtype = dtype if self.patch_dtype == "target" else self.patch_dtype
-                weight = function(patch_list, weight, key, patch_dtype)
+            weight = weight + dense_delta.to(device=weight.device, dtype=weight.dtype, non_blocking=True)
             patch_duration = time.perf_counter() - patch_start
 
         _gguf_trace_stats["calls"] += 1
@@ -341,7 +337,7 @@ class GGMLLayer(torch.nn.Module):
                 _gguf_trace_stats["quantized_cuda_calls"] += 1
             else:
                 _gguf_trace_stats["quantized_other_device_calls"] += 1
-        if patch_list:
+        if dense_delta is not None:
             _gguf_trace_stats["patch_calls"] += 1
         _gguf_trace_stats["dequant_seconds"] += dequant_duration
         _gguf_trace_stats["dequant_cpu_process_seconds"] += dequant_cpu_duration
