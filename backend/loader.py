@@ -223,7 +223,16 @@ class VAE:
 
 # --- SDXL Support ---
 
-def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None, reload_source=None, reload_prefixes=None):
+def load_sdxl_unet(
+    source,
+    load_device=None,
+    offload_device=None,
+    dtype=None,
+    reload_source=None,
+    reload_prefixes=None,
+    *,
+    execution_class=None,
+):
     """
     Loads the SDXL UNet using sdxl_def.UNET_CONFIG.
     Supports .gguf integration.
@@ -237,11 +246,17 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None, re
     runtime_reload = None
 
     if isinstance(source, str) and source.endswith(".gguf"):
-        from backend.gguf.loader import gguf_sd_loader
+        from backend.gguf.loader import gguf_sd_loader, is_streaming_execution_class
         from backend.gguf.ops import GGMLOps
         from backend.gguf.patcher import GGUFModelPatcher
-        
-        sd = gguf_sd_loader(source)
+
+        streaming = is_streaming_execution_class(execution_class)
+        if streaming:
+            load_device = torch.device("cpu") if load_device is None else torch.device(load_device)
+            offload_device = torch.device("cpu") if offload_device is None else torch.device(offload_device)
+            if load_device.type != "cpu" or offload_device.type != "cpu":
+                raise RuntimeError("Streaming-class SDXL GGUF loads must stage weights on CPU pinned host memory.")
+        sd = gguf_sd_loader(source, pin_memory=streaming, execution_class=execution_class, require_pinned_host=streaming)
         custom_operations = GGMLOps
         patcher_class = GGUFModelPatcher
     else:
@@ -267,13 +282,15 @@ def load_sdxl_unet(source, load_device=None, offload_device=None, dtype=None, re
         
     model.diffusion_model.load_state_dict(sd, strict=False)
     
-    return patcher_class(
-        model,
-        load_device=load_device,
-        offload_device=offload_device,
-        runtime_reload=runtime_reload,
-        runtime_release_to_meta=runtime_reload is not None,
-    )
+    patcher_kwargs = {
+        "load_device": load_device,
+        "offload_device": offload_device,
+        "runtime_reload": runtime_reload,
+        "runtime_release_to_meta": runtime_reload is not None,
+    }
+    if isinstance(source, str) and source.endswith(".gguf"):
+        patcher_kwargs["preserve_source_artifact"] = is_streaming_execution_class(execution_class)
+    return patcher_class(model, **patcher_kwargs)
 
 def patch_unet_for_quality(unet_patcher: Any, quality: Dict[str, Any]):
     """
@@ -454,10 +471,12 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
 def load_sdxl_checkpoint(
     ckpt_path,
     load_device=None,
+    offload_device=None,
     unet_dtype=None,
     *,
     clip_load_device=None,
     clip_offload_device=None,
+    vae_offload_device=None,
 ):
     """
     Loads SDXL components sequentially and clears raw data immediately.
@@ -472,7 +491,7 @@ def load_sdxl_checkpoint(
             sdxl_def.PREFIXES["vae"],
             device=torch.device("cpu"),
         )
-        vae = load_vae(vae_sd, latent_format=latent_formats.SDXL())
+        vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
         del vae_sd
         gc.collect()
 
@@ -507,6 +526,7 @@ def load_sdxl_checkpoint(
         unet = load_sdxl_unet(
             unet_sd,
             load_device=load_device,
+            offload_device=offload_device,
             dtype=unet_dtype,
             reload_source=ckpt_path,
             reload_prefixes=sdxl_def.PREFIXES["unet"],
@@ -530,7 +550,7 @@ def load_sdxl_checkpoint(
                 vae_sd[new_key] = sd.pop(k)
                 break
     
-    vae = load_vae(vae_sd, latent_format=latent_formats.SDXL())
+    vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
     del vae_sd
     gc.collect()
     
@@ -589,6 +609,7 @@ def load_sdxl_checkpoint(
     unet = load_sdxl_unet(
         unet_sd,
         load_device=load_device,
+        offload_device=offload_device,
         dtype=unet_dtype,
         reload_source=ckpt_path,
         reload_prefixes=sdxl_def.PREFIXES["unet"],

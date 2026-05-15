@@ -15,6 +15,18 @@ from .dequant import is_quantized, is_torch_compatible
 class GGUFModelPatcher(patching.NexModelPatcher):
     patch_on_device = False
 
+    def __init__(self, model, load_device, offload_device, size=0, weight_inplace_update=False, current_device=None, **kwargs):
+        self.preserve_source_artifact = bool(kwargs.pop("preserve_source_artifact", False))
+        super().__init__(
+            model,
+            load_device,
+            offload_device,
+            size=size,
+            weight_inplace_update=weight_inplace_update,
+            current_device=current_device,
+            **kwargs,
+        )
+
     def add_patches(self, patches, strength_patch=1.0, strength_model=1.0):
         loaded = super().add_patches(patches, strength_patch=strength_patch, strength_model=strength_model)
         self.gguf_dense_delta_cache = {}
@@ -22,11 +34,14 @@ class GGUFModelPatcher(patching.NexModelPatcher):
 
     def _pin_dense_delta(self, delta: torch.Tensor) -> torch.Tensor:
         cpu_delta = delta.detach().to(device=torch.device("cpu"), dtype=torch.float32).contiguous()
+        pinned = False
         try:
             if not cpu_delta.is_pinned():
                 cpu_delta = cpu_delta.pin_memory()
+            pinned = bool(getattr(cpu_delta, "is_pinned", lambda: False)())
         except Exception:
             pass
+        cpu_delta.gguf_pinned_host = pinned
         return cpu_delta
 
     def _validate_dense_delta_value(self, key, value):
@@ -154,6 +169,9 @@ class GGUFModelPatcher(patching.NexModelPatcher):
 
     mmap_released = False
     def load(self, *args, force_patch_weights=False, **kwargs):
+        if getattr(self, "preserve_source_artifact", False):
+            return patching.NexModelPatcher.load(self, *args, force_patch_weights=force_patch_weights, **kwargs)
+
         # always call `patch_weight_to_device` even for lowvram
         super().load(*args, force_patch_weights=True, **kwargs)
 
@@ -187,6 +205,7 @@ class GGUFModelPatcher(patching.NexModelPatcher):
         self.__class__ = src_cls
         # GGUF specific clone values below
         n.patch_on_device = getattr(self, "patch_on_device", False)
+        n.preserve_source_artifact = getattr(self, "preserve_source_artifact", False)
         n.gguf_dense_delta_cache = dict(getattr(self, "gguf_dense_delta_cache", {}))
         if src_cls != GGUFModelPatcher:
             n.size = 0 # force recalc

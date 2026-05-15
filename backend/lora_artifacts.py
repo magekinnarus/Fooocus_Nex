@@ -4,7 +4,7 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import ldm_patched.modules.weight_adapter as weight_adapter
 import torch
@@ -15,6 +15,7 @@ TARGET_GROUP_UNET_MID = "unet.mid"
 TARGET_GROUP_UNET_UP = "unet.up"
 TARGET_GROUP_CLIP = "clip"
 TARGET_GROUP_UNKNOWN = "unknown"
+STACK_COMPONENTS_KEY = "stack_component_artifacts"
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,85 @@ def artifact_registry_signature(artifacts: Any) -> tuple[str, ...]:
     return tuple(signature)
 
 
+def stack_component_artifacts(artifact: AdapterArtifact) -> tuple[AdapterArtifact, ...]:
+    components = artifact.artifact_metadata.get(STACK_COMPONENTS_KEY) if artifact.artifact_metadata else None
+    if not components:
+        return ()
+    return tuple(components)
+
+
+def merge_loaded_lora_artifacts(
+    artifacts: Iterable[AdapterArtifact],
+    *,
+    source_path: str | None = None,
+    source_family: str = "lora_stack",
+    artifact_metadata: Mapping[str, Any] | None = None,
+) -> AdapterArtifact:
+    """
+    Merge a stack of normalized LoRA artifacts into one retained stack artifact.
+
+    The returned artifact owns the stack identity. Component artifacts are kept
+    in metadata so the application backend can replay them in order while the
+    cache and retention layer only see one stack-level identity.
+    """
+    resolved_components: list[AdapterArtifact] = []
+    for artifact in artifacts:
+        if artifact is None:
+            continue
+        nested_components = stack_component_artifacts(artifact)
+        if nested_components:
+            resolved_components.extend(nested_components)
+        else:
+            resolved_components.append(artifact)
+
+    if not resolved_components:
+        raise ValueError("merge_loaded_lora_artifacts() requires at least one artifact")
+
+    if len(resolved_components) == 1:
+        return resolved_components[0]
+
+    merged_entries = tuple(
+        entry
+        for component in resolved_components
+        for entry in component.target_entries
+    )
+    component_paths = tuple(component.source_path for component in resolved_components)
+    component_ids = tuple(component.artifact_id for component in resolved_components)
+    component_scales = tuple(float(component.default_scale) for component in resolved_components)
+    stack_label = source_path or "stack://" + hashlib.sha256(
+        repr((component_paths, component_ids, component_scales)).encode("utf-8")
+    ).hexdigest()
+    stack_source_hash = hashlib.sha256(
+        repr((component_paths, component_ids, component_scales)).encode("utf-8")
+    ).hexdigest()
+    metadata = dict(artifact_metadata or {})
+    metadata.update(
+        {
+            STACK_COMPONENTS_KEY: tuple(resolved_components),
+            "stack_component_ids": component_ids,
+            "stack_component_paths": component_paths,
+            "stack_component_scales": component_scales,
+            "stack_component_count": len(resolved_components),
+        }
+    )
+    metadata.setdefault("target_count", len(merged_entries))
+    metadata.setdefault("source_hash_origin", "stack")
+    return AdapterArtifact(
+        artifact_id=_artifact_id(
+            source_path=stack_label,
+            source_hash=stack_source_hash,
+            default_scale=1.0,
+            entries=merged_entries,
+        ),
+        source_path=stack_label,
+        source_family=source_family,
+        source_hash=stack_source_hash,
+        default_scale=1.0,
+        target_entries=merged_entries,
+        artifact_metadata=metadata,
+    )
+
+
 def classify_artifact_targets(artifact: AdapterArtifact) -> ArtifactTargetClassification:
     """
     Summarize the resolved matched target coverage for a normalized artifact.
@@ -100,16 +180,13 @@ def classify_artifact_targets(artifact: AdapterArtifact) -> ArtifactTargetClassi
     Illustrious, and mixed stacks are separated solely by the resolved target
     keys they actually patch.
     """
-    clip_target_keys = sorted(
-        entry.target_key
-        for entry in artifact.target_entries
-        if entry.target_family == "clip"
-    )
-    unet_target_keys = sorted(
-        entry.target_key
-        for entry in artifact.target_entries
-        if entry.target_family == "unet"
-    )
+    components = stack_component_artifacts(artifact)
+    target_entries = artifact.target_entries
+    if components:
+        target_entries = tuple(entry for component in components for entry in component.target_entries)
+
+    clip_target_keys = sorted(entry.target_key for entry in target_entries if entry.target_family == "clip")
+    unet_target_keys = sorted(entry.target_key for entry in target_entries if entry.target_family == "unet")
     target_families = tuple(
         family
         for family in ("clip", "unet")
@@ -134,6 +211,21 @@ def fingerprint_artifact_entries(
     and payload content per side, instead of relying on whole-file identity or
     source variant labels.
     """
+    components = stack_component_artifacts(artifact)
+    if components:
+        digest = hashlib.sha256()
+        digest.update(b"stack")
+        if target_family is not None:
+            digest.update(str(target_family).encode("utf-8"))
+        digest.update(repr(float(artifact.default_scale)).encode("ascii"))
+        digest.update(str(len(components)).encode("ascii"))
+        for idx, component in enumerate(components):
+            digest.update(str(idx).encode("ascii"))
+            digest.update(component.artifact_id.encode("utf-8"))
+            digest.update(repr(float(component.default_scale)).encode("ascii"))
+            digest.update(fingerprint_artifact_entries(component, target_family=target_family).encode("utf-8"))
+        return digest.hexdigest()
+
     digest = hashlib.sha256()
     digest.update(repr(float(artifact.default_scale)).encode("ascii"))
     if target_family is not None:
@@ -165,6 +257,19 @@ def build_application_patch_dict(
     This is intentionally narrow: it performs application-boundary mapping only
     and leaves retention authority with the artifact record itself.
     """
+    components = stack_component_artifacts(artifact)
+    if components:
+        patch_dict: dict[str, Any] = {}
+        for component in components:
+            patch_dict.update(
+                build_application_patch_dict(
+                    component,
+                    key_map,
+                    target_family=target_family,
+                )
+            )
+        return patch_dict
+
     patch_dict: dict[str, Any] = {}
     for entry in artifact.target_entries:
         if target_family is not None and entry.target_family not in (target_family, "unknown"):
@@ -173,6 +278,40 @@ def build_application_patch_dict(
             continue
         patch_dict[entry.target_key] = entry.payload
     return patch_dict
+
+
+def apply_artifact_to_patcher(
+    patcher: Any,
+    artifact: AdapterArtifact,
+    key_map: Mapping[str, str],
+    *,
+    target_family: str | None = None,
+) -> list[str]:
+    """
+    Apply an artifact stack to a patcher while preserving stack order.
+
+    Stack artifacts are replayed component by component so per-LoRA strengths
+    and duplicate target keys remain ordered, while callers still handle a
+    single retained stack artifact.
+    """
+    components = stack_component_artifacts(artifact)
+    if components:
+        loaded_keys: list[str] = []
+        for component in components:
+            loaded_keys.extend(
+                apply_artifact_to_patcher(
+                    patcher,
+                    component,
+                    key_map,
+                    target_family=target_family,
+                )
+            )
+        return loaded_keys
+
+    patch_dict = build_application_patch_dict(artifact, key_map, target_family=target_family)
+    if not patch_dict:
+        return []
+    return patcher.add_patches(patch_dict, artifact.default_scale)
 
 
 def compute_file_hash(path: str, *, algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:

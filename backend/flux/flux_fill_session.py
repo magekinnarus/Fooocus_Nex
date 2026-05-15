@@ -146,7 +146,12 @@ class FluxFillSession:
         self.start_count += 1
 
         if self.unet_patcher is None:
-            self.unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
+            self.unet_patcher = load_flux_fill_unet(
+                self.config.unet_path,
+                load_device=self.device,
+                offload_device=None,
+                execution_class=self.config.execution_class,
+            )
             self.unet_load_count += 1
         if self.vae is None:
             self.vae = load_flux_ae(self.config.ae_path, load_device=self.device, offload_device=None)

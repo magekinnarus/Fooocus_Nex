@@ -647,6 +647,8 @@ class GGUFPipelineRunner:
         clip_keys.update({key: key for key in clip.cond_stage_model.state_dict().keys()})
 
         resolved_artifacts: list[ResolvedGGUFLoraArtifact] = []
+        component_artifacts: list[lora_artifacts.AdapterArtifact] = []
+        component_labels: list[str] = []
         for filename, weight in loras:
             lora_path = self._resolve_lora_filename(filename)
             if lora_path is None:
@@ -666,20 +668,31 @@ class GGUFPipelineRunner:
                     default_scale=weight,
                     loaded_patches=loaded_patches,
                 )
-                classification = lora_artifacts.classify_artifact_targets(artifact)
-                resolved_artifacts.append(
-                    ResolvedGGUFLoraArtifact(
-                        requested_name=filename,
-                        resolved_path=lora_path,
-                        artifact=artifact,
-                        target_families=classification.target_families,
-                        clip_target_keys=classification.clip_target_keys,
-                        unet_target_keys=classification.unet_target_keys,
-                    )
-                )
+                component_artifacts.append(artifact)
+                component_labels.append(lora_path)
             finally:
                 del lora_sd
                 resources.soft_empty_cache(force=False)
+
+        if not component_artifacts:
+            return ()
+
+        merged_artifact = lora_artifacts.merge_loaded_lora_artifacts(
+            component_artifacts,
+            source_path=" || ".join(component_labels),
+        )
+        classification = lora_artifacts.classify_artifact_targets(merged_artifact)
+        requested_name = " + ".join(os.path.basename(label) for label in component_labels)
+        resolved_artifacts.append(
+            ResolvedGGUFLoraArtifact(
+                requested_name=requested_name,
+                resolved_path=merged_artifact.source_path,
+                artifact=merged_artifact,
+                target_families=classification.target_families,
+                clip_target_keys=classification.clip_target_keys,
+                unet_target_keys=classification.unet_target_keys,
+            )
+        )
         return tuple(resolved_artifacts)
 
     def _clear_gguf_unet_lora_state(self, unet: Any) -> None:
@@ -728,13 +741,12 @@ class GGUFPipelineRunner:
 
         for resolved in resolved_artifacts:
             if resolved.is_unet_side:
-                unet_patches = lora_artifacts.build_application_patch_dict(
+                lora_artifacts.apply_artifact_to_patcher(
+                    unet,
                     resolved.artifact,
                     unet_keys,
                     target_family="unet",
                 )
-                if unet_patches:
-                    unet.add_patches(unet_patches, resolved.artifact.default_scale)
 
     def _apply_lora_artifacts_to_clip(
         self,
@@ -748,13 +760,12 @@ class GGUFPipelineRunner:
 
         for resolved in resolved_artifacts:
             if resolved.is_clip_side:
-                clip_patches = lora_artifacts.build_application_patch_dict(
+                lora_artifacts.apply_artifact_to_patcher(
+                    clip,
                     resolved.artifact,
                     clip_keys,
                     target_family="clip",
                 )
-                if clip_patches:
-                    clip.add_patches(clip_patches, resolved.artifact.default_scale)
 
     def _encode_prompt_pair(
         self,

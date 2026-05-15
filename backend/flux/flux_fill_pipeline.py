@@ -133,6 +133,7 @@ class FluxFillConfig:
     denoise: float = 1.0
     guidance: float = 15.0
     device: str | None = None
+    execution_class: Any | None = None
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
         if self.steps < 1:
@@ -276,21 +277,33 @@ def load_flux_fill_unet(
     load_device: torch.device | str | None = None,
     offload_device: torch.device | str | None = None,
     handle_prefix: str | None = "model.diffusion_model.",
+    execution_class: Any | None = None,
 ) -> Any:
     path = Path(unet_path)
     if not path.exists():
         raise FileNotFoundError(f"Flux Fill UNet path does not exist: {path}")
 
     from backend import resources
-    from backend.gguf.loader import gguf_sd_loader
+    from backend.gguf.loader import gguf_sd_loader, is_streaming_execution_class
     from backend.gguf.ops import GGMLOps
     from backend.gguf.patcher import GGUFModelPatcher
     from ldm_patched.modules import model_detection
 
     load_device = torch.device(load_device) if load_device is not None else resources.get_torch_device()
     offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
+    streaming = is_streaming_execution_class(execution_class)
+    if streaming:
+        if load_device.type != "cpu" or offload_device.type != "cpu":
+            raise RuntimeError("Streaming-class Flux GGUF loads must stage weights on CPU pinned host memory.")
 
-    state_dict, arch = gguf_sd_loader(str(path), handle_prefix=handle_prefix, return_arch=True)
+    state_dict, arch = gguf_sd_loader(
+        str(path),
+        handle_prefix=handle_prefix,
+        return_arch=True,
+        pin_memory=streaming,
+        execution_class=execution_class,
+        require_pinned_host=streaming,
+    )
     if arch != "flux":
         raise FluxFillValidationError(f"Expected Flux GGUF arch 'flux', got {arch!r} for {path}.")
 
@@ -310,7 +323,12 @@ def load_flux_fill_unet(
         model_options={"custom_operations": GGMLOps},
     )
     model.load_model_weights(state_dict, "")
-    patcher = GGUFModelPatcher(model, load_device=load_device, offload_device=offload_device)
+    patcher = GGUFModelPatcher(
+        model,
+        load_device=load_device,
+        offload_device=offload_device,
+        preserve_source_artifact=streaming,
+    )
     patcher.model_options["flux_fill"] = {
         "path": str(path),
         "arch": arch,
@@ -734,6 +752,7 @@ def denoise_flux_fill_latent(
             config.unet_path,
             load_device=device,
             offload_device=offload_device,
+            execution_class=config.execution_class,
         )
     timings["unet_load"] = time.perf_counter() - unet_load_start
 

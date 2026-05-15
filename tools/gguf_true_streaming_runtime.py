@@ -21,6 +21,7 @@ from backend.gguf.direct_sdxl_runtime import DirectSDXLGGUFRuntime
 from backend.gguf.loader import gguf_sd_loader
 from backend.gguf.ops import GGMLOps
 from backend.gguf.patcher import GGUFModelPatcher
+from backend.staging_manager import ExecutionClass
 from backend.patching import NexModelPatcher
 from ldm_patched.modules import latent_formats, model_base
 
@@ -47,11 +48,16 @@ def load_true_streaming_sdxl_unet(
     dtype: Optional[torch.dtype] = None,
     quality: Optional[Dict[str, Any]] = None,
 ) -> TrueStreamingGGUFModelPatcher:
-    load_device = load_device or resources.get_torch_device()
-    offload_device = offload_device or resources.unet_offload_device()
+    load_device = torch.device("cpu") if load_device is None else torch.device(load_device)
+    offload_device = torch.device("cpu") if offload_device is None else torch.device(offload_device)
     effective_dtype = dtype or torch.float16
 
-    sd = gguf_sd_loader(source)
+    sd = gguf_sd_loader(
+        source,
+        pin_memory=True,
+        execution_class=ExecutionClass.SDXL_STREAMING_T1,
+        require_pinned_host=True,
+    )
     model = model_base.SDXL(
         model_config=backend_loader.ModelConfig(
             backend_loader.sdxl_def.UNET_CONFIG,
@@ -68,6 +74,7 @@ def load_true_streaming_sdxl_unet(
         offload_device=offload_device,
         runtime_reload=None,
         runtime_release_to_meta=False,
+        preserve_source_artifact=True,
     )
 
     if quality:

@@ -235,29 +235,29 @@ class StableDiffusionModel:
         # Transitional bridge: keep the current patcher application backend, but
         # let the Nex-owned artifact registry own the retained LoRA state.
         if self.unet_with_lora is not None:
-            lora_unet = lora_artifacts.build_application_patch_dict(
+            loaded_keys = lora_artifacts.apply_artifact_to_patcher(
+                self.unet_with_lora,
                 artifact,
                 self.lora_key_map_unet,
                 target_family="unet",
             )
-            if len(lora_unet) > 0:
-                loaded_keys = self.unet_with_lora.add_patches(lora_unet, artifact.default_scale)
+            if len(loaded_keys) > 0:
                 print(
-                    f'Loaded LoRA artifact [{artifact.source_path}] for UNet [{self.filename}] '
-                    f'with {len(loaded_keys)} keys at weight {artifact.default_scale}.'
+                    f'Loaded LoRA artifact stack [{artifact.source_path}] for UNet [{self.filename}] '
+                    f'with {len(loaded_keys)} keys.'
                 )
 
         if self.clip_with_lora is not None:
-            lora_clip = lora_artifacts.build_application_patch_dict(
+            loaded_keys = lora_artifacts.apply_artifact_to_patcher(
+                self.clip_with_lora,
                 artifact,
                 self.lora_key_map_clip,
                 target_family="clip",
             )
-            if len(lora_clip) > 0:
-                loaded_keys = self.clip_with_lora.add_patches(lora_clip, artifact.default_scale)
+            if len(loaded_keys) > 0:
                 print(
-                    f'Loaded LoRA artifact [{artifact.source_path}] for CLIP [{self.filename}] '
-                    f'with {len(loaded_keys)} keys at weight {artifact.default_scale}.'
+                    f'Loaded LoRA artifact stack [{artifact.source_path}] for CLIP [{self.filename}] '
+                    f'with {len(loaded_keys)} keys.'
                 )
 
     @torch.no_grad()
@@ -288,7 +288,11 @@ class StableDiffusionModel:
         for lora_filename, weight in loras_to_load:
             artifact_registry.append(self._build_single_lora_artifact(lora_filename, weight))
 
-        self.lora_artifact_registry = tuple(artifact_registry)
+        stack_artifact = lora_artifacts.merge_loaded_lora_artifacts(
+            artifact_registry,
+            source_path=" || ".join(path for path, _ in loras_to_load),
+        )
+        self.lora_artifact_registry = (stack_artifact,)
         self.visited_loras = resolved_signature
 
         self.unet_with_lora = self.unet.clone() if self.unet is not None else None
@@ -340,16 +344,22 @@ def load_model(
     basename = os.path.basename(ckpt_filename).lower()
     resolved_taxonomy = modules.config.resolve_model_taxonomy(ckpt_filename)
 
-    unet = None
-    clip = None
-    vae = None
+    unet, clip, vae = None, None, None
+    unet_plan = resources.get_component_plan('unet', policy=sdxl_policy)
+    clip_plan = resources.get_component_plan('clip', policy=sdxl_policy)
+    vae_plan = resources.get_component_plan('vae', policy=sdxl_policy)
 
     if basename.endswith('.gguf'):
         # GGUF UNet-only file -- load via backend GGUF path
         # CLIP and VAE must be provided separately via UI dropdowns
         print(f'[Nex] Loading GGUF UNet: {basename}')
         try:
-            unet = loader.load_sdxl_unet(ckpt_filename)
+            unet = loader.load_sdxl_unet(
+                ckpt_filename, 
+                load_device=unet_plan[0], 
+                offload_device=unet_plan[0] if unet_plan[1] == 'cpu_resident' else None,
+                execution_class=getattr(sdxl_policy, 'execution_class', None),
+            )
             print(f'[Nex] GGUF UNet loaded successfully.')
             if clip is None or vae is None:
                 print(f'[Nex Warning] GGUF requires separate CLIP/VAE. No matching companion CLIP found; please select one manually.')
@@ -358,10 +368,14 @@ def load_model(
     elif resolved_taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SDXL:
         unet, clip, vae = loader.load_sdxl_checkpoint(
             ckpt_filename,
-            clip_load_device=clip_load_device,
-            clip_offload_device=clip_offload_device,
+            load_device=unet_plan[0],
+            offload_device=unet_plan[0] if unet_plan[1] == 'cpu_resident' else None,
+            clip_load_device=clip_plan[0],
+            clip_offload_device=clip_plan[0],
+            vae_offload_device=vae_plan[0],
         )
     else:
+        # SD1.5 usually follows a fixed policy but can also benefit from solver if needed
         unet, clip, vae = loader.load_sd15_checkpoint(ckpt_filename)
 
     loaded_architecture = _resolve_loaded_architecture(unet)
@@ -379,7 +393,8 @@ def load_model(
     # Support for separate CLIP if provided
     if clip_filename is not None and clip_filename != 'None':
         clip_filename_abs = get_file_from_folder_list(clip_filename, modules.config.paths_clips)
-        if os.path.exists(clip_filename_abs):
+        # BUG FIX: Avoid CLIP duplication if the Force CLIP is the same as the checkpoint itself
+        if os.path.exists(clip_filename_abs) and clip_filename_abs != ckpt_filename:
             try:
                 if is_sdxl_base:
                     # GGUF and SDXL use the same CLIP loader pattern

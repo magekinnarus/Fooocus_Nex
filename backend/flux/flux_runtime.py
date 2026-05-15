@@ -452,6 +452,7 @@ class FluxFillPipelineConfig:
     denoise: float = 1.0
     guidance: float = 15.0
     device: str | None = None
+    execution_class: Any | None = None
     debug_output_dir: Path | str | None = None
     mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
     blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE
@@ -1144,7 +1145,12 @@ class FluxFillPipeline:
         noise = create_flux_fill_noise(source_latent, self.config.seed, device=self.device, dtype=source_latent.dtype)
         owns_unet = unet_patcher is None
         if owns_unet:
-            unet_patcher = load_flux_fill_unet(self.config.unet_path, load_device=self.device, offload_device=None)
+            unet_patcher = load_flux_fill_unet(
+                self.config.unet_path,
+                load_device=self.device,
+                offload_device=None,
+                execution_class=self.config.execution_class,
+            )
         if self.config.verify_c_concat:
             c_concat_preview, c_concat_summary = self.verify_c_concat(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask)
             debug_summary["stages"]["verify_c_concat"] = c_concat_summary

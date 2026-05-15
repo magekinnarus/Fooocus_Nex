@@ -46,6 +46,8 @@ class DirectSDXLGGUFRunConfig:
     quality: Dict[str, float] = field(default_factory=dict)
     process_class: str = process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
     route_family: str = "gguf"
+    execution_class: Any | None = None
+    stage_prompt_conditioning_to_device: bool = False
 
     @property
     def clip_path(self) -> str:
@@ -121,7 +123,11 @@ class DirectSDXLGGUFRuntime:
             return 0.0
 
         start = time.perf_counter()
-        self.unet = loader.load_sdxl_unet(self.config.unet_path, dtype=torch.float16)
+        self.unet = loader.load_sdxl_unet(
+            self.config.unet_path,
+            dtype=torch.float16,
+            execution_class=self.config.execution_class,
+        )
         self.clip = loader.load_sdxl_clip(
             self.config.clip_path,
             self.config.clip_path,
@@ -234,6 +240,30 @@ class DirectSDXLGGUFRuntime:
             return self._encode_prompt_pair_cpu_only()
         return self._encode_prompt_pair_gpu_then_offload()
 
+    def _move_tensors_to_device(self, value: Any, device: torch.device) -> Any:
+        if isinstance(value, torch.Tensor):
+            return value.to(device=device, non_blocking=True)
+        if isinstance(value, dict):
+            return {key: self._move_tensors_to_device(item, device) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._move_tensors_to_device(item, device) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._move_tensors_to_device(item, device) for item in value)
+        return value
+
+    def _stage_prompt_conditioning_to_device(
+        self,
+        encoded_prompt_pair: Dict[str, Dict[str, torch.Tensor]],
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        if not self.config.stage_prompt_conditioning_to_device:
+            return encoded_prompt_pair
+        if self.device.type != "cuda":
+            return encoded_prompt_pair
+        return {
+            side: self._move_tensors_to_device(payload, self.device)
+            for side, payload in encoded_prompt_pair.items()
+        }
+
     def build_adm_pair(
         self,
         encoded_prompt_pair: Dict[str, Dict[str, torch.Tensor]],
@@ -273,6 +303,10 @@ class DirectSDXLGGUFRuntime:
     def prepare_inputs(self) -> tuple[DirectSDXLGGUFPreparedInputs, Dict[str, float]]:
         encoded_prompt_pair, encode_metrics = self.encode_prompt_pair_direct()
 
+        stage_start = time.perf_counter()
+        encoded_prompt_pair = self._stage_prompt_conditioning_to_device(encoded_prompt_pair)
+        conditioning_stage = time.perf_counter() - stage_start
+
         adm_start = time.perf_counter()
         adm_pair = self.build_adm_pair(encoded_prompt_pair)
         adm_build = time.perf_counter() - adm_start
@@ -307,6 +341,7 @@ class DirectSDXLGGUFRuntime:
             ),
             {
                 **encode_metrics,
+                "conditioning_stage_to_device": conditioning_stage,
                 "adm_build": adm_build,
                 "latent_noise_prep": latent_noise_prep,
             },

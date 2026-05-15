@@ -14,6 +14,7 @@ import gc
 import ctypes
 import time
 import os
+from typing import Any, Tuple
 import backend.memory_governor as memory_governor
 from backend import environment_profile as environment_profiles
 
@@ -143,18 +144,49 @@ def _residency_plan_for_phase(target_phase=None, task=None):
     return memory_governor.plan_for_task(task=task, phase=phase_name)
 
 
-def text_encoder_load_device():
+def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str]:
     """
-    SDXL and SD1.5 text encoders default to CPU residency.
+    Nex Integration: Returns (device, mode) for a specific model role 
+    by inspecting the active SDXL policy derived from PlacementSolver.
+    """
+    if policy is None:
+        from modules import default_pipeline
+        policy = getattr(default_pipeline.model_base, 'sdxl_execution_policy', None)
+    
+    # Defaults
+    dev = torch.device("cpu")
+    mode = "offloaded"
+    
+    if policy is not None:
+        # Notes contain (Tier, Mode) for the UNet
+        # We can also check residency_class
+        if role == "unet":
+            if policy.residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
+                return torch.device("cpu"), "cpu_resident"
+            return get_torch_device(), "gpu_resident"
+        
+        if role == "clip":
+            if policy.clip_residency_mode == CLIP_RESIDENCY_GPU_RESIDENT:
+                return get_torch_device(), "gpu_resident"
+            return torch.device("cpu"), "cpu_resident"
+            
+        if role == "vae":
+            if policy.vae_encode_mode == VAE_ENCODE_GPU_PREFERRED:
+                return get_torch_device(), "gpu_resident"
+            return torch.device("cpu"), "cpu_resident"
+            
+    return dev, mode
 
-    High-VRAM tiers can still opt into GPU placement explicitly by passing a
-    different load device to the loader, but the default path keeps VRAM
-    reserved for UNet.
-    """
+def unet_offload_device():
+    # DEPRECATED: Use get_component_plan('unet')
     return torch.device("cpu")
 
+def text_encoder_load_device():
+    # DEPRECATED: Use get_component_plan('clip')
+    return torch.device("cpu")
 
 def text_encoder_offload_device():
+    # DEPRECATED: Use get_component_plan('clip')
     return torch.device("cpu")
 
 
@@ -1244,21 +1276,18 @@ def should_use_bf16(device=None, model_params=0, prioritize_performance=True, ma
     return torch.cuda.is_bf16_supported()
 
 def unet_offload_device():
-    if vram_state == VRAMState.HIGH_VRAM:
-        return get_torch_device()
-    else:
-        return torch.device("cpu")
+    # DEPRECATED: Use get_component_plan('unet')
+    return torch.device("cpu")
 
 def vae_device():
+    # Legacy helper, VAE is always fp32 cpu for Nex pipelines unless specifically requested
     if config.cpu_vae:
         return torch.device("cpu")
     return get_torch_device()
 
 def vae_offload_device():
-    if config.gpu_only:
-        return get_torch_device()
-    else:
-        return torch.device("cpu")
+    # DEPRECATED: Use get_component_plan('vae')
+    return torch.device("cpu")
 
 def unload_all_models():
     free_memory(1e30, get_torch_device())

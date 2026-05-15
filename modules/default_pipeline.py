@@ -29,15 +29,9 @@ def _resolved_memory_profile():
 
 
 def _should_skip_eager_pipeline_preload() -> bool:
-    profile = _resolved_memory_profile()
-    if environment_profile.should_skip_eager_model_preload(profile):
-        return True
-
-    default_model_name = str(getattr(modules.config, 'default_base_model_name', '') or '').strip().lower()
-    return (
-        str(getattr(profile, 'name', '') or '').lower() == environment_profile.PROFILE_LOCAL_LOW_VRAM
-        and default_model_name.endswith('.gguf')
-    )
+    # Nex Universal Clean Slate Policy: Never load models at startup.
+    # Models are slotted in UI settings but remain unloaded until the first task.
+    return True
 
 
 def _controlnet_residency_summary():
@@ -203,13 +197,6 @@ def _apply_sdxl_policy_to_model_base(policy) -> None:
         setattr(vae, 'runtime_policy', policy)
 
 
-def _clip_device_args_for_policy(policy) -> dict:
-    if not getattr(policy, 'prefer_clip_gpu', False):
-        return {}
-    return {
-        'clip_load_device': resources.get_torch_device(),
-        'clip_offload_device': torch.device('cpu'),
-    }
 
 
 @torch.no_grad()
@@ -237,9 +224,21 @@ def refresh_base_model(name, vae_name=None, clip_name=None, sdxl_policy=None):
         def release_previous_model_state():
             global model_base
             previous_model = model_base
+            
+            # 1. Clear Conditioning Caches (Fixes VRAM leak/stale states)
+            for component in [getattr(previous_model, 'clip', None), getattr(previous_model, 'clip_with_lora', None)]:
+                if component is not None:
+                    if hasattr(component, 'fcs_cond_cache'):
+                        component.fcs_cond_cache.clear()
+            
+            # 2. GGUF Specific Destruction (Fixes UNet destruction bug)
+            for unet in [getattr(previous_model, 'unet', None), getattr(previous_model, 'unet_with_lora', None)]:
+                if unet is not None:
+                    if hasattr(unet, 'unpatch_model'):
+                        unet.unpatch_model(unpatch_weights=True)
+            
             model_base = core.StableDiffusionModel()
             del previous_model
-            gc.collect()
 
         resources.prepare_for_checkpoint_switch(
             current_model=previous_model_filename,
@@ -258,7 +257,6 @@ def refresh_base_model(name, vae_name=None, clip_name=None, sdxl_policy=None):
         vae_filename,
         clip_name,
         sdxl_policy=sdxl_policy,
-        **_clip_device_args_for_policy(sdxl_policy),
     )
     model_base.clip_filename = clip_name
     _apply_sdxl_policy_to_model_base(sdxl_policy)

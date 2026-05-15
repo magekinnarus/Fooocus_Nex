@@ -3,10 +3,45 @@ import gguf
 import torch
 import logging
 import time
+from typing import Optional
 
 from ldm_patched.modules import ops as comfy_ops
 from ldm_patched.modules import model_management as comfy_model_management
-from .dequant import dequantize_tensor, is_quantized
+from .dequant import dequantize_tensor, is_quantized, dequantize_functions
+
+# --- Workspace Management ---
+
+class GGUFWorkspace:
+    """
+    Manages reusable VRAM buffers to prevent memory amplification during streaming.
+    """
+    _instance = None
+    
+    def __init__(self):
+        self.q_buffer: Optional[torch.Tensor] = None # Quantized workspace
+        self.max_q_size = 0
+        self.device: Optional[torch.device] = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def ensure_buffers(self, q_size_bytes: int, device: torch.device | str):
+        device = torch.device(device)
+        if device.type != "cuda":
+            raise RuntimeError(f"GGUF workspace requires a CUDA target device, got {device}.")
+
+        # Reallocate if the workspace needs to grow or follow a different CUDA device.
+        if self.q_buffer is None or q_size_bytes > self.max_q_size or self.device != device:
+            logging.info(f"[GGUF] Allocating quantized workspace: {q_size_bytes / (1024**2):.2f} MB on {device}")
+            self.q_buffer = torch.empty(q_size_bytes, dtype=torch.uint8, device=device)
+            self.max_q_size = q_size_bytes
+            self.device = device
+
+WORKSPACE = GGUFWorkspace.get_instance()
+
 
 def chained_hasattr(obj, chained_attr):
     probe = obj
@@ -65,11 +100,14 @@ _gguf_trace_stats = {
     "source_quantized_cpu_calls": 0,
     "source_quantized_cuda_calls": 0,
     "source_quantized_other_calls": 0,
+    "source_pinned_cpu_calls": 0,
     "dequant_cpu_process_seconds": 0.0,
     "by_qtype": {},
     "forward_seconds": 0.0,
     "forward_cpu_process_seconds": 0.0,
     "by_forward_op": {},
+    "workspace_pinned_copy_calls": 0,
+    "workspace_unpinned_copy_calls": 0,
 }
 
 
@@ -166,6 +204,7 @@ class GGMLTensor(torch.Tensor):
         new.tensor_shape = getattr(self, "tensor_shape", new.data.shape)
         new.patches = getattr(self, "patches", []).copy()
         new.gguf_dense_delta = getattr(self, "gguf_dense_delta", None)
+        new.gguf_pinned_host = getattr(self, "gguf_pinned_host", False)
         return new
 
     def clone(self, *args, **kwargs):
@@ -191,6 +230,7 @@ class GGMLTensor(torch.Tensor):
             patches=getattr(self, "patches", []).copy(),
         )
         wrapped.gguf_dense_delta = getattr(self, "gguf_dense_delta", None)
+        wrapped.gguf_pinned_host = getattr(self, "gguf_pinned_host", False)
         return wrapped
 
     @property
@@ -265,45 +305,58 @@ class GGMLLayer(torch.nn.Module):
 
         # Take into account space required for dequantizing the largest tensor
         if self.largest_layer:
-            shape = getattr(self.weight, "tensor_shape", self.weight.shape)
-            dtype = self.dequant_dtype or torch.float16
-            temp = torch.empty(*shape, device=torch.device("meta"), dtype=dtype)
-            destination[prefix + "temp.weight"] = temp
+            destination[prefix + "temp.weight"] = torch.zeros(1, device=torch.device("meta")) # Dummy for ComfyUI
+
+
 
         return
 
-    def get_weight(self, tensor, dtype):
+    def get_weight(self, tensor, dtype, device=None):
         if tensor is None:
             return
-
+            
         trace_start = time.perf_counter()
         quantized = is_quantized(tensor)
         qtype_name = _qtype_name(tensor)
-        source_device_type = getattr(tensor.device, 'type', str(tensor.device))
-        device_type = source_device_type
+        source_device_type = tensor.device.type
+        source_pinned_host = bool(getattr(tensor, "gguf_pinned_host", False))
+        target_device = torch.device(device) if device is not None else tensor.device
 
-        if source_device_type == 'cpu':
-            _gguf_trace_stats["source_cpu_calls"] += 1
-        elif source_device_type == 'cuda':
-            _gguf_trace_stats["source_cuda_calls"] += 1
-        else:
-            _gguf_trace_stats["source_other_calls"] += 1
-
-        if quantized:
-            if source_device_type == 'cpu':
-                _gguf_trace_stats["source_quantized_cpu_calls"] += 1
-            elif source_device_type == 'cuda':
-                _gguf_trace_stats["source_quantized_cuda_calls"] += 1
-            else:
-                _gguf_trace_stats["source_quantized_other_calls"] += 1
-
-        if getattr(tensor, "patches", []):
-            raise RuntimeError("GGUF legacy denoise-time patch payloads are no longer supported; normalize dense deltas before sampling.")
-
-        # dequantize tensor while patches load
+        # Workspace streaming is only valid when the current execution target is CUDA.
+        use_workspace = quantized and source_device_type == "cpu" and target_device.type == "cuda"
+        
         dequant_start = time.perf_counter()
         dequant_cpu_start = time.process_time()
-        weight = dequantize_tensor(tensor, dtype, self.dequant_dtype)
+
+        if use_workspace:
+            # 1. Copy quantized weight to GPU workspace (1x copy)
+            q_data = tensor.data.view(torch.uint8)
+            flat_q_data = q_data.reshape(-1)
+            q_size = q_data.numel()
+            WORKSPACE.ensure_buffers(q_size, target_device)
+            if source_pinned_host:
+                _gguf_trace_stats["source_pinned_cpu_calls"] += 1
+                _gguf_trace_stats["workspace_pinned_copy_calls"] += 1
+            else:
+                _gguf_trace_stats["workspace_unpinned_copy_calls"] += 1
+            
+            # Zero-copy DMA transfer (if pinned)
+            target_q_buffer = WORKSPACE.q_buffer[:q_size]
+            target_q_buffer.copy_(flat_q_data, non_blocking=True)
+            target_q_view = target_q_buffer.view_as(q_data)
+            
+            # 2. Dequantize inside GPU (In-place dequant not yet supported by all funcs, so we use dequantize_tensor on the GPU view)
+            # We create a temporary GGMLTensor view of the workspace buffer
+            q_view = GGMLTensor(
+                target_q_view,
+                tensor_type=tensor.tensor_type,
+                tensor_shape=getattr(tensor, "tensor_shape", tensor.shape)
+            )
+            weight = dequantize_tensor(q_view, dtype, self.dequant_dtype)
+        else:
+            # Fallback to standard dequant (naive)
+            weight = dequantize_tensor(tensor, dtype, self.dequant_dtype)
+
         dequant_cpu_duration = time.process_time() - dequant_cpu_start
         dequant_duration = time.perf_counter() - dequant_start
 
@@ -311,38 +364,15 @@ class GGMLLayer(torch.nn.Module):
         if isinstance(weight, GGMLTensor):
             weight = torch.Tensor(weight)
 
-        patch_duration = 0.0
         dense_delta = getattr(tensor, "gguf_dense_delta", None)
         if dense_delta is not None:
-            patch_start = time.perf_counter()
+            # LoRA Delta Streaming
             weight = weight + dense_delta.to(device=weight.device, dtype=weight.dtype, non_blocking=True)
-            patch_duration = time.perf_counter() - patch_start
 
         _gguf_trace_stats["calls"] += 1
-        if device_type == 'cpu':
-            _gguf_trace_stats["cpu_calls"] += 1
-            _gguf_trace_stats["cpu_dequant_seconds"] += dequant_duration
-        elif device_type == 'cuda':
-            _gguf_trace_stats["cuda_calls"] += 1
-            _gguf_trace_stats["cuda_dequant_seconds"] += dequant_duration
-        else:
-            _gguf_trace_stats["other_device_calls"] += 1
-            _gguf_trace_stats["other_device_dequant_seconds"] += dequant_duration
-
-        if quantized:
-            _gguf_trace_stats["quantized_calls"] += 1
-            if device_type == 'cpu':
-                _gguf_trace_stats["quantized_cpu_calls"] += 1
-            elif device_type == 'cuda':
-                _gguf_trace_stats["quantized_cuda_calls"] += 1
-            else:
-                _gguf_trace_stats["quantized_other_device_calls"] += 1
-        if dense_delta is not None:
-            _gguf_trace_stats["patch_calls"] += 1
         _gguf_trace_stats["dequant_seconds"] += dequant_duration
         _gguf_trace_stats["dequant_cpu_process_seconds"] += dequant_cpu_duration
         _record_qtype_stats(qtype_name, source_device_type=source_device_type, quantized=quantized, wall_seconds=dequant_duration, cpu_process_seconds=dequant_cpu_duration, tensor=tensor)
-        _gguf_trace_stats["patch_seconds"] += patch_duration
         _gguf_trace_stats["total_seconds"] += time.perf_counter() - trace_start
         return weight
 
@@ -359,10 +389,10 @@ class GGMLLayer(torch.nn.Module):
         bias = None
         non_blocking = comfy_model_management.device_supports_non_blocking(device)
         if s.bias is not None:
-            bias = s.get_weight(s.bias.to(device), dtype)
+            bias = s.get_weight(s.bias, dtype, device=device)
             bias = comfy_ops.cast_to(bias, bias_dtype, device, non_blocking=non_blocking, copy=False)
 
-        weight = s.get_weight(s.weight.to(device), dtype)
+        weight = s.get_weight(s.weight, dtype, device=device)
         weight = comfy_ops.cast_to(weight, dtype, device, non_blocking=non_blocking, copy=False)
         return weight, bias
 

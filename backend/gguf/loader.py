@@ -6,9 +6,47 @@ import gguf
 
 from .ops import GGMLTensor
 from .dequant import is_quantized, dequantize_tensor
+from backend.staging_manager import STREAMING_EXECUTION_CLASSES
 
 IMG_ARCH_LIST = {"flux", "sd1", "sdxl", "sd3", "aura", "hidream", "ltxv", "hyvid", "wan"}
 TXT_ARCH_LIST = {"t5", "t5encoder", "llama"}
+
+
+_gguf_loader_trace_stats = {
+    "pin_memory_requested": 0,
+    "pin_memory_succeeded": 0,
+    "pin_memory_failed": 0,
+    "pinned_host_tensors": 0,
+    "pinned_host_bytes": 0,
+}
+
+
+def reset_loader_trace_stats():
+    for key in _gguf_loader_trace_stats:
+        _gguf_loader_trace_stats[key] = 0
+
+
+def consume_loader_trace_stats():
+    snapshot = dict(_gguf_loader_trace_stats)
+    reset_loader_trace_stats()
+    return snapshot
+
+
+def is_streaming_execution_class(execution_class) -> bool:
+    if execution_class is None:
+        return False
+    if execution_class in STREAMING_EXECUTION_CLASSES:
+        return True
+    token = getattr(execution_class, "value", execution_class)
+    token = str(token).strip().upper()
+    return token in {member.value for member in STREAMING_EXECUTION_CLASSES}
+
+
+def _resolve_streaming_pin_memory(*, pin_memory, execution_class, require_pinned_host: bool) -> bool:
+    resolved = bool(pin_memory) if pin_memory is not None else is_streaming_execution_class(execution_class)
+    if require_pinned_host and not resolved:
+        raise RuntimeError("Streaming-class GGUF loads require pinned host tensors.")
+    return resolved
 
 def get_orig_shape(reader, tensor_name):
     field_key = f"comfy.gguf.orig_shape.{tensor_name}"
@@ -45,11 +83,24 @@ def get_list_field(reader, field_name, field_type):
     else:
         raise TypeError(f"Unknown field type {field_type}")
 
-def gguf_sd_loader(path, handle_prefix="model.diffusion_model.", return_arch=False):
+def gguf_sd_loader(
+    path,
+    handle_prefix="model.diffusion_model.",
+    return_arch=False,
+    pin_memory=None,
+    *,
+    execution_class=None,
+    require_pinned_host=False,
+):
     """
     Read state dict as fake tensors
     """
     reader = gguf.GGUFReader(path)
+    pin_memory = _resolve_streaming_pin_memory(
+        pin_memory=pin_memory,
+        execution_class=execution_class,
+        require_pinned_host=require_pinned_host,
+    )
 
     # filter and strip prefix
     has_prefix = False
@@ -103,9 +154,28 @@ def gguf_sd_loader(path, handle_prefix="model.diffusion_model.", return_arch=Fal
                         shape = shape[:-1]
 
         # add to state dict
+        pinned_host = False
         if tensor.tensor_type in {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16}:
             torch_tensor = torch_tensor.view(*shape)
-        state_dict[sd_key] = GGMLTensor(torch_tensor, tensor_type=tensor.tensor_type, tensor_shape=shape)
+            
+        if pin_memory and tensor.tensor_type not in {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16}:
+            _gguf_loader_trace_stats["pin_memory_requested"] += 1
+            try:
+                torch_tensor = torch_tensor.pin_memory()
+                pinned_host = bool(getattr(torch_tensor, "is_pinned", lambda: False)())
+                if pinned_host:
+                    _gguf_loader_trace_stats["pin_memory_succeeded"] += 1
+                    _gguf_loader_trace_stats["pinned_host_tensors"] += 1
+                    _gguf_loader_trace_stats["pinned_host_bytes"] += int(torch_tensor.numel() * torch_tensor.element_size())
+            except Exception:
+                _gguf_loader_trace_stats["pin_memory_failed"] += 1
+                pinned_host = False
+            if require_pinned_host and not pinned_host:
+                raise RuntimeError(f"Failed to pin GGUF tensor {sd_key!r} for streaming-class host staging.")
+
+        wrapped = GGMLTensor(torch_tensor, tensor_type=tensor.tensor_type, tensor_shape=shape)
+        wrapped.gguf_pinned_host = pinned_host
+        state_dict[sd_key] = wrapped
 
         # keep track of loaded tensor types
         tensor_type_str = getattr(tensor.tensor_type, "name", repr(tensor.tensor_type))

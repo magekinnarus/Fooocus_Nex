@@ -607,12 +607,16 @@ def has_active_flux_fill_session() -> bool:
 
 
 def _build_flux_fill_session(asset_paths: dict[str, str]) -> FluxFillSession:
+    from backend.staging_manager import PlacementSolver
+
+    execution_class = PlacementSolver.solve_from_system(task_id="flux_fill").execution_class
     session_config = FluxFillPipelineConfig(
         unet_path=asset_paths["unet_path"],
         ae_path=asset_paths["ae_path"],
         conditioning_cache_path=asset_paths["conditioning_cache_path"],
         tier=asset_paths["tier"],
         device=None,
+        execution_class=execution_class,
     )
     conditioning_provider = FluxPromptConditioningCache(
         resolve_conditioning=generate_flux_fill_prompt_conditioning,
@@ -1084,6 +1088,9 @@ def remove_object_flux_fill(
     )
 
     from backend.flux import FluxFillPipelineConfig, run_flux_fill_pipeline
+    from backend.staging_manager import PlacementSolver
+
+    execution_class = PlacementSolver.solve_from_system(task_id="flux_fill").execution_class
 
     flux_config = FluxFillPipelineConfig(
         unet_path=asset_paths["unet_path"],
@@ -1097,6 +1104,7 @@ def remove_object_flux_fill(
         guidance=float(guidance),
         mode=selected_mode,
         blend_mode=selected_blend_mode,
+        execution_class=execution_class,
     )
     result = run_flux_fill_pipeline(
         flux_config,
