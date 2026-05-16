@@ -101,7 +101,7 @@ MODEL_UNIVERSE_COSTS: Dict[str, InferenceCostProfile] = {
     "sdxl_fp16": InferenceCostProfile(
         family="sdxl",
         variant="sdxl_fp16",
-        weights_mb=3400.0,
+        weights_mb=5135.0,
         overhead_mb=900.0,
         vae_mb=320.0,
         clip_mb=1135.0,
