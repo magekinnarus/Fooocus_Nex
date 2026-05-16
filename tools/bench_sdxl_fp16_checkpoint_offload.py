@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from backend import loader, resources
 from backend import float_ops as backend_float_ops
 from backend import utils as backend_utils
+from backend.cpu_compiler import CpuArtifactCompiler
 from backend.weight_ops import calculate_weight, get_key_weight, string_to_seed
 from backend.gguf.direct_sdxl_runtime import DirectSDXLGGUFRuntime, DirectSDXLGGUFRunConfig
 from modules.gguf_headless_runner import (
@@ -126,6 +127,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Fully materialize CLIP and UNet LoRA patches on CPU before low-vram attach.",
+    )
+    parser.add_argument(
+        "--use-cpu-compiler",
+        action="store_true",
+        default=False,
+        help="Use backend.cpu_compiler for UNet CPU materialization instead of the local sequential seal path.",
+    )
+    parser.add_argument(
+        "--cpu-compiler-workers",
+        type=int,
+        default=None,
+        help="Optional explicit worker count for backend.cpu_compiler.",
+    )
+    parser.add_argument(
+        "--cpu-compiler-torch-threads",
+        type=int,
+        default=None,
+        help="Optional torch thread count to use inside each cpu_compiler worker.",
     )
     parser.add_argument("--notes", default="")
     parser.add_argument("--traceback", action="store_true")
@@ -444,7 +463,14 @@ def _apply_loras_to_runtime(runtime: Any, *, scenario: ScenarioConfig, lora_spec
     }
 
 
-def _materialize_runtime_artifacts_on_cpu(runtime: Any, *, pin_unet_host: bool) -> dict[str, Any]:
+def _materialize_runtime_artifacts_on_cpu(
+    runtime: Any,
+    *,
+    pin_unet_host: bool,
+    use_cpu_compiler: bool = False,
+    cpu_compiler_workers: Optional[int] = None,
+    cpu_compiler_torch_threads: Optional[int] = None,
+) -> dict[str, Any]:
     probe = {
         "enabled": True,
         "clip_materialize_wall": 0.0,
@@ -462,10 +488,19 @@ def _materialize_runtime_artifacts_on_cpu(runtime: Any, *, pin_unet_host: bool) 
 
     if runtime.unet is not None:
         start = time.perf_counter()
-        unet_result = _seal_materialized_patcher(runtime.unet, pin_host=pin_unet_host)
+        if use_cpu_compiler:
+            unet_result = CpuArtifactCompiler.compile_patcher(
+                runtime.unet,
+                pin_unet_host=pin_unet_host,
+                num_workers=cpu_compiler_workers,
+                torch_threads_per_worker=cpu_compiler_torch_threads,
+            )
+        else:
+            unet_result = _seal_materialized_patcher(runtime.unet, pin_host=pin_unet_host)
         probe["unet_materialize_wall"] = time.perf_counter() - start
         probe["unet_patch_keys"] = int(unet_result.get("materialized_patch_keys", 0))
         probe["extra_host_pinned_bytes"] = int(unet_result.get("host_pinned_bytes", 0))
+        probe["compiler_backend"] = "cpu_compiler" if use_cpu_compiler else "sequential_seal"
 
     return probe
 
@@ -487,6 +522,9 @@ def _run_combo(
     pin_unet_host: bool,
     stage_conditioning_to_gpu: bool,
     execution_shape: str,
+    use_cpu_compiler: bool,
+    cpu_compiler_workers: Optional[int],
+    cpu_compiler_torch_threads: Optional[int],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     materialize_patched_artifacts = execution_shape in (
         "materialized_patch_offload",
@@ -527,6 +565,9 @@ def _run_combo(
         "clip_patch_keys": 0,
         "unet_patch_keys": 0,
         "extra_host_pinned_bytes": 0,
+        "compiler_backend": "none",
+        "compiler_workers": cpu_compiler_workers,
+        "compiler_torch_threads": cpu_compiler_torch_threads,
     }
 
     try:
@@ -542,6 +583,9 @@ def _run_combo(
                     materialize_probe = _materialize_runtime_artifacts_on_cpu(
                         runtime,
                         pin_unet_host=pin_unet_host,
+                        use_cpu_compiler=use_cpu_compiler,
+                        cpu_compiler_workers=cpu_compiler_workers,
+                        cpu_compiler_torch_threads=cpu_compiler_torch_threads,
                     )
                     runtime.host_pinned_bytes = max(
                         int(getattr(runtime, "host_pinned_bytes", 0)),
@@ -569,6 +613,9 @@ def _run_combo(
                 "route": runtime.route_label,
                 "route_label": runtime.route_label,
                 "execution_shape": execution_shape,
+                "use_cpu_compiler": bool(use_cpu_compiler),
+                "cpu_compiler_workers": cpu_compiler_workers,
+                "cpu_compiler_torch_threads": cpu_compiler_torch_threads,
                 "run_label": run_label,
                 "checkpoint_path": checkpoint_path,
                 "prompt_hash": _prompt_hash(scenario.prompt, scenario.negative_prompt),
@@ -589,6 +636,9 @@ def _run_combo(
                 "benchmark": {
                     "route_label": runtime.route_label,
                     "execution_shape": execution_shape,
+                    "use_cpu_compiler": bool(use_cpu_compiler),
+                    "cpu_compiler_workers": cpu_compiler_workers,
+                    "cpu_compiler_torch_threads": cpu_compiler_torch_threads,
                     "clip_residency_mode": runtime.config.clip_residency_mode,
                     "cold_model_load_cpu": getattr(runtime, "_cold_model_load_cpu", 0.0),
                     "clip_residency_attach": prep_metrics["clip_residency_attach"],
@@ -682,6 +732,9 @@ def main() -> int:
                         pin_unet_host=args.pin_unet_host,
                         stage_conditioning_to_gpu=args.stage_conditioning_to_gpu,
                         execution_shape=effective_execution_shape,
+                        use_cpu_compiler=args.use_cpu_compiler,
+                        cpu_compiler_workers=args.cpu_compiler_workers,
+                        cpu_compiler_torch_threads=args.cpu_compiler_torch_threads,
                     )
                     _append_jsonl(combo_dir / "benchmark_results.jsonl", payload)
                     results.append(payload)
@@ -690,6 +743,9 @@ def main() -> int:
                             {
                                 "run": run_label,
                                 "execution_shape": payload.get("execution_shape", ""),
+                                "cpu_compiler": bool(payload.get("use_cpu_compiler", False)),
+                                "compiler_workers": payload.get("cpu_compiler_workers", None),
+                                "compiler_torch_threads": payload.get("cpu_compiler_torch_threads", None),
                                 "clip_mode": clip_mode,
                                 "lora": "on" if lora_enabled else "off",
                                 "checkpoint": Path(checkpoint_path).name,
@@ -715,6 +771,9 @@ def main() -> int:
                 "stage_conditioning_to_gpu": bool(args.stage_conditioning_to_gpu),
                 "materialize_patched_artifacts": effective_execution_shape != "registered_patch_offload",
                 "execution_shape": effective_execution_shape,
+                "use_cpu_compiler": bool(args.use_cpu_compiler),
+                "cpu_compiler_workers": args.cpu_compiler_workers,
+                "cpu_compiler_torch_threads": args.cpu_compiler_torch_threads,
                 "unet_budget_mb": args.unet_budget_mb,
                 "streamlike_budget_mb": args.streamlike_budget_mb,
             },
