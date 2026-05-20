@@ -86,6 +86,52 @@ def _extract_prefixed_safetensors_state_dict(ckpt_path, prefixes, *, device=None
     return extracted
 
 
+def _load_prefixed_safetensors_into_module(
+    ckpt_path,
+    prefixes,
+    module,
+    *,
+    device=None,
+    dtype=None,
+):
+    target_device = torch.device(device) if device is not None else None
+    state_entries = module.state_dict()
+    loaded_keys = set()
+    unexpected_keys = []
+
+    with safe_open(ckpt_path, framework="pt", device=_safe_open_device_arg(target_device)) as handle:
+        for key in handle.keys():
+            matched_prefix = None
+            for prefix in prefixes:
+                if key.startswith(prefix):
+                    matched_prefix = prefix
+                    break
+
+            if matched_prefix is None:
+                continue
+
+            target_key = _strip_checkpoint_prefix(key, matched_prefix)
+            target_tensor = state_entries.get(target_key)
+            if target_tensor is None:
+                unexpected_keys.append(target_key)
+                continue
+
+            source_tensor = handle.get_tensor(key)
+            target_dtype = target_tensor.dtype
+            if dtype is not None and torch.is_floating_point(target_tensor):
+                target_dtype = dtype
+
+            copy_tensor = source_tensor.to(
+                device=target_tensor.device,
+                dtype=target_dtype,
+            )
+            target_tensor.copy_(copy_tensor)
+            loaded_keys.add(target_key)
+
+    missing_keys = [key for key in state_entries.keys() if key not in loaded_keys]
+    return missing_keys, unexpected_keys
+
+
 def _extract_prefixed_state_dict(source, prefixes, *, device=None):
     if isinstance(source, str) and source.lower().endswith(".safetensors"):
         return _extract_prefixed_safetensors_state_dict(source, prefixes, device=device)
@@ -141,6 +187,51 @@ def _build_unet_runtime_reload(source, *, dtype=None, prefixes=None):
         )
 
     return _reload
+
+
+def _stream_load_sdxl_unet_from_checkpoint(
+    ckpt_path,
+    *,
+    load_device=None,
+    offload_device=None,
+    dtype=None,
+    reload_source=None,
+    reload_prefixes=None,
+):
+    load_device = load_device or resources.get_torch_device()
+    offload_device = offload_device or resources.unet_offload_device()
+    effective_dtype = dtype or torch.float16
+
+    runtime_reload = _build_unet_runtime_reload(
+        reload_source if reload_source is not None else ckpt_path,
+        dtype=effective_dtype,
+        prefixes=reload_prefixes,
+    )
+
+    model = model_base.SDXL(
+        model_config=ModelConfig(sdxl_def.UNET_CONFIG, latent_formats.SDXL()),
+    )
+    model.diffusion_model.to(device=load_device, dtype=effective_dtype)
+
+    missing, unexpected = _load_prefixed_safetensors_into_module(
+        ckpt_path,
+        reload_prefixes or sdxl_def.PREFIXES["unet"],
+        model.diffusion_model,
+        device=load_device,
+        dtype=effective_dtype,
+    )
+    if missing:
+        logging.debug("SDXL UNet: Missing keys while streaming load: %s", missing)
+    if unexpected:
+        logging.debug("SDXL UNet: Unexpected keys while streaming load: %s", unexpected)
+
+    return patching.NexModelPatcher(
+        model,
+        load_device=load_device,
+        offload_device=offload_device,
+        runtime_reload=runtime_reload,
+        runtime_release_to_meta=runtime_reload is not None,
+    )
 
 class ModelConfig(supported_models_base.BASE):
     """Mock config object for model instantiation, inheriting from BASE for compatibility."""
@@ -379,9 +470,10 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
     # Use Nex implementations
     tokenizer = clip.NexSDXLTokenizer()
     
-    # User Requirement: SDXL CLIP should be in fp16
+    # SDXL CLIP should stay resident in fp32 so CPU/GPU prompt encode does not
+    # repeatedly upcast fp16 weights to match fp32 activations at runtime.
     if dtype is None:
-        dtype = torch.float16 
+        dtype = torch.float32 
         
     model = clip.NexSDXLClipModel(device=offload_device, dtype=dtype)
     
@@ -483,6 +575,7 @@ def load_sdxl_checkpoint(
     """
     logging.info(f"Loading SDXL checkpoint from: {ckpt_path}")
     load_device = load_device or resources.get_torch_device()
+    clip_dtype = torch.float32
 
     if isinstance(ckpt_path, str) and ckpt_path.lower().endswith(".safetensors"):
         logging.info("Extracting VAE from safetensors checkpoint...")
@@ -511,27 +604,21 @@ def load_sdxl_checkpoint(
             clip_g_sd,
             load_device=clip_load_device,
             offload_device=clip_offload_device,
-            dtype=unet_dtype,
+            dtype=clip_dtype,
         )
         del clip_l_sd
         del clip_g_sd
         gc.collect()
 
         logging.info("Extracting UNet from safetensors checkpoint directly to load device...")
-        unet_sd = _extract_prefixed_safetensors_state_dict(
+        unet = _stream_load_sdxl_unet_from_checkpoint(
             ckpt_path,
-            sdxl_def.PREFIXES["unet"],
-            device=load_device,
-        )
-        unet = load_sdxl_unet(
-            unet_sd,
             load_device=load_device,
             offload_device=offload_device,
             dtype=unet_dtype,
             reload_source=ckpt_path,
             reload_prefixes=sdxl_def.PREFIXES["unet"],
         )
-        del unet_sd
         gc.collect()
         return unet, clip, vae
 
@@ -580,7 +667,7 @@ def load_sdxl_checkpoint(
         clip_g_sd,
         load_device=clip_load_device,
         offload_device=clip_offload_device,
-        dtype=unet_dtype,
+        dtype=clip_dtype,
     )
     del clip_l_sd
     del clip_g_sd

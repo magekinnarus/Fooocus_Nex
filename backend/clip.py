@@ -136,7 +136,7 @@ class CLIPEmbeddings(nn.Module):
         return self.token_embedding(input_tokens) + self.position_embedding.weight
 
 class CLIPTextModel_(nn.Module):
-    def __init__(self, config_dict, dtype, device):
+    def __init__(self, config_dict, dtype, device, embedding_dtype=None):
         super().__init__()
         num_layers = config_dict["num_hidden_layers"]
         embed_dim = config_dict["hidden_size"]
@@ -144,8 +144,10 @@ class CLIPTextModel_(nn.Module):
         intermediate_size = config_dict["intermediate_size"]
         intermediate_activation = config_dict["hidden_act"]
 
-        # Crucial: Embeddings are FP32
-        self.embeddings = CLIPEmbeddings(embed_dim, dtype=torch.float32, device=device)
+        # Some paths intentionally keep embeddings in FP32 for safety, while
+        # SDXL can honor the requested model dtype to keep prompt artifacts FP16.
+        embedding_dtype = embedding_dtype or torch.float32
+        self.embeddings = CLIPEmbeddings(embed_dim, dtype=embedding_dtype, device=device)
         self.encoder = CLIPEncoder(num_layers, embed_dim, heads, intermediate_size, intermediate_activation, dtype, device)
         self.final_layer_norm = NexLayerNorm(embed_dim, dtype=dtype, device=device)
 
@@ -417,7 +419,7 @@ def normalize_clip_g_keys(sd: dict) -> dict:
 
 class NexClipEncoder(nn.Module):
     def __init__(self, config_dict=None, device="cpu", dtype=None, max_length=77, 
-                 use_projection=False, layer="last", layer_idx=None, **kwargs):
+                 use_projection=False, layer="last", layer_idx=None, embeddings_dtype=None, **kwargs):
         super().__init__()
         
         if config_dict is None:
@@ -444,7 +446,7 @@ class NexClipEncoder(nn.Module):
                 "vocab_size": 49408
             }
 
-        self.transformer = CLIPTextModel_(config_dict, dtype, device)
+        self.transformer = CLIPTextModel_(config_dict, dtype, device, embedding_dtype=embeddings_dtype)
         self.num_layers = config_dict["num_hidden_layers"]
         self.max_length = max_length
         self.use_projection = use_projection
@@ -617,7 +619,14 @@ class NexSDXLClipModel(nn.Module):
     def __init__(self, device="cpu", dtype=None):
         super().__init__()
         # CLIP-L: SDXL typically uses layer -2 (penultimate)
-        self.clip_l = NexClipEncoder(device=device, dtype=dtype, layer="hidden", layer_idx=-2, layer_norm_hidden_state=False)
+        self.clip_l = NexClipEncoder(
+            device=device,
+            dtype=dtype,
+            embeddings_dtype=torch.float32,
+            layer="hidden",
+            layer_idx=-2,
+            layer_norm_hidden_state=False,
+        )
         
         # CLIP-G: SDXL typically uses layer -2 (penultimate)
         # CLIP-G config (BigG)
@@ -630,8 +639,16 @@ class NexSDXLClipModel(nn.Module):
             "projection_dim": 1280,
             "vocab_size": 49408
         }
-        self.clip_g = NexClipEncoder(config_dict=config_g, device=device, dtype=dtype, 
-                                   use_projection=True, layer="hidden", layer_idx=-2, layer_norm_hidden_state=False)
+        self.clip_g = NexClipEncoder(
+            config_dict=config_g,
+            device=device,
+            dtype=dtype,
+            embeddings_dtype=torch.float32,
+            use_projection=True,
+            layer="hidden",
+            layer_idx=-2,
+            layer_norm_hidden_state=False,
+        )
 
     def clip_layer(self, layer_idx):
         self.clip_l.clip_layer(layer_idx)

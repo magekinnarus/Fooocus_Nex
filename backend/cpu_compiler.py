@@ -100,6 +100,29 @@ def _resolve_scalar(value: Any) -> Any:
     return value
 
 
+def _pin_tensor(tensor: torch.Tensor) -> tuple[torch.Tensor, int]:
+    if not isinstance(tensor, torch.Tensor):
+        return tensor, 0
+    if not torch.cuda.is_available():
+        return tensor, 0
+    if tensor.device.type != "cpu" or tensor.is_pinned():
+        return tensor, 0
+
+    pinned = tensor.contiguous().pin_memory()
+    return pinned, pinned.numel() * pinned.element_size()
+
+
+def _measure_pinned_module_tensors(module: torch.nn.Module) -> int:
+    if module is None:
+        return 0
+
+    pinned_bytes = 0
+    for tensor in list(module.parameters()) + list(module.buffers()):
+        if isinstance(tensor, torch.Tensor) and tensor.device.type == "cpu" and tensor.is_pinned():
+            pinned_bytes += tensor.numel() * tensor.element_size()
+    return pinned_bytes
+
+
 def _pin_module_tensors(module: torch.nn.Module) -> int:
     if not torch.cuda.is_available():
         return 0
@@ -109,13 +132,13 @@ def _pin_module_tensors(module: torch.nn.Module) -> int:
         for _, param in submodule.named_parameters(recurse=False):
             if param is None or param.device.type != "cpu" or param.is_pinned():
                 continue
-            pinned = param.data.contiguous().pin_memory()
+            pinned, _ = _pin_tensor(param.data)
             param.data = pinned
             pinned_bytes += pinned.numel() * pinned.element_size()
         for name, buf in submodule.named_buffers(recurse=False):
             if buf is None or buf.device.type != "cpu" or buf.is_pinned():
                 continue
-            pinned = buf.contiguous().pin_memory()
+            pinned, _ = _pin_tensor(buf)
             submodule._buffers[name] = pinned
             pinned_bytes += pinned.numel() * pinned.element_size()
     return pinned_bytes
@@ -229,7 +252,14 @@ class CpuArtifactCompiler:
         cls._run_tasks(
             num_workers,
             len(tasks),
-            lambda index: (lambda: cls._compile_single_key_patcher(patcher, tasks[index], cpu_device)),
+            lambda index: (
+                lambda: cls._compile_single_key_patcher(
+                    patcher,
+                    tasks[index],
+                    cpu_device,
+                    pin_output=pin_unet_host,
+                )
+            ),
             torch_threads_per_worker=torch_threads_per_worker,
         )
 
@@ -246,7 +276,8 @@ class CpuArtifactCompiler:
 
         host_pinned_bytes = 0
         if pin_unet_host:
-            host_pinned_bytes = _pin_module_tensors(patcher.model)
+            _pin_module_tensors(patcher.model)
+            host_pinned_bytes = _measure_pinned_module_tensors(patcher.model)
 
         gc.collect()
         return {
@@ -306,6 +337,7 @@ class CpuArtifactCompiler:
                     *get_key_weight(model, tasks[index][0]),
                     tasks[index][1],
                     cpu_device,
+                    pin_output=pin_unet_host,
                 )
             ),
             torch_threads_per_worker=torch_threads_per_worker,
@@ -313,7 +345,8 @@ class CpuArtifactCompiler:
 
         host_pinned_bytes = 0
         if pin_unet_host:
-            host_pinned_bytes = _pin_module_tensors(model)
+            _pin_module_tensors(model)
+            host_pinned_bytes = _measure_pinned_module_tensors(model)
 
         gc.collect()
         return {
@@ -402,7 +435,14 @@ class CpuArtifactCompiler:
         return {"status": "compiled", "materialized_patch_keys": patch_count}
 
     @classmethod
-    def _compile_single_key_patcher(cls, patcher: Any, key: str, cpu_device: torch.device):
+    def _compile_single_key_patcher(
+        cls,
+        patcher: Any,
+        key: str,
+        cpu_device: torch.device,
+        *,
+        pin_output: bool = False,
+    ):
         weight, set_func, convert_func = get_key_weight(patcher.model, key)
         preserved_dtype = weight.dtype
         # We work directly on a CPU copy or in-place
@@ -419,8 +459,12 @@ class CpuArtifactCompiler:
                 preserved_dtype,
                 seed=string_to_seed(key),
             )
+            if pin_output:
+                out_weight, _ = _pin_tensor(out_weight)
             backend_utils.set_attr_param(patcher.model, key, out_weight)
         else:
+            if pin_output:
+                out_weight, _ = _pin_tensor(out_weight)
             set_func(out_weight, inplace_update=False, seed=string_to_seed(key))
 
     @classmethod
@@ -433,6 +477,8 @@ class CpuArtifactCompiler:
         convert_func: Any,
         patches: list[Any],
         cpu_device: torch.device,
+        *,
+        pin_output: bool = False,
     ):
         preserved_dtype = weight.dtype
         temp_weight = weight.to(device=cpu_device, dtype=preserved_dtype, copy=False)
@@ -447,9 +493,13 @@ class CpuArtifactCompiler:
                 preserved_dtype,
                 seed=string_to_seed(key),
             )
+            if pin_output:
+                out_weight, _ = _pin_tensor(out_weight)
             from backend import utils as backend_utils
             backend_utils.set_attr_param(model, key, out_weight)
         else:
+            if pin_output:
+                out_weight, _ = _pin_tensor(out_weight)
             set_func(out_weight, inplace_update=False, seed=string_to_seed(key))
 
     @classmethod
