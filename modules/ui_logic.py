@@ -209,6 +209,11 @@ def inpaint_mode_change(mode, inpaint_engine_version):
     # inpaint_disable_initial_latent, inpaint_engine,
     # inpaint_strength
 
+    inpaint_engine_version = modules.flags.normalize_inpaint_engine_version(
+        inpaint_engine_version,
+        default=modules.config.default_inpaint_engine_version,
+    )
+
     if mode == modules.flags.inpaint_option_detail:
         return [
             gr.update(visible=True), gr.update(visible=False, value=[]),
@@ -697,13 +702,17 @@ def preset_selection_change(preset, is_generating):
     return metadata_ui.load_parameter_button_click(json.dumps(preset_prepared), is_generating, modules.flags.inpaint_option_default)
 
 def inpaint_engine_state_change(inpaint_engine_version):
-    if inpaint_engine_version == 'empty':
-        inpaint_engine_version = modules.config.default_inpaint_engine_version
+    inpaint_engine_version = modules.flags.normalize_inpaint_engine_version(
+        inpaint_engine_version,
+        default=modules.config.default_inpaint_engine_version,
+    )
     return gr.update(value=inpaint_engine_version)
 
 def outpaint_engine_state_change(outpaint_engine_version):
-    if outpaint_engine_version == 'empty':
-        outpaint_engine_version = modules.config.default_outpaint_engine_version
+    outpaint_engine_version = modules.flags.normalize_inpaint_engine_version(
+        outpaint_engine_version,
+        default=modules.config.default_outpaint_engine_version,
+    )
     return gr.update(value=outpaint_engine_version)
 
 def objr_engine_change(objr_engine_value):

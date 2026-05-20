@@ -16,6 +16,10 @@ _PROMPT_TASK_CACHE: OrderedDict[str, dict] = OrderedDict()
 _PROMPT_TASK_CACHE_LIMIT = 16
 
 
+def _uses_unified_sdxl_runtime_owner(task_state) -> bool:
+    return str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified'
+
+
 def _resolve_residency_class(task_state, route_context=None, residency_class=None):
     if residency_class is not None:
         return resources.normalize_sdxl_residency_class(residency_class)
@@ -52,6 +56,27 @@ def _build_prompt_task_fingerprint(task_state, tasks, *, route_family=None, resi
     prompt_blueprint = _freeze_prompt_tasks(tasks)
     clip = pipeline.final_clip
     execution_policy = getattr(task_state, 'sdxl_execution_policy', None)
+    if _uses_unified_sdxl_runtime_owner(task_state):
+        return conditioning.build_stage_fingerprint(
+            'sdxl_prompt_encode',
+            residency_class=residency,
+            model_identity=str(getattr(task_state, 'base_model_name', None) or ''),
+            text_encoder_identity=(
+                'unified_runtime_clip',
+                -abs(int(getattr(task_state, 'clip_skip', 1) or 1)),
+            ),
+            clip_patch_uuid=tuple(getattr(task_state, 'loras_processed', ()) or getattr(task_state, 'loras', ()) or ()),
+            clip_layer_idx=-abs(int(getattr(task_state, 'clip_skip', 1) or 1)),
+            lora_artifacts_state=tuple(getattr(task_state, 'loras_processed', ()) or ()),
+            route_family_reconciliation_signature=(
+                route_family or getattr(task_state, 'current_tab', None),
+                'unified',
+            ),
+            route_family=route_family or getattr(task_state, 'current_tab', None),
+            execution_family=getattr(execution_policy, 'execution_family', None),
+            clip_residency_mode='runtime_owned',
+            prompt_blueprint=prompt_blueprint,
+        )
     return conditioning.build_stage_fingerprint(
         'sdxl_prompt_encode',
         residency_class=residency,
@@ -182,25 +207,28 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
 
     loras, prompt = parse_lora_references_from_prompt(prompt, task_state.loras,
                                                       config.default_max_lora_number)
+    task_state.loras_processed = loras
+    unified_runtime_owner = _uses_unified_sdxl_runtime_owner(task_state)
 
     sdxl_policy = getattr(task_state, 'sdxl_execution_policy', None)
 
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.MODEL_REFRESH,
-        task=task_state,
-        notes={
-            'base_model': task_state.base_model_name,
-            'vae': task_state.vae_name,
-            'clip': task_state.clip_model_name,
-        },
-        end_notes={'completed': True},
-    ):
-        pipeline.refresh_everything(base_model_name=task_state.base_model_name,
-                                    loras=loras, base_model_additional_loras=base_model_additional_loras,
-                                    vae_name=task_state.vae_name,
-                                    clip_name=task_state.clip_model_name,
-                                    sdxl_policy=sdxl_policy)
-        pipeline.set_clip_skip(task_state.clip_skip)
+    if not unified_runtime_owner:
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.MODEL_REFRESH,
+            task=task_state,
+            notes={
+                'base_model': task_state.base_model_name,
+                'vae': task_state.vae_name,
+                'clip': task_state.clip_model_name,
+            },
+            end_notes={'completed': True},
+        ):
+            pipeline.refresh_everything(base_model_name=task_state.base_model_name,
+                                        loras=loras, base_model_additional_loras=base_model_additional_loras,
+                                        vae_name=task_state.vae_name,
+                                        clip_name=task_state.clip_model_name,
+                                        sdxl_policy=sdxl_policy)
+            pipeline.set_clip_skip(task_state.clip_skip)
 
     if progressbar_callback:
         task_state.current_progress += 1
@@ -271,15 +299,23 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     cached_tasks = _load_prompt_tasks_from_cache(prompt_fingerprint)
     if cached_tasks is not None:
         task_state.use_expansion = use_expansion
-        task_state.loras_processed = loras
-        if len(cached_tasks) > 0:
+        if len(cached_tasks) > 0 and not unified_runtime_owner:
             task_state.positive_cond = cached_tasks[0]['c']
             task_state.negative_cond = cached_tasks[0]['uc']
-        if pipeline.final_clip is not None and not bool(getattr(sdxl_policy, 'keep_clip_loaded', False)):
+        if (not unified_runtime_owner) and pipeline.final_clip is not None and not bool(getattr(sdxl_policy, 'keep_clip_loaded', False)):
             resources.eject_model(pipeline.final_clip.patcher)
         if route_context is not None:
             route_context.set_route_artifact('prompt_encode', cached_tasks, fingerprint=prompt_fingerprint)
         return cached_tasks
+
+    if unified_runtime_owner:
+        task_state.use_expansion = use_expansion
+        task_state.positive_cond = None
+        task_state.negative_cond = None
+        _remember_prompt_tasks(prompt_fingerprint, tasks)
+        if route_context is not None:
+            route_context.set_route_artifact('prompt_encode', tasks, fingerprint=prompt_fingerprint)
+        return tasks
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.PROMPT_ENCODE,
@@ -341,7 +377,6 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
             resources.eject_model(pipeline.final_clip.patcher)
 
     task_state.use_expansion = use_expansion
-    task_state.loras_processed = loras # Storing back to state if needed
     _remember_prompt_tasks(prompt_fingerprint, tasks)
     if route_context is not None:
         route_context.set_route_artifact('prompt_encode', tasks, fingerprint=prompt_fingerprint)

@@ -44,6 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--clip-layer", type=int, default=-2)
     parser.add_argument(
+        "--streamlike-budget-mb",
+        type=int,
+        default=256,
+        help="Unified runtime denoise UNet stream-like budget in MB.",
+    )
+    parser.add_argument(
         "--pin-base-unet-without-lora",
         action="store_true",
         help="Explicitly pin the base UNet even when no LoRA stack is requested.",
@@ -64,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         choices=("mixed", "fp32"),
         default="mixed",
         help="Diagnostic-only resident CLIP weight mode for conditioning breakdown runs.",
+    )
+    parser.add_argument(
+        "--run-full-runtime",
+        action="store_true",
+        help="Run denoise_prepared_inputs() and decode_latent() after prepare_inputs().",
     )
     parser.add_argument("--report-json", default="", help="Optional output JSON path.")
     return parser.parse_args()
@@ -214,6 +225,7 @@ def _build_runtime_config(
         batch_size=1,
         lora_specs=lora_specs,
         pin_base_unet_without_lora=bool(args.pin_base_unet_without_lora),
+        streamlike_budget_mb=int(args.streamlike_budget_mb),
     )
 
 
@@ -272,10 +284,35 @@ def _run_case(
             "pooled_negative_dtype": str(prepared_inputs.payload["encoded_prompt_pair"]["negative"]["pooled"].dtype),
             "adm_positive_dtype": str(prepared_inputs.payload["adm_pair"]["positive"].dtype),
             "adm_negative_dtype": str(prepared_inputs.payload["adm_pair"]["negative"].dtype),
+            "execution_phase_after_prepare": getattr(prepared_inputs.gpu_attached_execution_state, "active_phase", None),
+            "streamlike_budget_mb": int(args.streamlike_budget_mb),
         }
         result["fp16_parameter_preserved"] = (
             result["unet_parameter_dtypes"] == ["torch.float16"]
         )
+
+        if args.run_full_runtime:
+            denoise_result = runtime.denoise_prepared_inputs(prepared_inputs)
+            phase_memory.append(asdict(_capture_phase_memory("after_denoise")))
+            result["denoise_metrics"] = dict(denoise_result.metrics)
+            result["denoise_sample_shape"] = [int(dim) for dim in denoise_result.samples.shape]
+            result["denoise_sample_dtype"] = str(denoise_result.samples.dtype)
+            result["denoise_sample_abs_mean"] = float(denoise_result.samples.abs().mean().item())
+            result["execution_phase_after_denoise"] = getattr(denoise_result.execution_state, "active_phase", None)
+            result["attached_component_ids_after_denoise"] = list(
+                getattr(denoise_result.execution_state, "attached_component_ids", ())
+            )
+
+            images, vae_attach, vae_decode = runtime.decode_latent(denoise_result.samples)
+            phase_memory.append(asdict(_capture_phase_memory("after_decode")))
+            result["decode_metrics"] = {
+                "vae_attach": float(vae_attach),
+                "vae_decode": float(vae_decode),
+            }
+            result["decoded_image_shape"] = [int(dim) for dim in images.shape]
+            result["decoded_image_dtype"] = str(images.dtype)
+            result["decoded_image_mean"] = float(images.mean().item())
+            result["execution_phase_after_decode"] = getattr(runtime.execution_state, "active_phase", None)
 
         runtime.close()
         gc.collect()

@@ -113,13 +113,15 @@ def _task_uses_dedicated_gguf_route(task) -> bool:
     try:
         execution_family = str(getattr(task, 'sdxl_execution_family', '') or '').strip().lower()
         residency_class = str(getattr(task, 'sdxl_residency_class', '') or '').strip().lower()
-        base_model_name = str(getattr(task, 'base_model_name', '') or '').strip().lower()
+        policy = getattr(task, 'sdxl_execution_policy', None)
+
+        if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
+            return False
 
         return (
             execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
             or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
             or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-            or base_model_name.endswith('.gguf')
         )
     except Exception:
         return False

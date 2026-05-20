@@ -128,7 +128,26 @@ def get_default_cn_parameters_for_type(cn_type):
 
 output_formats = ['png', 'jpeg', 'webp']
 
-inpaint_engine_versions = ['None', 'v1', 'v2.5', 'v2.6']
+INPAINT_ENGINE_NONE = 'None'
+INPAINT_ENGINE_V26 = 'v2.6'
+LEGACY_INPAINT_ENGINE_ALIASES = {
+    'v1': INPAINT_ENGINE_V26,
+    'v2.5': INPAINT_ENGINE_V26,
+}
+inpaint_engine_versions = [INPAINT_ENGINE_NONE, INPAINT_ENGINE_V26]
+
+
+def normalize_inpaint_engine_version(value, *, default=INPAINT_ENGINE_NONE):
+    normalized = str(value or '').strip()
+    if not normalized or normalized == 'empty':
+        return default
+    if normalized in LEGACY_INPAINT_ENGINE_ALIASES:
+        return LEGACY_INPAINT_ENGINE_ALIASES[normalized]
+    if normalized in inpaint_engine_versions:
+        return normalized
+    return default
+
+
 inpaint_option_default = 'Outpaint (2-Step)'
 inpaint_option_detail = 'Improve Detail (face, hand, eyes, etc.)'
 inpaint_option_modify = 'Modify Content (add objects, change background, etc.)'

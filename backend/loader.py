@@ -569,6 +569,7 @@ def load_sdxl_checkpoint(
     clip_load_device=None,
     clip_offload_device=None,
     vae_offload_device=None,
+    vae_source=None,
 ):
     """
     Loads SDXL components sequentially and clears raw data immediately.
@@ -576,17 +577,27 @@ def load_sdxl_checkpoint(
     logging.info(f"Loading SDXL checkpoint from: {ckpt_path}")
     load_device = load_device or resources.get_torch_device()
     clip_dtype = torch.float32
+    external_vae_source = vae_source
 
     if isinstance(ckpt_path, str) and ckpt_path.lower().endswith(".safetensors"):
-        logging.info("Extracting VAE from safetensors checkpoint...")
-        vae_sd = _extract_prefixed_safetensors_state_dict(
-            ckpt_path,
-            sdxl_def.PREFIXES["vae"],
-            device=torch.device("cpu"),
-        )
-        vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
-        del vae_sd
-        gc.collect()
+        if external_vae_source is not None:
+            logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
+            vae = load_vae(external_vae_source, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
+            gc.collect()
+        else:
+            logging.info("Extracting VAE from safetensors checkpoint...")
+            vae_sd = _extract_prefixed_safetensors_state_dict(
+                ckpt_path,
+                sdxl_def.PREFIXES["vae"],
+                device=torch.device("cpu"),
+            )
+            if len(vae_sd) > 0:
+                vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
+            else:
+                logging.warning("SDXL checkpoint is missing embedded VAE weights; continuing without checkpoint VAE.")
+                vae = None
+            del vae_sd
+            gc.collect()
 
         logging.info("Extracting CLIP from safetensors checkpoint...")
         clip_l_sd = _extract_prefixed_safetensors_state_dict(
@@ -626,20 +637,29 @@ def load_sdxl_checkpoint(
     gc.collect()
 
     # VAE (fp32 default)
-    logging.info("Extracting VAE...")
-    vae_sd = {}
-    keys = list(sd.keys())
-    for k in keys:
-        for p in sdxl_def.PREFIXES["vae"]:
-            if k.startswith(p):
-                new_key = k[len(p):]
-                if new_key.startswith("."): new_key = new_key[1:]
-                vae_sd[new_key] = sd.pop(k)
-                break
-    
-    vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
-    del vae_sd
-    gc.collect()
+    if external_vae_source is not None:
+        logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
+        vae = load_vae(external_vae_source, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
+        gc.collect()
+    else:
+        logging.info("Extracting VAE...")
+        vae_sd = {}
+        keys = list(sd.keys())
+        for k in keys:
+            for p in sdxl_def.PREFIXES["vae"]:
+                if k.startswith(p):
+                    new_key = k[len(p):]
+                    if new_key.startswith("."): new_key = new_key[1:]
+                    vae_sd[new_key] = sd.pop(k)
+                    break
+        
+        if len(vae_sd) > 0:
+            vae = load_vae(vae_sd, offload_device=vae_offload_device, latent_format=latent_formats.SDXL())
+        else:
+            logging.warning("SDXL checkpoint is missing embedded VAE weights; continuing without checkpoint VAE.")
+            vae = None
+        del vae_sd
+        gc.collect()
     
     # CLIP (fp16 default)
     logging.info("Extracting CLIP...")

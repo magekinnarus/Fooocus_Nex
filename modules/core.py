@@ -6,7 +6,7 @@ import einops
 import torch
 import numpy as np
 import ldm_patched.modules.model_detection
-from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, encode as vae_encode, lora, lora_artifacts, utils as backend_utils
+from backend import controlnet as backend_controlnet, loader, resources, sampling, conditioning, decode, encode as vae_encode, lora, lora_artifacts, utils as backend_utils, sdxl_runtime_policy
 import ldm_patched.modules.model_patcher
 import ldm_patched.modules.latent_formats
 
@@ -344,10 +344,22 @@ def load_model(
     basename = os.path.basename(ckpt_filename).lower()
     resolved_taxonomy = modules.config.resolve_model_taxonomy(ckpt_filename)
 
+    if sdxl_runtime_policy.is_legacy_sdxl_gguf_selection(
+        architecture=resolved_taxonomy.architecture,
+        base_model_name=ckpt_filename,
+    ):
+        raise ValueError(
+            'SDXL GGUF base models are deprecated and no longer supported. '
+            'Select an SDXL checkpoint base model instead.'
+        )
+
     unet, clip, vae = None, None, None
     unet_plan = resources.get_component_plan('unet', policy=sdxl_policy)
     clip_plan = resources.get_component_plan('clip', policy=sdxl_policy)
     vae_plan = resources.get_component_plan('vae', policy=sdxl_policy)
+    external_vae_filename_abs = None
+    if vae_filename is not None and vae_filename != 'None':
+        external_vae_filename_abs = get_file_from_folder_list(vae_filename, modules.config.path_vae)
 
     if basename.endswith('.gguf'):
         # GGUF UNet-only file -- load via backend GGUF path
@@ -373,6 +385,7 @@ def load_model(
             clip_load_device=clip_plan[0],
             clip_offload_device=clip_plan[0],
             vae_offload_device=vae_plan[0],
+            vae_source=external_vae_filename_abs if external_vae_filename_abs and os.path.exists(external_vae_filename_abs) else None,
         )
     else:
         # SD1.5 usually follows a fixed policy but can also benefit from solver if needed
@@ -411,9 +424,9 @@ def load_model(
                 print(f'[Nex Error] Failed to load Force CLIP [{clip_filename}]: {e}')
 
     # Support for separate VAE if provided
-    if vae_filename is not None and vae_filename != 'None':
-        vae_filename_abs = get_file_from_folder_list(vae_filename, modules.config.path_vae)
-        if os.path.exists(vae_filename_abs):
+    if vae_filename is not None and vae_filename != 'None' and not is_sdxl_base:
+        vae_filename_abs = external_vae_filename_abs
+        if vae_filename_abs is not None and os.path.exists(vae_filename_abs):
             try:
                 vae_format = ldm_patched.modules.latent_formats.SDXL() if is_sdxl_base else ldm_patched.modules.latent_formats.SD15()
                 vae = loader.load_vae(vae_filename_abs, latent_format=vae_format)

@@ -180,11 +180,12 @@ def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | Non
     normalized_execution_family = str(execution_family or '').strip().lower()
     normalized_residency_class = str(residency_class or '').strip().lower()
     route_family = 'sdxl'
-    if (
+    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
+        route_family = 'sdxl'
+    elif (
         normalized_execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
         or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
         or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-        or str(base_model_name).strip().lower().endswith('.gguf')
     ):
         route_family = 'gguf'
 
@@ -339,6 +340,18 @@ def handler(async_task: AsyncTask):
 
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
     resolved_taxonomy = modules.config.resolve_model_taxonomy(task_state.base_model_name)
+    if sdxl_runtime_policy.is_legacy_sdxl_gguf_selection(
+        architecture=getattr(resolved_taxonomy, 'architecture', None),
+        base_model_name=task_state.base_model_name,
+    ):
+        message = (
+            'SDXL GGUF base models are deprecated and no longer supported. '
+            'Select an SDXL checkpoint base model instead.'
+        )
+        print(f'[Nex Error] {message}')
+        task_state.yields.append(['preview', (0, message, None)])
+        raise ValueError(message)
+
     active_profile = resources.active_memory_environment_profile()
     task_state.sdxl_execution_policy = sdxl_runtime_policy.resolve_sdxl_execution_policy(
         architecture=getattr(resolved_taxonomy, 'architecture', None),
@@ -358,8 +371,6 @@ def handler(async_task: AsyncTask):
 
     _sync_route_process_activation(route, task_state, requested_process_key)
 
-    from modules.pipeline.gguf_runner import GGUFPipelineRunner
-
     route_context = PipelineRouteContext(
         async_task=async_task,
         task_state=task_state,
@@ -371,22 +382,7 @@ def handler(async_task: AsyncTask):
         progressbar_callback=progressbar,
         yield_result_callback=yield_result,
     )
-
-    is_lowvram_gguf = (
-        active_profile.total_vram_mb <= 6144
-        and route.route_id == 'txt2img'
-        and route.family == 'txt2img'
-        and requested_process_key is not None
-        and requested_process_key.route_family == 'gguf'
-        and getattr(task_state.sdxl_execution_policy, 'enabled', False)
-    )
-
-    if is_lowvram_gguf:
-        print(f"[Dispatch] Selecting dedicated GGUF Low-VRAM runner (VRAM: {active_profile.total_vram_mb:.0f}MB)")
-        GGUFPipelineRunner().run(route, route_context)
-        process_transition.set_active_process_key(requested_process_key)
-    else:
-        PipelineStageRunner().run(route, route_context)
+    PipelineStageRunner().run(route, route_context)
 
     task_state.processing = False
     _release_route_runtime_state(task_state)

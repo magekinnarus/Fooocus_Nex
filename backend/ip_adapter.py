@@ -741,6 +741,13 @@ def preprocess_faceid(img, model_path, clip_vision_path=None, insightface_model_
 def patch_model(model, tasks):
     new_model = model.clone()
 
+    def normalize_task(task):
+        if len(task) >= 4:
+            return task[0], float(task[1]), float(task[2]), float(task[3])
+        if len(task) == 3:
+            return task[0], float(task[1]), float(task[2]), 0.0
+        raise ValueError(f"Unexpected contextual task shape: {task!r}")
+
     def make_attn_patcher(ip_index):
         def patcher(n, context_attn2, value_attn2, extra_options):
             org_dtype = n.dtype
@@ -751,8 +758,9 @@ def patch_model(model, tasks):
             k = [context_attn2]
             v = [value_attn2]
 
-            for (cs, ucs), cn_stop, cn_weight in tasks:
-                if current_step >= cn_stop:
+            for task in tasks:
+                (cs, ucs), cn_stop, cn_weight, cn_start = normalize_task(task)
+                if current_step < cn_start or current_step >= cn_stop:
                     continue
 
                 ip_k_c = cs[ip_index * 2].to(q)

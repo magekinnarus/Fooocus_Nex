@@ -17,7 +17,7 @@ def build_inpaint_tab():
         label='Inpaint Engine',
         value=modules.config.default_inpaint_engine_version,
         choices=flags.inpaint_engine_versions,
-        info='Version of Fooocus inpaint model. If set, use performance Quality or Speed (no performance LoRAs) for best results.'
+        info='Supported SDXL inpaint patch route. `v2.6` is the only active inpaint model; `None` disables the patch route.'
     )
     results['inpaint_route'] = gr.Dropdown(
         label='Inpaint Route',

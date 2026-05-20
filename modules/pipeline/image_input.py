@@ -511,8 +511,9 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 
             engine = getattr(task_state, 'outpaint_engine', 'None') if 'outpaint' in task_state.goals \
                 else getattr(task_state, 'inpaint_engine', 'None')
+            engine = flags.normalize_inpaint_engine_version(engine, default=flags.INPAINT_ENGINE_NONE)
 
-            if engine != 'None':
+            if engine != flags.INPAINT_ENGINE_NONE:
                 if progressbar_callback:
                     progressbar_callback(task_state, 1, 'Downloading inpainter ...')
                 inpaint_patch_model_path = config.downloading_inpaint_models(engine)
@@ -675,6 +676,11 @@ def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=
             structural_preprocessors.run_structural_preprocessor
         )
 
+    task_state.prepared_structural_cn_tasks = {
+        cn_type: [list(task) for task in list(task_state.cn_tasks[cn_type])]
+        for cn_type in flags.cn_structural_types
+    }
+
 
 def preprocess_contextual_controlnets(task_state, contextual_assets=None):
     width, height = task_state.width, task_state.height
@@ -685,6 +691,18 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
     ip_negative_path = contextual_assets.get('ip_negative_path')
     insightface_model_names = contextual_assets.get('insightface_model_names') or ['antelopev2', 'buffalo_l']
     eva_clip_path = contextual_assets.get('eva_clip_path')
+
+    def normalize_contextual_task(task):
+        if len(task) >= 4:
+            return [task[0], task[1], task[2], task[3]]
+        if len(task) == 3:
+            return [task[0], task[1], task[2], 0.0]
+        raise ValueError(f'Unexpected contextual task shape: {task!r}')
+
+    def should_patch_shared_unet():
+        runtime_owner = str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower()
+        execution_family = str(getattr(task_state, 'sdxl_execution_family', '') or '').strip().lower()
+        return runtime_owner != 'unified' and 'unified' not in execution_family
 
     def preprocess_contextual_tasks(cn_type, tasks, resize_to=None):
         valid_tasks = []
@@ -720,7 +738,7 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
             except Exception as exc:
                 print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
                 continue
-            valid_tasks.append(task)
+            valid_tasks.append(normalize_contextual_task(task))
         task_state.set_cn_tasks(cn_type, valid_tasks)
 
     with resources.memory_phase_scope(
@@ -738,6 +756,10 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
         all_contextual_tasks.extend(list(task_state.cn_tasks[cn_type]))
 
     pulid_tasks = list(task_state.cn_tasks[flags.cn_pulid])
+    task_state.prepared_contextual_cn_tasks = {
+        cn_type: [list(task) for task in list(task_state.cn_tasks[cn_type])]
+        for cn_type in flags.cn_contextual_types
+    }
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.CONTROL_APPLY,
@@ -748,10 +770,10 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
         },
         end_notes={'completed': True},
     ):
-        if len(all_contextual_tasks) > 0:
+        if should_patch_shared_unet() and len(all_contextual_tasks) > 0:
             pipeline.final_unet = contextual_ip_adapter.patch_model(pipeline.final_unet, all_contextual_tasks)
 
-        if len(pulid_tasks) > 0:
+        if should_patch_shared_unet() and len(pulid_tasks) > 0:
             pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
 
 

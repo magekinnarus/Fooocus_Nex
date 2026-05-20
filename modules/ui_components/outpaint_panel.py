@@ -15,7 +15,7 @@ def build_outpaint_tab():
         label='Outpaint Engine',
         value=modules.config.default_outpaint_engine_version,
         choices=flags.inpaint_engine_versions,
-        info='Version of Fooocus inpaint model. If set, use performance Quality or Speed (no performance LoRAs) for best results.'
+        info='Supported SDXL outpaint patch route. `v2.6` is the only active patch model; `None` disables the patch route.'
     )
     results['outpaint_strength'] = gr.Slider(
         label='Outpaint Denoising Strength',

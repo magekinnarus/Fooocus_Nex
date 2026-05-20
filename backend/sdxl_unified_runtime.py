@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import torch
-
-from backend import conditioning, lora as backend_lora, loader
+from backend import conditioning, decode, k_diffusion, lora as backend_lora, loader, precision, resources, sampling
 from backend.cpu_compiler import CpuArtifactCompiler, SafeOpenHeaderOnly
 from backend.lora_artifacts import compute_file_hash
 from backend.sdxl_runtime_contract import (
@@ -26,9 +25,13 @@ from backend.sdxl_runtime_contract import (
     InjectedFeatureArtifact,
     PromptConditioningArtifact,
     SDXL_RUNTIME_SURFACE_CONTRACTS,
+    StructuralConditioningArtifact,
+    SpatialConditioningArtifact,
     UnifiedSDXLRuntimeProtocol,
     UnifiedSDXLRuntimeSeams,
 )
+from backend.sdxl_unified_runtime_artifacts import UnifiedSDXLRuntimeArtifactMixin
+from backend.sdxl_unified_runtime_execution import UnifiedSDXLRuntimeExecutionMixin
 
 
 @dataclass(frozen=True)
@@ -47,10 +50,27 @@ class UnifiedSDXLRuntimeConfig:
     sampler: str
     scheduler: str
     seed: int
+    vae_path: str | None = None
+    positive_texts: tuple[str, ...] = field(default_factory=tuple)
+    negative_texts: tuple[str, ...] = field(default_factory=tuple)
+    positive_top_k: int = 1
+    negative_top_k: int = 1
     clip_layer: int = -2
     batch_size: int = 1
     lora_specs: tuple[tuple[str, float], ...] = field(default_factory=tuple)
     pin_base_unet_without_lora: bool = False
+    streamlike_budget_mb: int = 256
+    source_pixels: Any | None = None
+    source_mask: Any | None = None
+    spatial_mode: str | None = None
+    outpaint_direction: str | None = None
+    outpaint_expansion_size: int = 384
+    outpaint_pixelate: bool = True
+    structural_tasks: dict[str, tuple[tuple[Any, ...], ...]] = field(default_factory=dict)
+    controlnet_paths: dict[str, str] = field(default_factory=dict)
+    controlnet_quality: dict[str, float] = field(default_factory=dict)
+    contextual_tasks: dict[str, tuple[tuple[Any, ...], ...]] = field(default_factory=dict)
+    contextual_assets: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -60,6 +80,8 @@ class UnifiedSDXLPreparedInputs:
     base_model: BaseModelAvailability | None = None
     compiled_unet: CompiledUnetArtifact | None = None
     conditioning: PromptConditioningArtifact | None = None
+    structural_conditioning: StructuralConditioningArtifact | None = None
+    spatial_conditioning: SpatialConditioningArtifact | None = None
     injected_features: dict[str, InjectedFeatureArtifact] = field(default_factory=dict)
     gpu_attached_execution_state: GpuAttachedExecutionState | None = None
     payload: Any = None
@@ -75,13 +97,12 @@ class UnifiedSDXLDenoiseResult:
     metrics: dict[str, float] = field(default_factory=dict)
 
 
-class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
-    """Unified Nex-owned SDXL runtime spine.
-
-    This class is intentionally narrow in W07c2. It exists to give W07c3 a
-    stable production-owned target instead of building directly against the
-    benchmark harness.
-    """
+class UnifiedSDXLRuntime(
+    UnifiedSDXLRuntimeArtifactMixin,
+    UnifiedSDXLRuntimeExecutionMixin,
+    UnifiedSDXLRuntimeProtocol,
+):
+    """Unified Nex-owned SDXL runtime spine."""
 
     route_label = "sdxl_unified_runtime"
 
@@ -101,6 +122,8 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
         self.base_model: BaseModelAvailability | None = None
         self.compiled_unet: CompiledUnetArtifact | None = None
         self.conditioning: PromptConditioningArtifact | None = None
+        self.structural_conditioning: StructuralConditioningArtifact | None = None
+        self.spatial_conditioning: SpatialConditioningArtifact | None = None
         self.injected_features: dict[str, InjectedFeatureArtifact] = {}
         self.execution_state: GpuAttachedExecutionState | None = None
         self.prepared_inputs: UnifiedSDXLPreparedInputs | None = None
@@ -112,12 +135,15 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
         )
         self._checkpoint_fingerprint: str | None = None
         self._clip_identity: str = self._build_clip_identity()
+        self._attached_payload: dict[str, Any] | None = None
+        self._loaded_controlnets: dict[str, Any] = {}
 
     def load_components(self) -> float:
         if self._loaded:
             return 0.0
 
         checkpoint_path = self._require_checkpoint_path()
+        vae_path = self._require_optional_vae_path()
         start = time.perf_counter()
         cpu_device = torch.device("cpu")
         self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
@@ -128,6 +154,7 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
             clip_load_device=cpu_device,
             clip_offload_device=cpu_device,
             vae_offload_device=cpu_device,
+            vae_source=vae_path,
         )
 
         if self.unet is not None:
@@ -164,6 +191,10 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
             self.clip,
             self.config.prompt,
             self.config.negative_prompt,
+            positive_texts=self.config.positive_texts or (self.config.prompt,),
+            negative_texts=self.config.negative_texts or (self.config.negative_prompt,),
+            positive_top_k=self.config.positive_top_k,
+            negative_top_k=self.config.negative_top_k,
             use_explicit_residency=True,
         )
         conditioning_encode_wall = time.perf_counter() - encode_start
@@ -181,6 +212,10 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
         prompt_stage = conditioning.build_sdxl_text_conditioning_fingerprint(
             prompt=self.config.prompt,
             negative_prompt=self.config.negative_prompt,
+            positive_texts=self.config.positive_texts or (self.config.prompt,),
+            negative_texts=self.config.negative_texts or (self.config.negative_prompt,),
+            positive_top_k=self.config.positive_top_k,
+            negative_top_k=self.config.negative_top_k,
             model_identity=self.base_model.fingerprint or self.base_model.source_path or self.config.model_variant,
             text_encoder_identity=self._clip_identity,
             clip_patch_uuid=self._lora_signature(),
@@ -218,17 +253,8 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
             reusable=True,
         )
 
-        self.injected_features = {
-            "feature_boundary_placeholder": InjectedFeatureArtifact(
-                family="sdxl",
-                variant=self.config.model_variant,
-                block_id="diffusion_boundary",
-                timestep_key="unbound",
-                context_key="not-prepared-in-w07c2",
-                feature_fingerprint=None,
-                reusable=True,
-            )
-        }
+        injected_features, injected_payload, injected_metrics = self._prepare_injected_feature_artifacts()
+        self.injected_features = injected_features
 
         unet_compile_metrics = lora_metrics["unet_compile_metrics"]
         compiled_unet_wall = float(lora_metrics["unet_compile_wall"])
@@ -247,6 +273,11 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
             reusable=True,
         )
 
+        structural_conditioning, structural_payload, structural_metrics = self._prepare_structural_conditioning_artifacts()
+        self.structural_conditioning = structural_conditioning
+        spatial_conditioning, spatial_payload, spatial_metrics = self._prepare_spatial_conditioning_artifacts()
+        self.spatial_conditioning = spatial_conditioning
+
         self.execution_state = GpuAttachedExecutionState(
             execution_class=self._execution_class_label(),
             device="cuda",
@@ -260,6 +291,8 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
             base_model=self.base_model,
             compiled_unet=self.compiled_unet,
             conditioning=self.conditioning,
+            structural_conditioning=self.structural_conditioning,
+            spatial_conditioning=self.spatial_conditioning,
             injected_features=dict(self.injected_features),
             gpu_attached_execution_state=self.execution_state,
             payload={
@@ -271,6 +304,9 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
                 "lora_specs": self._resolved_lora_specs,
                 "base_model_fingerprint": self.base_model.fingerprint,
                 "compiled_unet_fingerprint": self.compiled_unet.artifact_fingerprint,
+                **structural_payload,
+                **spatial_payload,
+                **injected_payload,
             },
             metrics={
                 "base_model_load_cpu": float(self._cold_model_load_cpu),
@@ -284,7 +320,12 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
                 "unet_host_pinned_bytes": float(lora_metrics["unet_host_pinned_bytes"]),
                 "clip_compile_cpu": float(lora_metrics["clip_compile_wall"]),
                 "conditioning_artifact_count": 1.0,
+                "structural_artifact_count": 1.0 if structural_conditioning is not None else 0.0,
+                "spatial_artifact_count": 1.0 if spatial_conditioning is not None else 0.0,
                 "injected_feature_count": float(len(self.injected_features)),
+                **structural_metrics,
+                **spatial_metrics,
+                **injected_metrics,
             },
         )
         self._prepare_metrics = dict(self.prepared_inputs.metrics)
@@ -297,40 +338,160 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
         callback: Any = None,
         disable_pbar: bool = True,
     ) -> UnifiedSDXLDenoiseResult:
-        raise NotImplementedError(
-            "W07c3 must implement stream-like denoise in backend.sdxl_unified_runtime."
+        _ = callback
+        _ = disable_pbar
+        self.load_components()
+        self._validate_prepared_inputs(prepared_inputs)
+        self.prepared_inputs = prepared_inputs
+
+        attach_device = self._execution_device()
+        budget_bytes = self._clean_unet_budget_bytes(attach_device)
+        headroom_mb = self._device_headroom_mb(attach_device)
+        unet_attach_start = time.perf_counter()
+        self._attach_compiled_unet(attach_device, budget_bytes=budget_bytes)
+        unet_attach_wall = time.perf_counter() - unet_attach_start
+
+        conditioning_attach_start = time.perf_counter()
+        attached_payload = self._build_attached_payload(prepared_inputs, attach_device)
+        conditioning_attach_wall = time.perf_counter() - conditioning_attach_start
+        self._attached_payload = attached_payload
+
+        state = self._transition_execution_state(
+            prepared_inputs,
+            active_phase="diffusion",
+            attached_component_ids=self._build_attached_component_ids(prepared_inputs),
+            device=attach_device,
+            stream_budget_mb=float(budget_bytes) / (1024 * 1024),
+            headroom_mb=headroom_mb,
+        )
+
+        denoise_start = time.perf_counter()
+        denoise_cpu_start = time.process_time()
+        try:
+            with torch.inference_mode(), precision.autocast_context(attach_device):
+                samples = self._run_prepared_denoise(
+                    attached_payload,
+                    device=attach_device,
+                    callback=callback,
+                    disable_pbar=disable_pbar,
+                )
+        finally:
+            self._park_compiled_unet_before_decode()
+        denoise_wall = time.perf_counter() - denoise_start
+        denoise_cpu_proc = time.process_time() - denoise_cpu_start
+        latent_cpu = samples.detach().cpu()
+
+        metrics = {
+            "execution_device": 1.0 if attach_device.type == "cuda" else 0.0,
+            "unet_attach_cpu": float(unet_attach_wall),
+            "conditioning_attach_cpu": float(conditioning_attach_wall),
+            "prepared_conditioning_reused": 1.0,
+            "prepared_unet_reused": 1.0,
+            "prepared_structural_reused": 1.0 if prepared_inputs.structural_conditioning is not None else 0.0,
+            "prepared_spatial_reused": 1.0 if prepared_inputs.spatial_conditioning is not None else 0.0,
+            "denoise_mask_attached": 1.0 if attached_payload.get("denoise_mask") is not None else 0.0,
+            "attached_component_count": float(len(state.attached_component_ids)),
+            "stream_budget_mb": float(state.stream_budget_mb),
+            "headroom_mb": float(state.headroom_mb),
+            "denoise_wall": float(denoise_wall),
+            "denoise_cpu_proc": float(denoise_cpu_proc),
+            "cond_prepare_explicit": float(attached_payload.get("cond_prepare_duration", 0.0)),
+        }
+        return UnifiedSDXLDenoiseResult(
+            samples=latent_cpu,
+            execution_state=state,
+            metrics=metrics,
         )
 
     def decode_latent(self, latent: torch.Tensor) -> tuple[torch.Tensor, float, float]:
-        raise NotImplementedError(
-            "W07c3 must implement the unified decode transition in backend.sdxl_unified_runtime."
+        self.load_components()
+        decode_device = self._execution_device()
+        self._park_compiled_unet_before_decode()
+
+        attach_start = time.perf_counter()
+        self._attach_vae(decode_device)
+        vae_attach = time.perf_counter() - attach_start
+
+        self._transition_execution_state(
+            self.prepared_inputs,
+            active_phase="decode",
+            attached_component_ids=self._build_decode_component_ids(),
+            device=decode_device,
+            stream_budget_mb=0.0,
+            headroom_mb=self._device_headroom_mb(decode_device),
         )
 
+        decode_start = time.perf_counter()
+        try:
+            with torch.inference_mode():
+                decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=False)
+                images = self._compose_decoded_images(decoded_patch)
+        finally:
+            self._detach_component(getattr(self.vae, "patcher", None))
+            self._attached_payload = None
+            self._transition_execution_state(
+                self.prepared_inputs,
+                active_phase="finalize",
+                attached_component_ids=(),
+                device=decode_device,
+                stream_budget_mb=0.0,
+                headroom_mb=self._device_headroom_mb(decode_device),
+            )
+        vae_decode = time.perf_counter() - decode_start
+        return images, vae_attach, vae_decode
+
     def close(self) -> None:
+        self._park_compiled_unet_before_decode()
+        self._detach_component(getattr(self.vae, "patcher", None))
+        self._detach_component(getattr(self.clip, "patcher", None))
+        self._attached_payload = None
         self.execution_state = None
         self.prepared_inputs = None
         self.base_model = None
         self.compiled_unet = None
         self.conditioning = None
+        self.structural_conditioning = None
+        self.spatial_conditioning = None
         self.injected_features = {}
         self.unet = None
         self.clip = None
         self.vae = None
+        self._unload_controlnets()
         self._loaded = False
         self._prepare_metrics = {}
+        self._checkpoint_fingerprint = None
         gc.collect()
+        resources.soft_empty_cache(force=True)
 
     def patched_weights_for_block(self, block_id: str) -> Any:
         _ = SDXL_RUNTIME_SURFACE_CONTRACTS["patched_weights_for_block"]
-        raise NotImplementedError(
-            "W07c2/W07c3 must implement compiled block retrieval in backend.sdxl_unified_runtime."
-        )
+        if self.compiled_unet is None or self.unet is None:
+            raise RuntimeError("Unified SDXL runtime has no compiled UNet artifact available for block retrieval.")
+
+        # W07 keeps the unified runtime on a narrowed full-frame execution shape.
+        # Expose the already-compiled execution surface for the requested block id
+        # instead of asking callers to rebuild LoRA or base checkpoint patch state.
+        execution_unet = self.unet
+        if self._attached_payload is not None:
+            execution_unet = self._attached_payload.get("execution_unet") or execution_unet
+
+        return {
+            "block_id": str(block_id),
+            "artifact_fingerprint": self.compiled_unet.artifact_fingerprint,
+            "execution_unet": execution_unet,
+            "execution_state": self.execution_state,
+            "attached": bool(self._attached_payload is not None),
+        }
 
     def injected_features_for_block(self, block_id: str, timestep: Any, context: Any) -> Any:
         _ = SDXL_RUNTIME_SURFACE_CONTRACTS["injected_features_for_block"]
-        raise NotImplementedError(
-            "W07c2/W07c3 must implement feature injection retrieval in backend.sdxl_unified_runtime."
-        )
+        _ = timestep
+        _ = context
+        payload = self._attached_payload or (self.prepared_inputs.payload if self.prepared_inputs is not None else {})
+        contextual_tasks = (payload or {}).get("contextual_tasks") or {}
+        if str(block_id) != "attn2":
+            return None
+        return contextual_tasks or None
 
     def _require_checkpoint_path(self) -> str:
         checkpoint_path = str(self.config.checkpoint_path or "").strip()
@@ -341,11 +502,57 @@ class UnifiedSDXLRuntime(UnifiedSDXLRuntimeProtocol):
     def _execution_class_label(self) -> str:
         return str(self.config.execution_class or self.route_label)
 
+    def _require_optional_vae_path(self) -> str | None:
+        value = str(self.config.vae_path or "").strip()
+        return value or None
+
+    def _execution_device(self) -> torch.device:
+        try:
+            return resources.get_torch_device()
+        except Exception:
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def _build_clip_identity(self) -> str:
-        checkpoint = self.config.checkpoint_path
-        if not checkpoint and self.base_model is not None and self.base_model.source_path:
-            checkpoint = self.base_model.source_path
-        return f"{self.config.model_variant}:{checkpoint}:{self.config.clip_layer}"
+        clip_identity = self.config.checkpoint_path
+        if not clip_identity and self.base_model is not None and self.base_model.source_path:
+            clip_identity = self.base_model.source_path
+        return f"{self.config.model_variant}:{clip_identity}:{self.config.clip_layer}"
+
+    def _clean_unet_budget_bytes(self, device: torch.device) -> int:
+        if device.type != "cuda":
+            return 0
+        return max(64, int(self.config.streamlike_budget_mb)) * 1024 * 1024
+
+    def _device_headroom_mb(self, device: torch.device) -> float:
+        try:
+            return float(resources.get_free_memory(device)) / (1024 * 1024)
+        except Exception:
+            return 0.0
+
+    def _attach_compiled_unet(self, device: torch.device, *, budget_bytes: int = 0) -> None:
+        if self.unet is None:
+            raise RuntimeError("Compiled UNet is not loaded.")
+        model_size = int(self.unet.model_size())
+        lowvram_model_memory = 0 if budget_bytes <= 0 or budget_bytes >= model_size else int(budget_bytes)
+        self.unet.patch_model(device_to=device, lowvram_model_memory=lowvram_model_memory)
+
+    def _attach_vae(self, device: torch.device) -> None:
+        if self.vae is None:
+            raise RuntimeError("VAE is not loaded.")
+        self.vae.patcher.patch_model(device_to=device, lowvram_model_memory=0)
+
+    def _detach_component(self, component: Any) -> None:
+        if component is None:
+            return
+        detach = getattr(component, "detach", None)
+        if callable(detach):
+            try:
+                detach()
+            except Exception:
+                pass
+
+    def _park_compiled_unet_before_decode(self) -> None:
+        self._detach_component(self.unet)
 
     def _normalize_lora_specs(self, lora_specs: Any) -> tuple[tuple[str, float], ...]:
         normalized: list[tuple[str, float]] = []

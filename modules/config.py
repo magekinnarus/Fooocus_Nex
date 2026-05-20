@@ -374,6 +374,7 @@ def get_dir_or_set_default(key, default_value, as_array=False, make_directory=Fa
 
 
 paths_checkpoints = get_dir_or_set_default('path_checkpoints', ['../models/checkpoints/'], True, True)
+paths_checkpoint_bases = list(paths_checkpoints) if isinstance(paths_checkpoints, list) else [paths_checkpoints]
 paths_loras = get_dir_or_set_default('path_loras', ['../models/loras/'], True, True)
 path_embeddings = get_dir_or_set_default('path_embeddings', '../models/embeddings/', make_directory=True)
 path_vae_approx = get_dir_or_set_default('path_vae_approx', '../models/vae_approx/', make_directory=True)
@@ -880,8 +881,11 @@ default_aspect_ratio = get_config_item_or_set_default(
 )
 default_inpaint_engine_version = get_config_item_or_set_default(
     key='default_inpaint_engine_version',
-    default_value=runtime_defaults.get('default_inpaint_engine_version', 'None'),
-    validator=lambda x: x in modules.flags.inpaint_engine_versions,
+    default_value=modules.flags.normalize_inpaint_engine_version(
+        runtime_defaults.get('default_inpaint_engine_version', modules.flags.INPAINT_ENGINE_NONE),
+        default=modules.flags.INPAINT_ENGINE_NONE,
+    ),
+    validator=lambda x: modules.flags.normalize_inpaint_engine_version(x, default='') in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
 default_inpaint_route = get_config_item_or_set_default(
@@ -892,8 +896,11 @@ default_inpaint_route = get_config_item_or_set_default(
 )
 default_outpaint_engine_version = get_config_item_or_set_default(
     key='default_outpaint_engine_version',
-    default_value=runtime_defaults.get('default_outpaint_engine_version', 'v2.6'),
-    validator=lambda x: x in modules.flags.inpaint_engine_versions,
+    default_value=modules.flags.normalize_inpaint_engine_version(
+        runtime_defaults.get('default_outpaint_engine_version', modules.flags.INPAINT_ENGINE_V26),
+        default=modules.flags.INPAINT_ENGINE_V26,
+    ),
+    validator=lambda x: modules.flags.normalize_inpaint_engine_version(x, default='') in modules.flags.inpaint_engine_versions,
     expected_type=str
 )
 default_outpaint_expansion_size = get_config_item_or_set_default(
@@ -1132,6 +1139,35 @@ def get_model_filenames(folder_paths, extensions=None, name_filter=None):
     return files
 
 
+def is_deprecated_sdxl_base_model_selector(name_or_path):
+    normalized = _normalize_model_selector(name_or_path)
+    if normalized is None:
+        return False
+
+    lowered = normalized.lower()
+    if lowered.startswith('flux/'):
+        return True
+    if lowered.endswith('.gguf'):
+        return True
+    return False
+
+
+def filter_supported_sdxl_base_model_choices(candidates):
+    filtered = []
+    seen = set()
+
+    for candidate in list(candidates or []):
+        normalized = _normalize_model_selector(candidate)
+        if normalized is None or normalized in seen:
+            continue
+        if is_deprecated_sdxl_base_model_selector(normalized):
+            continue
+        seen.add(normalized)
+        filtered.append(candidate)
+
+    return filtered
+
+
 def _register_embedding_alias(lookup, alias, full_path):
     normalized = _normalize_model_selector(alias)
     if normalized and normalized not in lookup:
@@ -1204,8 +1240,8 @@ def update_files():
     start = time.perf_counter()
 
     model_start = time.perf_counter()
-    model_filenames = sorted(list(set(get_model_filenames(paths_checkpoints))))
-    model_filenames = [x for x in model_filenames if not x.replace('\\', '/').lower().startswith('flux/')]
+    model_filenames = sorted(list(set(get_model_filenames(paths_checkpoint_bases))))
+    model_filenames = filter_supported_sdxl_base_model_choices(model_filenames)
     model_elapsed = time.perf_counter() - model_start
 
     clip_start = time.perf_counter()
@@ -1244,14 +1280,13 @@ def update_files():
     return
 
 def downloading_inpaint_models(v):
-    assert v in modules.flags.inpaint_engine_versions
+    normalized = modules.flags.normalize_inpaint_engine_version(v, default=modules.flags.INPAINT_ENGINE_NONE)
+    assert normalized in modules.flags.inpaint_engine_versions
 
     asset_ids = {
-        'v1': 'inpaint.fooocus_patch.v1',
-        'v2.5': 'inpaint.fooocus_patch.v2_5',
-        'v2.6': 'inpaint.fooocus_patch.v2_6',
+        modules.flags.INPAINT_ENGINE_V26: 'inpaint.fooocus_patch.v2_6',
     }
-    asset_id = asset_ids.get(v)
+    asset_id = asset_ids.get(normalized)
     if asset_id is None:
         return None
 

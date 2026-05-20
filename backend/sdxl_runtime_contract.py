@@ -90,6 +90,42 @@ class PromptConditioningArtifact:
 
 
 @dataclass(frozen=True)
+class StructuralConditioningArtifact:
+    """Reusable structural ControlNet payload emitted before diffusion."""
+
+    family: str
+    variant: str
+    source_fingerprint: str
+    artifact_fingerprint: str | None = None
+    task_count: int = 0
+    control_types: tuple[str, ...] = field(default_factory=tuple)
+    reusable: bool = True
+
+
+@dataclass(frozen=True)
+class SpatialConditioningArtifact:
+    """Reusable VAE/mask/bounding-box payload emitted before diffusion."""
+
+    family: str
+    variant: str
+    source_fingerprint: str
+    image_fingerprint: str
+    spatial_mode: str = "image"
+    mask_fingerprint: str | None = None
+    artifact_fingerprint: str | None = None
+    source_latent_fingerprint: str | None = None
+    masked_latent_fingerprint: str | None = None
+    bb_latent_fingerprint: str | None = None
+    denoise_mask_fingerprint: str | None = None
+    bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
+    target_width: int = 0
+    target_height: int = 0
+    mask_coverage: float = 0.0
+    bbox_area_ratio: float = 0.0
+    reusable: bool = True
+
+
+@dataclass(frozen=True)
 class InjectedFeatureArtifact:
     """Reusable side-feature payload injected during diffusion."""
 

@@ -131,6 +131,8 @@ def _sdxl_process_class(policy) -> str:
         return process_transition.PROCESS_CLASS_STANDARD_SDXL
     execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
     residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
+    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
+        return process_transition.PROCESS_CLASS_STANDARD_SDXL
     if execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED:
         return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
     if residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
@@ -141,12 +143,12 @@ def _sdxl_process_class(policy) -> str:
 def _sdxl_route_family(policy, base_model_name=None) -> str:
     execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower() if policy is not None else ''
     residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower() if policy is not None else ''
-    base_model_name = str(base_model_name or '').strip().lower()
+    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
+        return 'sdxl'
     if (
         execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
         or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
         or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-        or base_model_name.endswith('.gguf')
     ):
         return 'gguf'
     return 'sdxl'

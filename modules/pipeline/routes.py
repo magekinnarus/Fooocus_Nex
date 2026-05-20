@@ -7,6 +7,7 @@ import numpy as np
 
 from backend import conditioning
 from backend import environment_profile as environment_profiles
+from backend import sdxl_runtime_policy
 import modules.flags as flags
 from modules.pipeline.stage_runtime import (
     PipelineResourceRequirement,
@@ -92,6 +93,51 @@ def _is_upscale_request(task_state) -> bool:
     if method == flags.disabled.casefold():
         return False
     return 'upscale' in method
+
+
+def _supports_unified_sdxl_runtime_owner(task_state) -> bool:
+    policy = getattr(task_state, 'sdxl_execution_policy', None)
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        return False
+
+    base_model_name = str(getattr(task_state, 'base_model_name', '') or '').strip()
+    if base_model_name == '' or base_model_name.lower().endswith('.gguf'):
+        return False
+
+    execution_family = str(
+        getattr(task_state, 'sdxl_execution_family', None)
+        or getattr(policy, 'execution_family', None)
+        or ''
+    ).strip().lower()
+    residency_class = str(
+        getattr(task_state, 'sdxl_residency_class', None)
+        or getattr(policy, 'residency_class', None)
+        or ''
+    ).strip().lower()
+    if execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED:
+        return False
+    if residency_class in {
+        sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED,
+        sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
+    }:
+        return False
+
+    if bool(getattr(task_state, 'tiled', False)):
+        return False
+
+    default_quality = {
+        'sharpness': 2.0,
+        'adaptive_cfg': 7.0,
+        'adm_scaler_positive': 1.5,
+        'adm_scaler_negative': 0.8,
+        'adm_scaler_end': 0.3,
+        'controlnet_softness': 0.25,
+    }
+    for field_name, default_value in default_quality.items():
+        if abs(float(getattr(task_state, field_name, default_value)) - float(default_value)) > 1e-6:
+            return False
+
+    return True
 
 
 def describe_route(route: PipelineRoute) -> list[str]:
@@ -654,6 +700,10 @@ class DiffusionTaskStage(PipelineStage):
                     context.image_input_result.get('controlnet_paths', {}),
                     context.progressbar_callback,
                     context.yield_result_callback,
+                    route_family=context.route_family,
+                    contextual_assets=context.image_input_result.get('contextual_assets', {}),
+                    base_model_additional_loras=context.base_model_additional_loras,
+                    image_input_result=context.image_input_result,
                 )
             except resources.InterruptProcessingException:
                 if task_state.last_stop == 'skip':
@@ -991,6 +1041,7 @@ class RemovalStage(PipelineStage):
 
 
 def build_generation_route(task_state) -> PipelineRoute:
+    task_state.sdxl_runtime_owner = 'unified' if _supports_unified_sdxl_runtime_owner(task_state) else ''
     expects_controlnet = _expects_controlnet_extension(task_state)
 
     if task_state.input_image_checkbox and (flags.remove_bg in task_state.goals or flags.remove_obj in task_state.goals):

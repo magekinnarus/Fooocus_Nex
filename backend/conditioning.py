@@ -1,6 +1,6 @@
 import math
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Sequence, Tuple
 
 import hashlib
 import torch
@@ -45,6 +45,10 @@ def build_sdxl_text_conditioning_fingerprint(
     *,
     prompt: str,
     negative_prompt: str,
+    positive_texts: Any = None,
+    negative_texts: Any = None,
+    positive_top_k: Any = None,
+    negative_top_k: Any = None,
     model_identity: Any,
     text_encoder_identity: Any,
     clip_patch_uuid: Any,
@@ -61,6 +65,10 @@ def build_sdxl_text_conditioning_fingerprint(
         residency_class=residency_class,
         prompt=prompt,
         negative_prompt=negative_prompt,
+        positive_texts=positive_texts,
+        negative_texts=negative_texts,
+        positive_top_k=positive_top_k,
+        negative_top_k=negative_top_k,
         model_identity=model_identity,
         text_encoder_identity=text_encoder_identity,
         clip_patch_uuid=clip_patch_uuid,
@@ -170,24 +178,70 @@ def encode_text_sdxl(clip: Any, text: str, *, use_explicit_residency: bool = Fal
     return encode_tokens_sdxl(clip, tokens, use_explicit_residency=use_explicit_residency)
 
 
+def encode_text_list_sdxl(
+    clip: Any,
+    texts: Sequence[str],
+    *,
+    pool_top_k: int = 1,
+    use_explicit_residency: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Encodes a prompt workload list using Fooocus-style SDXL pooling semantics.
+
+    The returned conditioning concatenates every text block along the sequence
+    dimension, while the pooled output sums the first ``pool_top_k`` entries.
+    """
+    items = [str(text) for text in list(texts or []) if str(text) != ""]
+    if len(items) == 0:
+        raise ValueError("encode_text_list_sdxl requires at least one prompt text.")
+
+    cond_list: list[torch.Tensor] = []
+    pooled_acc: torch.Tensor | None = None
+    pooled_template: torch.Tensor | None = None
+    top_k = max(0, min(int(pool_top_k), len(items)))
+    for index, text in enumerate(items):
+        cond, pooled = encode_text_sdxl(
+            clip,
+            text,
+            use_explicit_residency=use_explicit_residency,
+        )
+        cond_list.append(cond)
+        if pooled_template is None:
+            pooled_template = pooled
+        if index < top_k:
+            pooled_acc = pooled if pooled_acc is None else pooled_acc + pooled
+
+    if pooled_acc is None:
+        pooled_acc = torch.zeros_like(pooled_template)
+    return torch.cat(cond_list, dim=1), pooled_acc
+
+
 def encode_prompt_pair_sdxl(
     clip: Any,
     positive_text: str,
     negative_text: str,
     *,
+    positive_texts: Sequence[str] | None = None,
+    negative_texts: Sequence[str] | None = None,
+    positive_top_k: int = 1,
+    negative_top_k: int = 1,
     use_explicit_residency: bool = False,
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """
     Encodes positive and negative prompt text through a shared SDXL CLIP instance.
     """
-    positive_cond, positive_pooled = encode_text_sdxl(
+    positive_items = list(positive_texts or [positive_text])
+    negative_items = list(negative_texts or [negative_text])
+    positive_cond, positive_pooled = encode_text_list_sdxl(
         clip,
-        positive_text,
+        positive_items,
+        pool_top_k=positive_top_k,
         use_explicit_residency=use_explicit_residency,
     )
-    negative_cond, negative_pooled = encode_text_sdxl(
+    negative_cond, negative_pooled = encode_text_list_sdxl(
         clip,
-        negative_text,
+        negative_items,
+        pool_top_k=negative_top_k,
         use_explicit_residency=use_explicit_residency,
     )
     return {

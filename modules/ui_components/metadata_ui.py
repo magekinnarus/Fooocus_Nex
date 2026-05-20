@@ -98,8 +98,7 @@ def get_seed(key: str, fallback: str | None, source_dict: dict, results: list, d
 def get_inpaint_engine_version(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
-        if h == 'empty':
-            h = modules.config.default_inpaint_engine_version
+        h = modules.flags.normalize_inpaint_engine_version(h, default=modules.config.default_inpaint_engine_version)
         assert isinstance(h, str) and h in modules.flags.inpaint_engine_versions
         results.append(h)
         return h
@@ -110,8 +109,7 @@ def get_inpaint_engine_version(key: str, fallback: str | None, source_dict: dict
 def get_outpaint_engine_version(key: str, fallback: str | None, source_dict: dict, results: list, default=None) -> str | None:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
-        if h == 'empty':
-            h = modules.config.default_outpaint_engine_version
+        h = modules.flags.normalize_inpaint_engine_version(h, default=modules.config.default_outpaint_engine_version)
         assert isinstance(h, str) and h in modules.flags.inpaint_engine_versions
         results.append(h)
         return h

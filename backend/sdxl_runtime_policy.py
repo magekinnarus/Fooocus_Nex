@@ -21,6 +21,7 @@ VAE_ENCODE_GPU_PREFERRED = "gpu_preferred"
 SDXL_RESIDENCY_CLASS_FULL = "full_resident"
 SDXL_RESIDENCY_CLASS_GGUF_STAGED = "gguf_staged_residency"
 SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING = "gguf_true_streaming"
+SDXL_GGUF_DEPRECATED_NOTE = "sdxl_gguf_deprecated"
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,31 @@ def is_gguf_checkpoint_name(base_model_name: Any | None) -> bool:
     return str(base_model_name or "").strip().lower().endswith(".gguf")
 
 
+def is_legacy_sdxl_gguf_selection(*, architecture: Any | None, base_model_name: Any | None) -> bool:
+    normalized_architecture = str(architecture or "").strip().lower()
+    return normalized_architecture == "sdxl" and is_gguf_checkpoint_name(base_model_name)
+
+
+def is_dedicated_gguf_execution_policy(policy: Any | None) -> bool:
+    if policy is None:
+        return False
+    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
+    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
+    return (
+        execution_family == EXECUTION_FAMILY_GGUF_STAGED
+        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_STAGED
+        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+    )
+
+
+def policy_marks_legacy_sdxl_gguf(policy: Any | None) -> bool:
+    if policy is None:
+        return False
+    notes = tuple(str(item) for item in (getattr(policy, 'notes', ()) or ()))
+    architecture = str(getattr(policy, 'architecture', None) or '').strip().lower()
+    return architecture == 'sdxl' and SDXL_GGUF_DEPRECATED_NOTE in notes
+
+
 def normalize_residency_class(residency_class: Any | None) -> str:
     normalized = str(residency_class or "").strip().lower()
     if normalized in {
@@ -64,42 +90,48 @@ def resolve_sdxl_execution_policy(
     requested_residency_class: Any | None = None,
 ) -> SDXLExecutionPolicy:
     normalized_architecture = str(architecture or "").strip().lower() or None
-    
-    # Nex Integration: Identify the task for PlacementSolver
+
     is_gguf_model = is_gguf_checkpoint_name(base_model_name)
-    
+    is_legacy_sdxl_gguf = is_legacy_sdxl_gguf_selection(
+        architecture=normalized_architecture,
+        base_model_name=base_model_name,
+    )
+    allow_gguf_runtime_family = is_gguf_model and not is_legacy_sdxl_gguf
+
     task_id = "sdxl"
     if normalized_architecture == "flux":
         task_id = "flux_fill"
-        
-    # Solve for residency using the Staging Manager
+
     plan = PlacementSolver.solve_from_system(task_id=task_id)
-    
-    # Map PlacementPlan to SDXLExecutionPolicy
+
     residency_class = SDXL_RESIDENCY_CLASS_FULL
     if plan.unet.mode == ResidencyMode.CPU_RESIDENT:
-        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING if is_gguf_model else SDXL_RESIDENCY_CLASS_FULL
+        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING if allow_gguf_runtime_family else SDXL_RESIDENCY_CLASS_FULL
     elif plan.unet.mode == ResidencyMode.DISK_PAGED:
-        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING if allow_gguf_runtime_family else SDXL_RESIDENCY_CLASS_FULL
 
     clip_residency_mode = CLIP_RESIDENCY_CPU_ONLY
     if plan.clip.mode == ResidencyMode.GPU_RESIDENT:
         clip_residency_mode = CLIP_RESIDENCY_GPU_RESIDENT
-        
+
     vae_encode_mode = VAE_ENCODE_CPU_DEFAULT
     if plan.vae.mode == ResidencyMode.GPU_RESIDENT:
         vae_encode_mode = VAE_ENCODE_GPU_PREFERRED
+
+    notes = [plan.tier.name, plan.unet.mode.name]
+    if is_legacy_sdxl_gguf:
+        notes.append(SDXL_GGUF_DEPRECATED_NOTE)
 
     return SDXLExecutionPolicy(
         enabled=True,
         architecture=normalized_architecture,
         execution_class=plan.execution_class,
-        execution_family=EXECUTION_FAMILY_GGUF_STAGED if is_gguf_model else EXECUTION_FAMILY_STANDARD,
+        execution_family=EXECUTION_FAMILY_GGUF_STAGED if allow_gguf_runtime_family else EXECUTION_FAMILY_STANDARD,
         residency_class=residency_class,
         clip_residency_mode=clip_residency_mode,
         vae_encode_mode=vae_encode_mode,
         keep_clip_loaded=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
         prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
         prefer_gpu_vae_encode=(plan.vae.mode == ResidencyMode.GPU_RESIDENT),
-        notes=(plan.tier.name, plan.unet.mode.name),
+        notes=tuple(notes),
     )
