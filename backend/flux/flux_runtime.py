@@ -756,10 +756,17 @@ class FluxFillPipeline:
                 if callable(move_model):
                     move_model(device=vae_device, dtype=torch.float32)
 
+                live_param = next(first_stage_model.parameters(), None)
+                vae_input_device = vae_device
+                vae_input_dtype = torch.float32
+                if isinstance(live_param, torch.Tensor):
+                    vae_input_device = live_param.device
+                    vae_input_dtype = live_param.dtype
+
                 pixels_for_vae = (pixels_tensor.movedim(-1, 1) * 2.0) - 1.0
                 if pixels_for_vae.ndim == 3:
                     pixels_for_vae = pixels_for_vae.unsqueeze(0)
-                pixels_for_vae = pixels_for_vae.to(device=vae_device, dtype=torch.float32)
+                pixels_for_vae = pixels_for_vae.to(device=vae_input_device, dtype=vae_input_dtype)
                 latent = first_stage_model.encode(pixels_for_vae)
                 if hasattr(latent, "sample"):
                     latent = latent.sample()

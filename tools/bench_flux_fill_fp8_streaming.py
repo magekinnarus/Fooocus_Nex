@@ -131,6 +131,7 @@ def _decode_preview_image(
         "decode_device": str(device),
         "shape": list(image.shape),
         "timings": dict(decoded.timings),
+        "runtime": dict(decoded.metadata),
     }
 
 

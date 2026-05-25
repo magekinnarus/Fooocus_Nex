@@ -296,6 +296,7 @@ class FluxFillLatentSource:
     width: int
     height: int
     timings: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -313,6 +314,7 @@ class FluxFillDecodedImage:
     bb_image: Any
     stitched_image: Any | None
     timings: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -473,6 +475,19 @@ def _load_flux_fill_native_probe(unet_path: str) -> dict[str, Any]:
             f"Expected state dict while probing Flux Fill native UNet {unet_path}, got {type(state_dict).__name__}."
         )
     return state_dict
+
+
+def _snapshot_first_param_runtime(module: Any) -> dict[str, Any]:
+    try:
+        param = next(module.parameters(), None)
+    except Exception:
+        param = None
+    if not isinstance(param, torch.Tensor):
+        return {}
+    return {
+        "device": str(param.device),
+        "dtype": str(param.dtype),
+    }
 
 
 def _instantiate_flux_fill_native_model(
@@ -1456,6 +1471,7 @@ def prepare_flux_fill_latent_source(
 
     owned_vae = vae is None
     encode_start = time.perf_counter()
+    metadata: dict[str, Any] = {}
     try:
         from modules.core import numpy_to_pytorch, encode_vae
         from backend import resources
@@ -1463,6 +1479,7 @@ def prepare_flux_fill_latent_source(
         if vae is None:
             vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
         resources.load_models_gpu([vae.patcher])
+        metadata["vae_runtime_before_source_encode"] = _snapshot_first_param_runtime(vae.first_stage_model)
 
         # Encode unmasked original → source_latent (KSampler noise init)
         orig_pixels = numpy_to_pytorch(image)
@@ -1472,12 +1489,24 @@ def prepare_flux_fill_latent_source(
         # USER_REQUEST: Bypass encode.py to avoid double-normalization.
         # Flux.concat_cond (ldm_patched) will apply normalization itself.
         resources.load_models_gpu([vae.patcher])
+        metadata["vae_runtime_before_concat_encode"] = _snapshot_first_param_runtime(vae.first_stage_model)
         pixels_for_vae = (numpy_to_pytorch(bb_image_for_concat).movedim(-1, 1) * 2.0) - 1.0
         if pixels_for_vae.ndim == 3:
             pixels_for_vae = pixels_for_vae.unsqueeze(0)
-        
-        pixels_for_vae = pixels_for_vae.to(device=vae.patcher.load_device, dtype=torch.float32)
-        
+
+        vae_param = next(vae.first_stage_model.parameters(), None)
+        vae_input_device = vae.patcher.load_device
+        vae_input_dtype = torch.float32
+        if isinstance(vae_param, torch.Tensor):
+            vae_input_device = vae_param.device
+            vae_input_dtype = vae_param.dtype
+
+        metadata["vae_runtime_manual_concat_input"] = {
+            "device": str(vae_input_device),
+            "dtype": str(vae_input_dtype),
+        }
+        pixels_for_vae = pixels_for_vae.to(device=vae_input_device, dtype=vae_input_dtype)
+
         # We manually call the base VAE model to get RAW unscaled latents.
         raw_latent = vae.first_stage_model.encode(pixels_for_vae)
         if hasattr(raw_latent, "sample"):
@@ -1525,6 +1554,7 @@ def prepare_flux_fill_latent_source(
         width=int(source_latent.shape[-1] * 8),
         height=int(source_latent.shape[-2] * 8),
         timings=timings,
+        metadata=metadata,
     )
 
 
@@ -1550,6 +1580,7 @@ def decode_flux_fill_latent(
         raise FluxFillValidationError("context is required when stitch=True.")
 
     timings: dict[str, float] = {}
+    metadata: dict[str, Any] = {}
     owned_vae = vae is None
     decode_start = time.perf_counter()
     try:
@@ -1562,6 +1593,7 @@ def decode_flux_fill_latent(
         finally:
             sys.argv = original_argv
 
+        metadata["vae_runtime_before_decode"] = _snapshot_first_param_runtime(vae.first_stage_model)
         decoded = core.decode_vae(vae, {"samples": latent.detach().cpu()}, tiled=tiled)
     finally:
         should_cleanup = cleanup_vae if cleanup_vae is not None else owned_vae
@@ -1619,7 +1651,12 @@ def decode_flux_fill_latent(
 
         timings["inpaint_stitch"] = time.perf_counter() - stitch_start
 
-    return FluxFillDecodedImage(bb_image=bb_image, stitched_image=stitched_image, timings=timings)
+    return FluxFillDecodedImage(
+        bb_image=bb_image,
+        stitched_image=stitched_image,
+        timings=timings,
+        metadata=metadata,
+    )
 
 
 def build_flux_fill_conditioning_payloads(
@@ -2119,6 +2156,8 @@ def run_flux_fill(
         "ae_path": str(config.ae_path),
         "conditioning_cache_path": str(config.conditioning_cache_path),
         "denoise": denoise_result.metadata,
+        "latent_prep": latent_source.metadata,
+        "decode": decoded.metadata,
         "source_width": int(getattr(image, "shape", [0, 0])[1]),
         "source_height": int(getattr(image, "shape", [0, 0])[0]),
         "bb_width": int(latent_source.width),

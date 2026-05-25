@@ -196,19 +196,19 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         source_latent_path,
         "latent",
         latent_source.source_latent,
-        metadata={**prep_metadata, "artifact": "source_latent", "timings": latent_source.timings},
+        metadata={**prep_metadata, "artifact": "source_latent", "timings": latent_source.timings, "runtime": latent_source.metadata},
     )
     _save_tensor_artifact(
         concat_latent_path,
         "latent",
         latent_source.concat_latent,
-        metadata={**prep_metadata, "artifact": "concat_latent", "timings": latent_source.timings},
+        metadata={**prep_metadata, "artifact": "concat_latent", "timings": latent_source.timings, "runtime": latent_source.metadata},
     )
     _save_tensor_artifact(
         denoise_mask_path,
         "denoise_mask",
         latent_source.denoise_mask,
-        metadata={**prep_metadata, "artifact": "denoise_mask", "timings": latent_source.timings},
+        metadata={**prep_metadata, "artifact": "denoise_mask", "timings": latent_source.timings, "runtime": latent_source.metadata},
     )
 
     bundle = FluxFillBenchmarkArtifactBundle(
@@ -230,6 +230,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
             "clip_l_path": conditioning.metadata.get("clip_l_path", None),
             "t5_path": conditioning.metadata.get("t5_path", None),
             "prep_timings": dict(latent_source.timings),
+            "prep_runtime": dict(latent_source.metadata),
             "source_latent_shape": [int(dim) for dim in latent_source.source_latent.shape],
             "concat_latent_shape": [int(dim) for dim in latent_source.concat_latent.shape],
             "denoise_mask_shape": [int(dim) for dim in latent_source.denoise_mask.shape],
@@ -259,6 +260,7 @@ def run_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "source_image_shape": list(image.shape),
         "mask_shape": list(working_mask.shape),
         "timings": dict(latent_source.timings),
+        "runtime": dict(latent_source.metadata),
         "torch_cuda_available": bool(torch.cuda.is_available()),
     }
     return summary

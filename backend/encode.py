@@ -51,6 +51,12 @@ def encode_pixels(vae, pixels):
         except Exception:
             pass
 
+    first_stage_model = vae.first_stage_model
+    live_param = next(first_stage_model.parameters(), None)
+    if isinstance(live_param, torch.Tensor):
+        device = live_param.device
+        dtype = live_param.dtype
+
     free_memory = resources.get_free_memory(device)
     batch_number = int(free_memory / max(1, memory_used))
     batch_number = max(1, batch_number)
@@ -58,7 +64,7 @@ def encode_pixels(vae, pixels):
     latents = []
     for x in range(0, pixels.shape[0], batch_number):
         batch = pixels[x : x + batch_number].to(device=device, dtype=dtype)
-        latent = vae.first_stage_model.encode(batch)
+        latent = first_stage_model.encode(batch)
         if hasattr(latent, "sample"):
             latent = latent.sample()
 
