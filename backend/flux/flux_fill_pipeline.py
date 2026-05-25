@@ -1479,6 +1479,10 @@ def prepare_flux_fill_latent_source(
         if vae is None:
             vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
         resources.load_models_gpu([vae.patcher])
+        vae_device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        move_model = getattr(vae.first_stage_model, "to", None)
+        if callable(move_model):
+            move_model(device=vae_device, dtype=torch.float32)
         metadata["vae_runtime_before_source_encode"] = _snapshot_first_param_runtime(vae.first_stage_model)
 
         # Encode unmasked original → source_latent (KSampler noise init)
@@ -1489,6 +1493,10 @@ def prepare_flux_fill_latent_source(
         # USER_REQUEST: Bypass encode.py to avoid double-normalization.
         # Flux.concat_cond (ldm_patched) will apply normalization itself.
         resources.load_models_gpu([vae.patcher])
+        vae_device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        move_model = getattr(vae.first_stage_model, "to", None)
+        if callable(move_model):
+            move_model(device=vae_device, dtype=torch.float32)
         metadata["vae_runtime_before_concat_encode"] = _snapshot_first_param_runtime(vae.first_stage_model)
         pixels_for_vae = (numpy_to_pytorch(bb_image_for_concat).movedim(-1, 1) * 2.0) - 1.0
         if pixels_for_vae.ndim == 3:

@@ -24,7 +24,18 @@ def encode_pixels(vae, pixels):
         Dict: {'samples': Latent tensor [B, 4, H//8, W//8]}
     """
     runtime_policy = getattr(vae, "runtime_policy", None)
-    gpu_preferred = bool(getattr(runtime_policy, "prefer_gpu_vae_encode", False))
+    patcher = getattr(vae, "patcher", None)
+    configured_device = getattr(patcher, "load_device", torch.device("cpu")) if patcher is not None else torch.device("cpu")
+    if not isinstance(configured_device, torch.device):
+        configured_device = torch.device(configured_device)
+    current_loaded_device = getattr(patcher, "current_loaded_device", lambda: torch.device("cpu"))() if patcher is not None else torch.device("cpu")
+    if not isinstance(current_loaded_device, torch.device):
+        current_loaded_device = torch.device(current_loaded_device)
+    gpu_preferred = bool(
+        getattr(runtime_policy, "prefer_gpu_vae_encode", False)
+        or configured_device.type == "cuda"
+        or current_loaded_device.type == "cuda"
+    )
     device = torch.device("cpu")
     dtype = torch.float32
     output_device = "cpu"
@@ -42,12 +53,16 @@ def encode_pixels(vae, pixels):
             memory_required=memory_used,
         )
         device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        first_stage_model = vae.first_stage_model
+        move_model = getattr(first_stage_model, "to", None)
+        if callable(move_model):
+            move_model(device=device, dtype=torch.float32)
     else:
         # Keep the shared residency boundary authoritative. If the VAE is still
         # resident on a non-CPU device, release it through the shared helper first.
         try:
-            if vae.patcher.current_loaded_device() != device:
-                resources.eject_model(vae.patcher)
+            if patcher is not None and patcher.current_loaded_device() != device:
+                resources.eject_model(patcher)
         except Exception:
             pass
 

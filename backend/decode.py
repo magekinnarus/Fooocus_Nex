@@ -22,10 +22,8 @@ def _should_force_fp32_vae_decode(vae) -> bool:
     latent_format = getattr(vae, "latent_format", None)
     latent_channels = getattr(latent_format, "latent_channels", None)
     if latent_channels == 16:
-        return False
+        return True
     if str(getattr(latent_format, "taesd_decoder_name", "") or "").strip().lower() == "taef1_decoder":
-        return False
-    if type(latent_format).__name__.strip().lower() == "flux":
         return False
     return True
 
