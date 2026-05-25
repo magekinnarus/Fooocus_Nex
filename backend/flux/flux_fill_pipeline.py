@@ -699,7 +699,8 @@ def _resolve_streaming_scheduler_policy(
     vram_guard_bytes: int | None = None,
     vram_guard_margin_bytes: int | None = None,
     prefetch_scan_ahead: int | None = None,
-) -> dict[str, int]:
+    bandwidth_limit_mb_s: float | None = None,
+) -> dict[str, Any]:
     legacy_guard_bytes = int(2.85 * 1024 * 1024 * 1024)
     legacy_margin_bytes = 256 * 1024 * 1024
     legacy_prefetch_bytes = 256 * 1024 * 1024
@@ -741,6 +742,9 @@ def _resolve_streaming_scheduler_policy(
         0,
         int(vram_guard_margin_bytes if vram_guard_margin_bytes is not None else dynamic_margin_bytes),
     )
+    resolved_bandwidth_limit_mb_s = (
+        float(bandwidth_limit_mb_s) if bandwidth_limit_mb_s is not None and float(bandwidth_limit_mb_s) > 0.0 else 0.0
+    )
     return {
         "prefetch_depth": int(resolved_prefetch_depth),
         "max_prefetch_bytes": int(resolved_max_prefetch_bytes),
@@ -748,6 +752,7 @@ def _resolve_streaming_scheduler_policy(
         "vram_guard_margin_bytes": int(resolved_vram_guard_margin_bytes),
         "prefetch_scan_ahead": int(resolved_prefetch_scan_ahead),
         "total_vram_bytes": int(total_vram_bytes),
+        "bandwidth_limit_mb_s": float(resolved_bandwidth_limit_mb_s),
     }
 
 
@@ -762,6 +767,7 @@ def load_flux_fill_native_unet_streaming(
     vram_guard_bytes: int | None = None,
     vram_guard_margin_bytes: int | None = None,
     prefetch_scan_ahead: int | None = None,
+    bandwidth_limit_mb_s: float | None = None,
 ) -> Any:
     from backend import resources
 
@@ -803,6 +809,7 @@ def load_flux_fill_native_unet_streaming(
         vram_guard_bytes=vram_guard_bytes,
         vram_guard_margin_bytes=vram_guard_margin_bytes,
         prefetch_scan_ahead=prefetch_scan_ahead,
+        bandwidth_limit_mb_s=bandwidth_limit_mb_s,
     )
     streaming_scheduler = FluxAsyncLayerPrefetchScheduler(
         prefetch_depth=scheduler_policy["prefetch_depth"],
@@ -810,6 +817,7 @@ def load_flux_fill_native_unet_streaming(
         vram_guard_bytes=scheduler_policy["vram_guard_bytes"],
         vram_guard_margin_bytes=scheduler_policy["vram_guard_margin_bytes"],
         prefetch_scan_ahead=scheduler_policy["prefetch_scan_ahead"],
+        bandwidth_limit_mb_s=scheduler_policy["bandwidth_limit_mb_s"],
     )
     scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None))
     flux_options = runtime_patcher.model_options.setdefault("flux_fill", {})
@@ -923,12 +931,18 @@ class FluxAsyncLayerPrefetchScheduler:
         vram_guard_bytes: int | None = None,
         vram_guard_margin_bytes: int = 0,
         prefetch_scan_ahead: int = 1,
+        bandwidth_limit_mb_s: float | None = None,
     ) -> None:
         self.prefetch_depth = max(0, int(prefetch_depth))
         self.max_prefetch_bytes = int(max_prefetch_bytes) if max_prefetch_bytes is not None else None
         self.vram_guard_bytes = int(vram_guard_bytes) if vram_guard_bytes is not None else None
         self.vram_guard_margin_bytes = max(0, int(vram_guard_margin_bytes))
         self.prefetch_scan_ahead = max(1, int(prefetch_scan_ahead))
+        self.bandwidth_limit_mb_s = (
+            float(bandwidth_limit_mb_s)
+            if bandwidth_limit_mb_s is not None and float(bandwidth_limit_mb_s) > 0.0
+            else None
+        )
         self._hooks: list[Any] = []
         self._ordered_modules: list[Any] = []
         self._module_indices: dict[int, int] = {}
@@ -998,6 +1012,7 @@ class FluxAsyncLayerPrefetchScheduler:
             "vram_guard_bytes": int(self.vram_guard_bytes or 0),
             "vram_guard_margin_bytes": int(self.vram_guard_margin_bytes),
             "prefetch_scan_ahead": int(self.prefetch_scan_ahead),
+            "bandwidth_limit_mb_s": float(self.bandwidth_limit_mb_s or 0.0),
             "module_count": len(self._ordered_modules),
             "prefetch_enqueued": 0,
             "prefetch_hits": 0,
@@ -1005,13 +1020,19 @@ class FluxAsyncLayerPrefetchScheduler:
             "prefetch_bytes": 0,
             "prefetch_copy_wall_s": 0.0,
             "prefetch_copy_cuda_ms": 0.0,
+            "prefetch_throttle_cuda_ms": 0.0,
+            "prefetch_throttle_events": 0,
             "prefetch_skipped_size": 0,
             "prefetch_skipped_vram": 0,
             "prefetch_scan_considered": 0,
             "direct_copy_bytes": 0,
             "direct_copy_cuda_ms": 0.0,
+            "direct_throttle_cuda_ms": 0.0,
+            "direct_throttle_events": 0,
             "direct_copy_calls": 0,
             "direct_copy_stream_uses": 0,
+            "bandwidth_throttle_cuda_ms": 0.0,
+            "bandwidth_throttle_events": 0,
             "stream_waits": 0,
             "sync_calls": 0,
             "module_profiles": {},
@@ -1247,6 +1268,32 @@ class FluxAsyncLayerPrefetchScheduler:
             bias_dtype=bias_dtype,
         )
 
+    def _target_copy_ms(self, transfer_bytes: int) -> float:
+        if self.bandwidth_limit_mb_s is None or self.bandwidth_limit_mb_s <= 0.0:
+            return 0.0
+        if transfer_bytes <= 0:
+            return 0.0
+        return (float(transfer_bytes) / (float(self.bandwidth_limit_mb_s) * 1024.0 * 1024.0)) * 1000.0
+
+    def _apply_bandwidth_throttle(self, *, device: torch.device, delay_ms: float) -> float:
+        if delay_ms <= 0.0:
+            return 0.0
+        if not isinstance(device, torch.device) or device.type != "cuda" or not torch.cuda.is_available():
+            return 0.0
+        try:
+            clock_rate_khz = int(torch.cuda.get_device_properties(device).clock_rate)
+        except Exception:
+            return 0.0
+        if clock_rate_khz <= 0:
+            return 0.0
+        cycles = int(max(1, round(float(delay_ms) * float(clock_rate_khz))))
+        try:
+            with torch.cuda.device(device):
+                torch.cuda._sleep(cycles)
+            return float(delay_ms)
+        except Exception:
+            return 0.0
+
     def _module_prefetch_priority(self, module: Any, module_index: int) -> tuple[int, int, int]:
         label = self._module_label(module)
         score = 0
@@ -1332,6 +1379,7 @@ class FluxAsyncLayerPrefetchScheduler:
         token: dict[str, Any] = {
             "kind": str(kind),
             "bytes": int(max(0, transfer_bytes)),
+            "device": device,
             "start_event": None,
             "end_event": None,
         }
@@ -1360,20 +1408,39 @@ class FluxAsyncLayerPrefetchScheduler:
             return
         kind = str(token.get("kind", ""))
         transfer_bytes = int(token.get("bytes", 0))
+        device = token.get("device")
         elapsed_ms = 0.0
         start_event = token.get("start_event")
         end_event = token.get("end_event")
         if start_event is not None and end_event is not None:
             try:
+                end_event.synchronize()
+            except Exception:
+                pass
+            try:
                 elapsed_ms = float(start_event.elapsed_time(end_event))
             except Exception:
                 elapsed_ms = 0.0
+        target_ms = self._target_copy_ms(transfer_bytes)
+        throttle_ms = max(0.0, float(target_ms) - float(elapsed_ms))
+        applied_throttle_ms = 0.0
+        if isinstance(device, torch.device):
+            applied_throttle_ms = self._apply_bandwidth_throttle(device=device, delay_ms=throttle_ms)
         if kind == "prefetch":
             self._stats["prefetch_copy_cuda_ms"] += elapsed_ms
+            self._stats["prefetch_throttle_cuda_ms"] += applied_throttle_ms
+            if applied_throttle_ms > 0.0:
+                self._stats["prefetch_throttle_events"] += 1
         elif kind == "direct":
             self._stats["direct_copy_calls"] += 1
             self._stats["direct_copy_bytes"] += transfer_bytes
             self._stats["direct_copy_cuda_ms"] += elapsed_ms
+            self._stats["direct_throttle_cuda_ms"] += applied_throttle_ms
+            if applied_throttle_ms > 0.0:
+                self._stats["direct_throttle_events"] += 1
+        if applied_throttle_ms > 0.0:
+            self._stats["bandwidth_throttle_cuda_ms"] += applied_throttle_ms
+            self._stats["bandwidth_throttle_events"] += 1
 
     def _module_label(self, module: Any) -> str:
         module_id = id(module)
@@ -1726,7 +1793,11 @@ def build_flux_fill_conditioning_payloads(
         "concat_mask": mask,
     }
     positive = [[cross_attn, payload.copy()]]
-    negative = [[cross_attn.clone(), payload.copy()]]
+    # Flux / Flux Fill keep cfg at 1 and use a zeroed negative branch rather than
+    # reusing the prompt conditioning as the negative prompt payload.
+    negative_payload = payload.copy()
+    negative_payload["pooled_output"] = torch.zeros_like(pooled_output)
+    negative = [[torch.zeros_like(cross_attn), negative_payload]]
     return FluxFillConditioningPayloads(
         positive=positive,
         negative=negative,

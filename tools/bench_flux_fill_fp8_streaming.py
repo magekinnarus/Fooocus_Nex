@@ -145,6 +145,7 @@ def _load_unet(
     vram_guard_bytes: int | None,
     vram_guard_margin_bytes: int | None,
     prefetch_scan_ahead: int | None,
+    bandwidth_limit_mb_s: float | None,
 ):
     from backend.flux.flux_fill_pipeline import (
         load_flux_fill_native_unet,
@@ -171,6 +172,7 @@ def _load_unet(
             vram_guard_bytes=vram_guard_bytes,
             vram_guard_margin_bytes=vram_guard_margin_bytes,
             prefetch_scan_ahead=prefetch_scan_ahead,
+            bandwidth_limit_mb_s=bandwidth_limit_mb_s,
         )
         async_load_wall = time.perf_counter() - start
         return patcher, async_load_wall
@@ -318,6 +320,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--vram-guard-mb", type=float, default=None, help="Optional async scheduler VRAM guard ceiling in MB.")
     parser.add_argument("--vram-guard-margin-mb", type=float, default=None, help="Optional async scheduler free-VRAM margin in MB.")
     parser.add_argument("--prefetch-scan-ahead", type=int, default=None, help="Optional async scheduler scan-ahead override.")
+    parser.add_argument("--bandwidth-limit-mb-s", type=float, default=None, help="Optional async scheduler bandwidth limit in MB/s for streamed host->GPU transfer pacing.")
     parser.add_argument("--save-latents", action="store_true", help="Persist denoised latent artifacts for each run.")
     parser.add_argument("--decode-preview", action="store_true", help="Decode each run's denoised latent after the timed benchmark window.")
     parser.add_argument("--decode-with-unet-resident", action="store_true", help="Keep the UNet resident through decode to test UNet+VAE coexistence.")
@@ -364,6 +367,7 @@ def _run_case(
     vram_guard_bytes: int | None,
     vram_guard_margin_bytes: int | None,
     prefetch_scan_ahead: int | None,
+    bandwidth_limit_mb_s: float | None,
     save_latents: bool,
     decode_preview: bool,
     decode_with_unet_resident: bool,
@@ -400,6 +404,7 @@ def _run_case(
             vram_guard_bytes=vram_guard_bytes,
             vram_guard_margin_bytes=vram_guard_margin_bytes,
             prefetch_scan_ahead=prefetch_scan_ahead,
+            bandwidth_limit_mb_s=bandwidth_limit_mb_s,
         )
 
     source_latent = _load_tensor_artifact(bundle.source_latent_path)
@@ -498,6 +503,9 @@ def _run_case(
         "device": str(config.device),
         "sample_shape": list(result.samples.shape),
     }
+    total_transfer_bytes = float(scheduler_stats.get("prefetch_bytes", 0) + scheduler_stats.get("direct_copy_bytes", 0)) if isinstance(scheduler_stats, dict) else 0.0
+    total_copy_cuda_ms = float(scheduler_stats.get("prefetch_copy_cuda_ms", 0.0) + scheduler_stats.get("direct_copy_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0
+    total_throttle_cuda_ms = float(scheduler_stats.get("bandwidth_throttle_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0
     try:
         if save_latents or decode_preview:
             latent_artifact_path = output_dir / f"{run_label}_samples.pt"
@@ -573,6 +581,7 @@ def _run_case(
         "prefetch_guard_mb": float(scheduler_stats.get("vram_guard_bytes", 0)) / (1024 * 1024) if isinstance(scheduler_stats, dict) else 0.0,
         "prefetch_guard_margin_mb": float(scheduler_stats.get("vram_guard_margin_bytes", 0)) / (1024 * 1024) if isinstance(scheduler_stats, dict) else 0.0,
         "prefetch_max_mb": float(scheduler_stats.get("max_prefetch_bytes", 0)) / (1024 * 1024) if isinstance(scheduler_stats, dict) else 0.0,
+        "bandwidth_limit_mb_s": float(scheduler_stats.get("bandwidth_limit_mb_s", 0.0)) if isinstance(scheduler_stats, dict) else 0.0,
         "direct_copy_mb": float(scheduler_stats.get("direct_copy_bytes", 0)) / (1024 * 1024) if isinstance(scheduler_stats, dict) else 0.0,
         "direct_copy_cuda_ms": float(scheduler_stats.get("direct_copy_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0,
         "direct_copy_calls": int(scheduler_stats.get("direct_copy_calls", 0)) if isinstance(scheduler_stats, dict) else 0,
@@ -580,6 +589,17 @@ def _run_case(
             float(scheduler_stats.get("direct_copy_bytes", 0)) if isinstance(scheduler_stats, dict) else 0.0,
             float(scheduler_stats.get("direct_copy_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0,
         ),
+        "prefetch_throttle_cuda_ms": float(scheduler_stats.get("prefetch_throttle_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0,
+        "prefetch_throttle_events": int(scheduler_stats.get("prefetch_throttle_events", 0)) if isinstance(scheduler_stats, dict) else 0,
+        "direct_throttle_cuda_ms": float(scheduler_stats.get("direct_throttle_cuda_ms", 0.0)) if isinstance(scheduler_stats, dict) else 0.0,
+        "direct_throttle_events": int(scheduler_stats.get("direct_throttle_events", 0)) if isinstance(scheduler_stats, dict) else 0,
+        "bandwidth_throttle_cuda_ms": total_throttle_cuda_ms,
+        "bandwidth_throttle_events": int(scheduler_stats.get("bandwidth_throttle_events", 0)) if isinstance(scheduler_stats, dict) else 0,
+        "stream_transfer_mb": total_transfer_bytes / (1024 * 1024),
+        "stream_copy_cuda_ms": total_copy_cuda_ms,
+        "stream_copy_plus_throttle_cuda_ms": total_copy_cuda_ms + total_throttle_cuda_ms,
+        "stream_effective_mb_s": _mb_per_s(total_transfer_bytes, total_copy_cuda_ms),
+        "stream_effective_with_throttle_mb_s": _mb_per_s(total_transfer_bytes, total_copy_cuda_ms + total_throttle_cuda_ms),
         "stream_waits": int(scheduler_stats.get("stream_waits", 0)) if isinstance(scheduler_stats, dict) else 0,
         "direct_copy_stream_uses": int(scheduler_stats.get("direct_copy_stream_uses", 0)) if isinstance(scheduler_stats, dict) else 0,
         "sampler_trace_wall": _sum_trace_wall(sampler_trace),
@@ -627,6 +647,7 @@ def main() -> int:
                     vram_guard_bytes=_mb_to_bytes(args.vram_guard_mb),
                     vram_guard_margin_bytes=_mb_to_bytes(args.vram_guard_margin_mb),
                     prefetch_scan_ahead=args.prefetch_scan_ahead,
+                    bandwidth_limit_mb_s=args.bandwidth_limit_mb_s,
                     save_latents=bool(args.save_latents),
                     decode_preview=bool(args.decode_preview),
                     decode_with_unet_resident=bool(args.decode_with_unet_resident),
@@ -647,6 +668,7 @@ def main() -> int:
                 "vram_guard_mb": args.vram_guard_mb,
                 "vram_guard_margin_mb": args.vram_guard_margin_mb,
                 "prefetch_scan_ahead": args.prefetch_scan_ahead,
+                "bandwidth_limit_mb_s": args.bandwidth_limit_mb_s,
             },
             "artifact_options": {
                 "save_latents": bool(args.save_latents),
