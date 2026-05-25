@@ -72,7 +72,7 @@ class NexModelPatcher:
     def model_size(self):
         if self.size > 0:
             return self.size
-        self.size = resources.module_size(self.model)
+        self.size = self._estimate_module_runtime_size(self.model, device_to=self.load_device)
         return self.size
 
     def loaded_size(self):
@@ -121,6 +121,35 @@ class NexModelPatcher:
         
     def memory_required(self, input_shape):
         return self.model.memory_required(input_shape=input_shape)
+
+    def _target_weight_dtype(self, weight, *, device_to=None):
+        if not isinstance(weight, torch.Tensor):
+            return None
+        if not weight.is_floating_point():
+            return weight.dtype
+        target_device = device_to or self.load_device
+        if target_device is None:
+            return weight.dtype
+        if not isinstance(target_device, torch.device):
+            target_device = torch.device(target_device)
+        if target_device.type != "cuda":
+            return weight.dtype
+        return resources.unet_dtype(device=target_device, weight_dtype=weight.dtype)
+
+    def _estimate_tensor_runtime_size(self, weight, *, device_to=None):
+        if not isinstance(weight, torch.Tensor):
+            return 0
+        target_dtype = self._target_weight_dtype(weight, device_to=device_to)
+        if target_dtype is None:
+            return 0
+        return int(weight.nelement()) * int(torch.tensor([], dtype=target_dtype).element_size())
+
+    def _estimate_module_runtime_size(self, module, *, device_to=None):
+        module_mem = 0
+        sd = module.state_dict()
+        for tensor in sd.values():
+            module_mem += self._estimate_tensor_runtime_size(tensor, device_to=device_to)
+        return module_mem
 
     def set_model_sampler_cfg_function(self, sampler_cfg_function, disable_cfg1_optimization=False):
         if len(inspect.signature(sampler_cfg_function).parameters) == 3:
@@ -377,7 +406,7 @@ class NexModelPatcher:
         else:
             set_func(out_weight, inplace_update=inplace_update, seed=string_to_seed(key))
 
-    def _load_list(self):
+    def _load_list(self, *, device_to=None):
         loading = []
         for n, m in self.model.named_modules():
             params = []
@@ -389,7 +418,7 @@ class NexModelPatcher:
                     skip = True # skip random weights in non leaf modules
                     break
             if not skip and (hasattr(m, "comfy_cast_weights") or len(params) > 0):
-                loading.append((resources.module_size(m), n, m, params))
+                loading.append((self._estimate_module_runtime_size(m, device_to=device_to), n, m, params))
         return loading
 
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
@@ -399,7 +428,8 @@ class NexModelPatcher:
             mem_counter = 0
             patch_counter = 0
             lowvram_counter = 0
-            loading = self._load_list()
+            active_device = device_to or self.load_device
+            loading = self._load_list(device_to=active_device)
 
             load_completely = []
             loading.sort(reverse=True)

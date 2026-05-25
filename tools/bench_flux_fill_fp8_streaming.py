@@ -475,6 +475,7 @@ def _run_case(
     denoise_wall = float(result.timings.get("denoise_wall", 0.0))
     denoise_cpu_proc = float(result.timings.get("denoise_cpu_proc", 0.0))
     flux_options = getattr(unet_patcher, "model_options", {}).get("flux_fill", {})
+    detected_config = flux_options.get("detected_config", {}) if isinstance(flux_options, dict) else {}
     sampling_perf = getattr(unet_patcher, "model_options", {}).get("_nex_sampling_perf", {})
     scheduler_stats = result.metadata.get("streaming_scheduler", {})
     host_pinned_mb = max(
@@ -609,12 +610,19 @@ def _run_case(
         "apply_model_trace_wall": _sum_trace_wall(apply_model_trace),
         "apply_model_trace_cpu": _sum_trace_cpu(apply_model_trace),
         "flux_fill_mode": flux_options.get("mode", ""),
+        "detected_weight_dtype": str(detected_config.get("weight_dtype", "")),
+        "manual_cast_dtype": str(detected_config.get("manual_cast_dtype", "")),
         "non_blocking_supported": bool(flux_options.get("non_blocking_supported", False)),
         "streaming_scheduler_kind": flux_options.get("streaming_scheduler_kind", ""),
         "streaming_scheduler_policy": flux_options.get("streaming_scheduler_policy", {}),
         "scheduled_module_count": int(flux_options.get("scheduled_module_count", 0)),
         "direct_safetensors_load": bool(flux_options.get("direct_safetensors_load", False)),
         "single_host_artifact": bool(flux_options.get("single_host_artifact", False)),
+        "runtime_weight_dtype": str(flux_options.get("runtime_weight_dtype", "")),
+        "runtime_weight_mb": float(flux_options.get("runtime_weight_bytes", 0)) / (1024 * 1024),
+        "native_unet_load_diagnostics": result.metadata.get("native_unet_load_diagnostics", {}),
+        "native_unet_runtime_before_denoise": result.metadata.get("native_unet_runtime_before_denoise", {}),
+        "native_unet_runtime_after_denoise": result.metadata.get("native_unet_runtime_after_denoise", {}),
         "sample_shape": list(result.samples.shape),
         "samples_artifact_path": str(latent_artifact_path) if latent_artifact_path is not None else None,
         "decode_preview": decode_preview_result,

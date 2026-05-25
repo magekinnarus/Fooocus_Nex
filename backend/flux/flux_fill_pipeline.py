@@ -490,6 +490,63 @@ def _snapshot_first_param_runtime(module: Any) -> dict[str, Any]:
     }
 
 
+def _snapshot_module_runtime(module: Any) -> dict[str, Any]:
+    root_module = getattr(module, "diffusion_model", module)
+    if root_module is None:
+        return {}
+
+    def _tensor_bytes(tensor: Any) -> int:
+        if not isinstance(tensor, torch.Tensor):
+            return 0
+        return int(tensor.nelement()) * int(tensor.element_size())
+
+    def _accumulate(bucket: dict[str, int], key: str, value: int) -> None:
+        bucket[key] = int(bucket.get(key, 0)) + int(value)
+
+    snapshot: dict[str, Any] = {
+        "first_param": _snapshot_first_param_runtime(root_module),
+        "param_count": 0,
+        "buffer_count": 0,
+        "total_param_bytes": 0,
+        "total_buffer_bytes": 0,
+        "floating_param_bytes": 0,
+        "param_bytes_by_dtype": {},
+        "param_bytes_by_device": {},
+        "buffer_bytes_by_dtype": {},
+        "buffer_bytes_by_device": {},
+    }
+
+    try:
+        params = list(root_module.parameters())
+    except Exception:
+        params = []
+    for param in params:
+        if not isinstance(param, torch.Tensor):
+            continue
+        tensor_bytes = _tensor_bytes(param)
+        snapshot["param_count"] += 1
+        snapshot["total_param_bytes"] += tensor_bytes
+        _accumulate(snapshot["param_bytes_by_dtype"], str(param.dtype), tensor_bytes)
+        _accumulate(snapshot["param_bytes_by_device"], str(param.device), tensor_bytes)
+        if param.is_floating_point():
+            snapshot["floating_param_bytes"] += tensor_bytes
+
+    try:
+        buffers = list(root_module.buffers())
+    except Exception:
+        buffers = []
+    for buffer in buffers:
+        if not isinstance(buffer, torch.Tensor):
+            continue
+        tensor_bytes = _tensor_bytes(buffer)
+        snapshot["buffer_count"] += 1
+        snapshot["total_buffer_bytes"] += tensor_bytes
+        _accumulate(snapshot["buffer_bytes_by_dtype"], str(buffer.dtype), tensor_bytes)
+        _accumulate(snapshot["buffer_bytes_by_device"], str(buffer.device), tensor_bytes)
+
+    return snapshot
+
+
 def _instantiate_flux_fill_native_model(
     path: Path,
     *,
@@ -531,6 +588,7 @@ def _instantiate_flux_fill_native_model(
     detected_metadata["weight_dtype"] = str(detected_weight_dtype) if detected_weight_dtype is not None else None
     detected_metadata["manual_cast_dtype"] = str(manual_cast_dtype) if manual_cast_dtype is not None else None
     detected_metadata["parameter_count"] = _estimate_flux_fill_parameter_count(state_probe)
+    detected_metadata["post_construct_runtime"] = _snapshot_module_runtime(model)
     return model, detected_metadata
 
 
@@ -670,18 +728,23 @@ def load_flux_fill_native_unet(
         model,
         target_device=offload_device,
     )
+    detected_config["post_load_runtime"] = _snapshot_module_runtime(model)
     runtime_patcher = patching.NexModelPatcher(
         model,
         load_device=load_device,
         offload_device=offload_device,
         preserve_source_artifact=False,
     )
+    runtime_weight_bytes = int(runtime_patcher.model_size())
+    runtime_weight_dtype = detected_config.get("manual_cast_dtype") or detected_config.get("weight_dtype")
     runtime_patcher.model_options["flux_fill"] = {
         "path": str(path),
         "arch": "flux",
         "detected_config": dict(detected_config),
         "execution_class": getattr(execution_class, "value", execution_class),
         "mode": "native_fp8",
+        "runtime_weight_dtype": runtime_weight_dtype,
+        "runtime_weight_bytes": runtime_weight_bytes,
         **direct_load_metadata,
     }
     return runtime_patcher
@@ -793,12 +856,14 @@ def load_flux_fill_native_unet_streaming(
         offload_device=host_offload_device,
         preserve_source_artifact=True,
     )
+    runtime_weight_dtype = detected_config.get("manual_cast_dtype") or detected_config.get("weight_dtype")
     runtime_patcher.model_options["flux_fill"] = {
         "path": str(path),
         "arch": "flux",
         "detected_config": dict(detected_config),
         "execution_class": getattr(execution_class, "value", execution_class),
         "mode": "native_fp8_streaming",
+        "runtime_weight_dtype": runtime_weight_dtype,
         **direct_load_metadata,
     }
     pinned_bytes = _pin_module_tensors_for_streaming(getattr(runtime_patcher, "model", None))
@@ -1939,6 +2004,13 @@ def denoise_flux_fill_latent(
         "resident_unet": not owned_unet,
     }
     flux_options = getattr(unet_patcher, "model_options", {}).get("flux_fill", {}) if unet_patcher is not None else {}
+    if flux_options:
+        metadata["native_unet_load_diagnostics"] = {
+            "detected_weight_dtype": flux_options.get("detected_config", {}).get("weight_dtype"),
+            "manual_cast_dtype": flux_options.get("detected_config", {}).get("manual_cast_dtype"),
+            "post_construct_runtime": flux_options.get("detected_config", {}).get("post_construct_runtime", {}),
+            "post_load_runtime": flux_options.get("detected_config", {}).get("post_load_runtime", {}),
+        }
     streaming_scheduler = flux_options.get("streaming_scheduler")
     if streaming_scheduler is not None and hasattr(streaming_scheduler, "reset_run"):
         streaming_scheduler.reset_run()
@@ -1972,6 +2044,7 @@ def denoise_flux_fill_latent(
 
     sampler_start = time.perf_counter()
     flux_options = getattr(unet_patcher, "model_options", {}).get("flux_fill", {})
+    metadata["native_unet_runtime_before_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
     direct_stream_runtime = bool(flux_options.get("direct_stream_runtime", False))
     if direct_stream_runtime:
         sigmas = torch.empty(0)
@@ -2021,6 +2094,7 @@ def denoise_flux_fill_latent(
     finally:
         timings["denoise_wall"] = time.perf_counter() - denoise_start
         timings["denoise_cpu_proc"] = time.process_time() - denoise_cpu_start
+        metadata["native_unet_runtime_after_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
         if streaming_scheduler is not None and hasattr(streaming_scheduler, "snapshot"):
             metadata["streaming_scheduler"] = streaming_scheduler.snapshot()
         should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
@@ -2076,6 +2150,13 @@ def denoise_flux_fill_precomputed_latent(
         "precomputed_inputs": True,
     }
     flux_options = getattr(unet_patcher, "model_options", {}).get("flux_fill", {}) if unet_patcher is not None else {}
+    if flux_options:
+        metadata["native_unet_load_diagnostics"] = {
+            "detected_weight_dtype": flux_options.get("detected_config", {}).get("weight_dtype"),
+            "manual_cast_dtype": flux_options.get("detected_config", {}).get("manual_cast_dtype"),
+            "post_construct_runtime": flux_options.get("detected_config", {}).get("post_construct_runtime", {}),
+            "post_load_runtime": flux_options.get("detected_config", {}).get("post_load_runtime", {}),
+        }
     streaming_scheduler = flux_options.get("streaming_scheduler")
     if streaming_scheduler is not None and hasattr(streaming_scheduler, "reset_run"):
         streaming_scheduler.reset_run()
@@ -2115,6 +2196,7 @@ def denoise_flux_fill_precomputed_latent(
         model_options=getattr(unet_patcher, "model_options", {}),
     ) if not flux_options.get("direct_stream_runtime", False) else None
     sigmas = sampler.sigmas.detach().cpu() if sampler is not None else torch.empty(0)
+    metadata["native_unet_runtime_before_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
 
     denoise_start = time.perf_counter()
     denoise_cpu_start = time.process_time()
@@ -2149,6 +2231,7 @@ def denoise_flux_fill_precomputed_latent(
     finally:
         timings["denoise_wall"] = time.perf_counter() - denoise_start
         timings["denoise_cpu_proc"] = time.process_time() - denoise_cpu_start
+        metadata["native_unet_runtime_after_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
         if streaming_scheduler is not None and hasattr(streaming_scheduler, "snapshot"):
             metadata["streaming_scheduler"] = streaming_scheduler.snapshot()
         should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
