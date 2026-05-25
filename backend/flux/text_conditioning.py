@@ -28,7 +28,7 @@ _T5_FIXED_LENGTH = 256
 _CLIP_L_KEY = "text_model.encoder.layers.1.mlp.fc1.weight"
 _T5_KEY = "encoder.block.23.layer.1.DenseReluDense.wi_1.weight"
 _T5_KEY_OLD = "encoder.block.23.layer.1.DenseReluDense.wi.weight"
-_RESIDENT_ENCODER_CACHE: dict[tuple[str, str, str | None], "FluxPromptTextEncoder"] = {}
+_RESIDENT_ENCODER_CACHE: dict[tuple[str, str, str | None, str], "FluxPromptTextEncoder"] = {}
 
 
 def flux_t5_tokenizer_path() -> Path:
@@ -43,6 +43,17 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _pick_t5_ops(model_options: dict[str, Any] | None) -> Any:
     custom_ops = (model_options or {}).get("custom_operations")
     return custom_ops if custom_ops is not None else base_ops.manual_cast
+
+
+def _normalize_t5_loader_policy(policy: str | None, *, t5_path: str | Path | None = None) -> str:
+    if policy is None or str(policy).strip() == "":
+        if t5_path is not None and Path(t5_path).suffix.lower() == ".safetensors":
+            return "stream_safetensors_runtime"
+        return "eager"
+    value = str(policy).strip().lower().replace("-", "_").replace(" ", "_")
+    if value not in {"eager", "stream_safetensors_runtime"}:
+        raise ValueError(f"Unsupported T5 loader policy: {policy!r}.")
+    return value
 
 
 class FixedLengthT5Tokenizer:
@@ -93,6 +104,19 @@ class T5LayerNorm(torch.nn.Module):
         super().__init__()
         self.weight = torch.nn.Parameter(torch.empty(hidden_size, dtype=dtype, device=device))
         self.variance_epsilon = eps
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        key = f"{prefix}weight"
+        value = state_dict.get(key)
+        if value is None:
+            missing_keys.append(key)
+            return
+        if hasattr(value, "load") and callable(value.load):
+            value = value.load()
+        if not isinstance(value, torch.Tensor):
+            error_msgs.append(f"{key} expected tensor-like value, got {type(value).__name__}.")
+            return
+        self.weight.data.copy_(value.to(device=self.weight.device, dtype=self.weight.dtype))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         variance = x.pow(2).mean(-1, keepdim=True)
@@ -359,7 +383,10 @@ class T5XXLTextEncoder(torch.nn.Module, sd1_clip.ClipTokenWeightEncoder):
         return None
 
     def encode(self, tokens):
-        device = self.transformer.get_input_embeddings().weight.device
+        embedding_weight = self.transformer.get_input_embeddings().weight
+        device = getattr(embedding_weight, "device", torch.device("cpu"))
+        if not isinstance(device, torch.device):
+            device = torch.device(device)
         input_ids = torch.LongTensor(tokens).to(device)
         attention_mask = (input_ids != self.special_tokens["pad"]).long()
         encoded, _ = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
@@ -431,7 +458,8 @@ class FluxPromptTextEncoder:
         if getattr(load_device, "type", None) != "cpu":
             resources.load_models_gpu([self.patcher], force_full_load=True)
         try:
-            cond, pooled = self.cond_stage_model.encode_token_weights(tokens)
+            with torch.inference_mode():
+                cond, pooled = self.cond_stage_model.encode_token_weights(tokens)
             return cond, pooled
         finally:
             try:
@@ -447,11 +475,13 @@ def _resident_encoder_key(
     clip_l_path: str | Path,
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
-) -> tuple[str, str, str | None]:
+    t5_loader_policy: str | None = None,
+) -> tuple[str, str, str | None, str]:
     return (
         str(Path(clip_l_path)),
         str(Path(t5_path)),
         str(Path(embedding_directory)) if embedding_directory is not None else None,
+        _normalize_t5_loader_policy(t5_loader_policy, t5_path=t5_path),
     )
 
 
@@ -475,12 +505,142 @@ def _load_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str,
     return comfy_utils.load_torch_file(str(path), safe_load=True), {}
 
 
+def _normalize_checkpoint_dtype(value: Any) -> torch.dtype | None:
+    dtype = getattr(value, "dtype", None)
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if dtype is None and isinstance(value, torch.dtype):
+        return value
+
+    dtype_text = str(dtype if dtype is not None else value).strip()
+    mapping = {
+        "F16": torch.float16,
+        "F32": torch.float32,
+        "BF16": torch.bfloat16,
+        "F8_E4M3": getattr(torch, "float8_e4m3fn", None),
+        "F8_E4M3FN": getattr(torch, "float8_e4m3fn", None),
+        "F8_E5M2": getattr(torch, "float8_e5m2", None),
+        "torch.float16": torch.float16,
+        "torch.float32": torch.float32,
+        "torch.bfloat16": torch.bfloat16,
+        "float8_e4m3fn": getattr(torch, "float8_e4m3fn", None),
+        "float8_e5m2": getattr(torch, "float8_e5m2", None),
+        "torch.float8_e4m3fn": getattr(torch, "float8_e4m3fn", None),
+        "torch.float8_e5m2": getattr(torch, "float8_e5m2", None),
+    }
+    return mapping.get(dtype_text)
+
+
 def _detect_t5_dtype(state_dict: dict[str, Any]) -> torch.dtype | None:
     for key in ("encoder.final_layer_norm.weight", _T5_KEY, _T5_KEY_OLD):
         tensor = state_dict.get(key)
         if tensor is not None:
-            return getattr(tensor, "dtype", None)
+            detected = _normalize_checkpoint_dtype(tensor)
+            if detected is not None:
+                return detected
     return None
+
+
+def _map_t5_source_key(source_key: str) -> str:
+    if source_key == "encoder.embed_tokens.weight":
+        return "shared.weight"
+    return source_key
+
+
+class LazySafetensorsLayer(torch.nn.Module):
+    comfy_cast_weights = True
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        matched = False
+        for key, value in state_dict.items():
+            if not key.startswith(prefix):
+                continue
+            suffix = key[len(prefix):]
+            if suffix == "weight":
+                self.weight = value
+                matched = True
+            elif suffix == "bias":
+                self.bias = value
+                matched = True
+            else:
+                unexpected_keys.append(key)
+        if not matched:
+            missing_keys.append(prefix + "weight")
+
+    @staticmethod
+    def _materialize(value: Any, *, device: torch.device, dtype: torch.dtype | None = None) -> torch.Tensor | None:
+        if value is None:
+            return None
+        if hasattr(value, "load") and callable(value.load):
+            value = value.load()
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"Expected tensor-like lazy weight, got {type(value).__name__}.")
+        if dtype is None:
+            return value.to(device=device)
+        return value.to(device=device, dtype=dtype)
+
+
+class LazySafetensorsOps(base_ops.manual_cast):
+    class Linear(LazySafetensorsLayer, base_ops.manual_cast.Linear):
+        def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+            torch.nn.Module.__init__(self)
+            self.in_features = in_features
+            self.out_features = out_features
+            self.weight = None
+            self.bias = None
+
+        def forward(self, input):
+            weight = self._materialize(self.weight, device=input.device, dtype=input.dtype)
+            bias = self._materialize(self.bias, device=input.device, dtype=input.dtype) if self.bias is not None else None
+            return torch.nn.functional.linear(input, weight, bias)
+
+    class Embedding(LazySafetensorsLayer, base_ops.manual_cast.Embedding):
+        def __init__(self, num_embeddings, embedding_dim, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False, device=None, dtype=None):
+            torch.nn.Module.__init__(self)
+            self.num_embeddings = num_embeddings
+            self.embedding_dim = embedding_dim
+            self.padding_idx = padding_idx
+            self.max_norm = max_norm
+            self.norm_type = norm_type
+            self.scale_grad_by_freq = scale_grad_by_freq
+            self.sparse = sparse
+            self.weight = None
+            self.bias = None
+
+        def forward(self, input, out_dtype=None):
+            weight_dtype = out_dtype if out_dtype is not None else None
+            weight = self._materialize(self.weight, device=input.device, dtype=weight_dtype)
+            out = torch.nn.functional.embedding(
+                input,
+                weight,
+                self.padding_idx,
+                self.max_norm,
+                self.norm_type,
+                self.scale_grad_by_freq,
+                self.sparse,
+            )
+            if out_dtype is not None:
+                out = out.to(dtype=out_dtype)
+            return out
+
+
+def _build_lazy_t5_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    from backend.cpu_compiler import SafeOpenHeaderOnly
+
+    header = SafeOpenHeaderOnly(str(path))
+    lazy_state_dict: dict[str, Any] = {}
+    duplicate_source_keys: list[str] = []
+    for source_key, value in header.items():
+        target_key = _map_t5_source_key(source_key)
+        if target_key in lazy_state_dict:
+            duplicate_source_keys.append(source_key)
+            continue
+        lazy_state_dict[target_key] = value
+    return lazy_state_dict, {
+        "custom_operations": LazySafetensorsOps,
+        "lazy_safetensors_runtime": True,
+        "lazy_duplicate_source_keys": duplicate_source_keys,
+    }
 
 
 def load_flux_prompt_text_encoder(
@@ -488,11 +648,18 @@ def load_flux_prompt_text_encoder(
     clip_l_path: str | Path,
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
+    t5_loader_policy: str | None = None,
 ) -> FluxPromptTextEncoder:
     clip_l_path = Path(clip_l_path)
     t5_path = Path(t5_path)
     clip_l_sd, clip_l_options = _load_text_encoder_state_dict(clip_l_path)
-    t5_sd, t5_options = _load_text_encoder_state_dict(t5_path)
+    t5_loader_policy = _normalize_t5_loader_policy(t5_loader_policy, t5_path=t5_path)
+    if t5_loader_policy == "stream_safetensors_runtime":
+        if t5_path.suffix.lower() != ".safetensors":
+            raise ValueError("stream_safetensors_runtime requires a .safetensors T5 checkpoint.")
+        t5_sd, t5_options = _build_lazy_t5_state_dict(t5_path)
+    else:
+        t5_sd, t5_options = _load_text_encoder_state_dict(t5_path)
 
     # Flux prompt conditioning is intentionally CPU-scoped so Colab/local policy
     # decisions are about RAM fit instead of opportunistic GPU residency.
@@ -527,7 +694,23 @@ def load_flux_prompt_text_encoder(
     if unexpected:
         logger.debug("Flux T5 unexpected keys: %s", unexpected)
 
-    return FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
+    encoder = FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
+    setattr(
+        encoder,
+        "_nex_load_metadata",
+        {
+            "clip_l_path": str(clip_l_path),
+            "t5_path": str(t5_path),
+            "t5_loader_policy": t5_loader_policy,
+            "t5_detected_dtype": str(_detect_t5_dtype(t5_sd)) if _detect_t5_dtype(t5_sd) is not None else None,
+            "t5_source_kind": "safetensors_lazy_runtime" if t5_loader_policy == "stream_safetensors_runtime" else "eager_state_dict",
+            "t5_full_state_dict_materialized": t5_loader_policy != "stream_safetensors_runtime",
+            "t5_stream_runtime": t5_loader_policy == "stream_safetensors_runtime",
+            "t5_lazy_runtime": t5_loader_policy == "stream_safetensors_runtime",
+            "t5_lazy_duplicate_source_keys": list(t5_options.get("lazy_duplicate_source_keys", [])),
+        },
+    )
+    return encoder
 
 
 def get_flux_prompt_text_encoder(
@@ -536,18 +719,22 @@ def get_flux_prompt_text_encoder(
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
     keep_resident: bool = False,
+    t5_loader_policy: str | None = None,
 ) -> FluxPromptTextEncoder:
+    t5_loader_policy = _normalize_t5_loader_policy(t5_loader_policy, t5_path=t5_path)
     if not keep_resident:
         return load_flux_prompt_text_encoder(
             clip_l_path=clip_l_path,
             t5_path=t5_path,
             embedding_directory=embedding_directory,
+            t5_loader_policy=t5_loader_policy,
         )
 
     key = _resident_encoder_key(
         clip_l_path=clip_l_path,
         t5_path=t5_path,
         embedding_directory=embedding_directory,
+        t5_loader_policy=t5_loader_policy,
     )
     cached = _RESIDENT_ENCODER_CACHE.get(key)
     if cached is not None:
@@ -558,6 +745,7 @@ def get_flux_prompt_text_encoder(
         clip_l_path=clip_l_path,
         t5_path=t5_path,
         embedding_directory=embedding_directory,
+        t5_loader_policy=t5_loader_policy,
     )
     _RESIDENT_ENCODER_CACHE[key] = encoder
     return encoder
@@ -570,6 +758,7 @@ def encode_flux_prompt_conditioning(
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
     keep_resident: bool = False,
+    t5_loader_policy: str | None = None,
 ) -> FluxEmptyConditioning:
     prompt_text = str(prompt or "").strip()
     if prompt_text == "":
@@ -580,7 +769,9 @@ def encode_flux_prompt_conditioning(
         t5_path=t5_path,
         embedding_directory=embedding_directory,
         keep_resident=keep_resident,
+        t5_loader_policy=t5_loader_policy,
     )
+    load_metadata = dict(getattr(encoder, "_nex_load_metadata", {}) or {})
     try:
         cross_attn, pooled_output = encoder.encode(prompt_text)
         return FluxEmptyConditioning(
@@ -595,6 +786,8 @@ def encode_flux_prompt_conditioning(
                 "conditioning_kind": "prompt",
                 "transport": "memory",
                 "text_encoder_resident": bool(keep_resident),
+                "t5_loader_policy": _normalize_t5_loader_policy(t5_loader_policy, t5_path=t5_path),
+                "loader_metadata": load_metadata,
             },
         )
     finally:
@@ -615,6 +808,7 @@ def save_flux_prompt_conditioning_cache(
     output_path: str | Path,
     embedding_directory: str | Path | None = None,
     keep_resident: bool = False,
+    t5_loader_policy: str | None = None,
 ) -> FluxEmptyConditioning:
     conditioning = encode_flux_prompt_conditioning(
         prompt,
@@ -622,6 +816,7 @@ def save_flux_prompt_conditioning_cache(
         t5_path=t5_path,
         embedding_directory=embedding_directory,
         keep_resident=keep_resident,
+        t5_loader_policy=t5_loader_policy,
     )
     return save_flux_empty_conditioning_cache(
         output_path,

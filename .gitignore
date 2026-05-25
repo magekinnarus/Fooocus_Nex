@@ -46,4 +46,4 @@ config_old.txt
 /config_colab_modification_tutorial.txt
 /backend/gguf/sdxl_glass_pipeline.py
 /thumbnails/private/
-
+notebooks/

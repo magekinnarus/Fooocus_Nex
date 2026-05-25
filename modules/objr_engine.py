@@ -227,7 +227,7 @@ def evaluate_flux_fill_text_encoder_residency(
     next_route_family: Any | None = None,
 ) -> dict[str, Any]:
     hardware = inspect_flux_fill_hardware(profile)
-    baseline_keep = hardware.profile_name == "colab_pro" or float(hardware.total_ram_mb) >= float(FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB)
+    baseline_keep = False
     normalized_next_route_family = _normalize_route_family(next_route_family)
     resident_cost_mb = (
         FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
@@ -235,10 +235,7 @@ def evaluate_flux_fill_text_encoder_residency(
         else FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB
     )
     next_route_budget_mb = _flux_fill_next_route_budget_mb(normalized_next_route_family)
-    keep_resident = baseline_keep
-
-    if keep_resident and normalized_next_route_family not in {"", "flux_fill"}:
-        keep_resident = float(hardware.available_ram_mb) - float(resident_cost_mb) >= float(next_route_budget_mb)
+    keep_resident = False
 
     return {
         "keep_resident": keep_resident,
@@ -249,6 +246,7 @@ def evaluate_flux_fill_text_encoder_residency(
         "available_ram_mb": float(hardware.available_ram_mb),
         "total_ram_mb": float(hardware.total_ram_mb),
         "hardware": hardware,
+        "policy": "flux_fill_streamed_t5_default",
     }
 
 

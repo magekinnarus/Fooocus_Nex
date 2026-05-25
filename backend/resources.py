@@ -5,6 +5,7 @@
 
 import psutil
 import logging
+import contextlib
 from enum import Enum
 import torch
 import sys
@@ -1311,6 +1312,11 @@ def supports_fp8_compute(device=None):
     if getattr(config, 'supports_fp8_compute', False):
         return True
 
+    if device is not None and not isinstance(device, torch.device):
+        device = torch.device(device)
+    if device is not None and device.type != "cuda":
+        return False
+
     if not is_nvidia():
         return False
 
@@ -1391,17 +1397,25 @@ def device_supports_non_blocking(device):
     return True
 
 def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False, stream=None):
+    stream_context = contextlib.nullcontext()
+    if stream is not None:
+        stream_device = getattr(getattr(stream, "device", None), "type", None)
+        if stream_device == "cuda":
+            stream_context = torch.cuda.stream(stream)
+        elif stream_device == "xpu" and hasattr(torch, "xpu") and hasattr(torch.xpu, "stream"):
+            stream_context = torch.xpu.stream(stream)
+
     if device is None or weight.device == device:
         if not copy:
             if dtype is None or weight.dtype == dtype:
                 return weight
         if stream is not None:
-            with stream:
+            with stream_context:
                 return weight.to(dtype=dtype, copy=copy)
         return weight.to(dtype=dtype, copy=copy)
 
     if stream is not None:
-        with stream:
+        with stream_context:
             r = torch.empty_like(weight, dtype=dtype, device=device)
             r.copy_(weight, non_blocking=non_blocking)
     else:

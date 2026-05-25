@@ -18,6 +18,7 @@
 
 import torch
 import logging
+import time
 import ldm_patched.modules.model_management
 from ldm_patched.modules.model_management import PerformanceFeature
 from ldm_patched.modules.args_parser import args
@@ -30,7 +31,20 @@ cast_to = ldm_patched.modules.model_management.cast_to #TODO: remove once no mor
 def cast_to_input(weight, input, non_blocking=False, copy=True):
     return ldm_patched.modules.model_management.cast_to(weight, input.dtype, input.device, non_blocking=non_blocking, copy=copy)
 
+
+def _resolve_streaming_scheduler(module, device):
+    scheduler = getattr(module, "_nex_streaming_scheduler", None)
+    if scheduler is None:
+        return None
+    try:
+        if scheduler.is_enabled_for(device):
+            return scheduler
+    except Exception:
+        return None
+    return None
+
 def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
+    wall_start = time.perf_counter()
     if input is not None:
         if dtype is None:
             dtype = input.dtype
@@ -39,7 +53,32 @@ def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
         if device is None:
             device = input.device
 
-    offload_stream = ldm_patched.modules.model_management.get_offload_stream(device)
+    scheduler = _resolve_streaming_scheduler(s, device)
+    if scheduler is not None:
+        prefetched = scheduler.consume_prefetched(
+            s,
+            device=device,
+            dtype=dtype,
+            bias_dtype=bias_dtype,
+        )
+        if prefetched is not None:
+            scheduler.record_module_wall(
+                s,
+                path="prefetch",
+                wall_s=time.perf_counter() - wall_start,
+            )
+            return prefetched
+        offload_stream = scheduler.stream_for_module(s, device=device)
+        direct_copy_token = scheduler.begin_direct_copy(
+            s,
+            device=device,
+            dtype=dtype,
+            bias_dtype=bias_dtype,
+            stream=offload_stream,
+        )
+    else:
+        offload_stream = ldm_patched.modules.model_management.get_offload_stream(device)
+        direct_copy_token = None
     if offload_stream is not None:
         wf_context = offload_stream
     else:
@@ -63,7 +102,17 @@ def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
             for f in s.weight_function:
                 weight = f(weight)
 
-    ldm_patched.modules.model_management.sync_stream(device, offload_stream)
+    if scheduler is not None:
+        scheduler.end_direct_copy(direct_copy_token, stream=offload_stream)
+        scheduler.sync_stream(device, offload_stream)
+        scheduler.settle_direct_copy(direct_copy_token)
+        scheduler.record_module_wall(
+            s,
+            path="direct",
+            wall_s=time.perf_counter() - wall_start,
+        )
+    else:
+        ldm_patched.modules.model_management.sync_stream(device, offload_stream)
     return weight, bias
 
 class CastWeightBiasOp:

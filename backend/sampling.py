@@ -409,6 +409,12 @@ def _emit_sampling_perf_logs(
     apply_model_trace: Any,
     gguf_stats: Optional[Dict[str, Any]] = None,
 ):
+    perf_stats: Dict[str, Any] = {
+        "gguf_stats": dict(gguf_stats or {}),
+        "sampler_trace": {},
+        "cond_batch_trace": {},
+        "apply_model_trace": {},
+    }
     perf_message = (
         f"[Nex-Perf] sampler timings model_load={model_load_duration:.3f}s "
         f"cond_prep={cond_duration:.3f}s denoise={denoise_duration:.3f}s "
@@ -419,6 +425,7 @@ def _emit_sampling_perf_logs(
 
     if gguf_ops is not None or gguf_stats is not None:
         stats = gguf_stats if gguf_stats is not None else gguf_ops.consume_trace_stats()
+        perf_stats["gguf_stats"] = dict(stats or {})
         if stats.get("calls", 0) > 0:
             avg_ms = (stats["total_seconds"] / stats["calls"]) * 1000.0
             perf_message = (
@@ -510,10 +517,57 @@ def _emit_sampling_perf_logs(
                         f"{qtype_name}:calls={qstats.get('calls', 0)},quant={qstats.get('quantized_calls', 0)},"
                         f"wall={qstats.get('wall_seconds', 0.0):.3f}s,cpu_proc={qstats.get('cpu_process_seconds', 0.0):.3f}s,"
                         f"avg={avg_q_ms:.3f}ms,src_cuda={qstats.get('source_cuda_calls', 0)},elems={qstats.get('elements', 0)}"
-                    )
+                )
                 perf_message = f"[Nex-Perf] gguf qtype breakdown {'; '.join(summary_parts)}"
                 print(perf_message)
                 logging.info(perf_message)
+
+    sampler_trace = consume_sampler_trace_stats()
+    if sampler_trace:
+        perf_stats["sampler_trace"] = sampler_trace
+        sampler_parts = []
+        for trace_name, trace_stats in sorted(sampler_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+            calls = trace_stats.get('calls', 0) or 1
+            avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+            sampler_parts.append(
+                f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+            )
+        sampler_trace_message = f"[Nex-Perf] sampler function trace {'; '.join(sampler_parts)}"
+        print(sampler_trace_message)
+        logging.info(sampler_trace_message)
+
+    cond_batch_trace = consume_cond_batch_trace_stats()
+    if cond_batch_trace:
+        perf_stats["cond_batch_trace"] = cond_batch_trace
+        cond_batch_parts = []
+        for trace_name, trace_stats in sorted(cond_batch_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+            calls = trace_stats.get('calls', 0) or 1
+            avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+            cond_batch_parts.append(
+                f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+            )
+        cond_batch_trace_message = f"[Nex-Perf] cond batch trace {'; '.join(cond_batch_parts)}"
+        print(cond_batch_trace_message)
+        logging.info(cond_batch_trace_message)
+
+    if apply_model_trace is not None:
+        apply_trace = apply_model_trace.consume_apply_model_trace_stats()
+        if apply_trace:
+            perf_stats["apply_model_trace"] = apply_trace
+            apply_parts = []
+            for trace_name, trace_stats in sorted(apply_trace.items(), key=lambda item: item[1].get('wall_seconds', 0.0), reverse=True):
+                calls = trace_stats.get('calls', 0) or 1
+                avg_trace_ms = (trace_stats.get('wall_seconds', 0.0) / calls) * 1000.0
+                apply_parts.append(
+                    f"{trace_name}:calls={trace_stats.get('calls', 0)},wall={trace_stats.get('wall_seconds', 0.0):.3f}s,"
+                    f"cpu_proc={trace_stats.get('cpu_process_seconds', 0.0):.3f}s,avg={avg_trace_ms:.3f}ms"
+                )
+            apply_trace_message = f"[Nex-Perf] apply_model trace {'; '.join(apply_parts)}"
+            print(apply_trace_message)
+            logging.info(apply_trace_message)
+    return perf_stats
 
 
 def prepare_sampler_conds(
@@ -581,14 +635,15 @@ def sample_prepared_sdxl(
     denoise_start = time.perf_counter()
     denoise_cpu_start = time.process_time()
     try:
-        return sampler.sample(guider, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
+        with torch.inference_mode():
+            return sampler.sample(guider, sigmas, {}, callback, noise, latent_image, denoise_mask, disable_pbar)
     finally:
         denoise_duration = time.perf_counter() - denoise_start
         denoise_cpu_duration = time.process_time() - denoise_cpu_start
         total_duration = time.perf_counter() - sample_total_start
         gguf_stats = gguf_ops.consume_trace_stats() if gguf_ops is not None else {}
         guider.last_gguf_trace_stats = dict(gguf_stats)
-        _emit_sampling_perf_logs(
+        perf_stats = _emit_sampling_perf_logs(
             model_load_duration=model_load_duration,
             cond_duration=guider.cond_prep_duration,
             denoise_duration=denoise_duration,
@@ -598,6 +653,12 @@ def sample_prepared_sdxl(
             apply_model_trace=apply_model_trace,
             gguf_stats=gguf_stats,
         )
+        try:
+            guider.last_sampling_perf_stats = dict(perf_stats)
+            guider.model_options["_nex_sampling_perf"] = dict(perf_stats)
+            guider.model_patcher.model_options["_nex_sampling_perf"] = dict(perf_stats)
+        except Exception:
+            pass
 
 
 class CFGGuider:
