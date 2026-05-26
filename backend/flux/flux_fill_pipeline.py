@@ -558,8 +558,17 @@ def _instantiate_flux_fill_native_model(
     from ldm_patched.modules import supported_models_base
 
     state_probe = _load_flux_fill_native_probe(str(path))
-    detected_weight_dtype = _detect_flux_fill_weight_dtype(state_probe)
-    detected_config = model_detection.detect_unet_config(state_probe, "", dtype=detected_weight_dtype)
+    source_weight_dtype = _detect_flux_fill_weight_dtype(state_probe)
+    parameter_count = _estimate_flux_fill_parameter_count(state_probe)
+    inference_device = resources.get_torch_device()
+    resident_weight_dtype = source_weight_dtype
+    if source_weight_dtype is not None:
+        resident_weight_dtype = model_management.unet_dtype(
+            device=inference_device,
+            model_params=parameter_count,
+            weight_dtype=source_weight_dtype,
+        )
+    detected_config = model_detection.detect_unet_config(state_probe, "", dtype=resident_weight_dtype)
     if detected_config is None:
         raise FluxFillValidationError(f"Could not detect Flux model config from {path}.")
     validate_flux_fill_unet_config(detected_config)
@@ -568,12 +577,9 @@ def _instantiate_flux_fill_native_model(
     if model_config is None:
         raise FluxFillValidationError(f"No supported Flux model config matched {path}.")
 
-    inference_device = resources.get_torch_device()
     manual_cast_dtype = None
-    if detected_weight_dtype is not None:
-        manual_cast_dtype = model_management.unet_manual_cast(detected_weight_dtype, inference_device)
-        if manual_cast_dtype is None:
-            manual_cast_dtype = detected_weight_dtype
+    if resident_weight_dtype is not None:
+        manual_cast_dtype = model_management.unet_manual_cast(resident_weight_dtype, inference_device)
         model_config.set_manual_cast(manual_cast_dtype)
     elif isinstance(model_config, supported_models_base.BASE):
         model_config.set_manual_cast(torch.float16 if inference_device.type == "cuda" else torch.float32)
@@ -585,9 +591,11 @@ def _instantiate_flux_fill_native_model(
         model_options={"custom_operations": None},
     )
     detected_metadata = dict(detected_config)
-    detected_metadata["weight_dtype"] = str(detected_weight_dtype) if detected_weight_dtype is not None else None
+    detected_metadata["weight_dtype"] = str(source_weight_dtype) if source_weight_dtype is not None else None
+    detected_metadata["source_weight_dtype"] = str(source_weight_dtype) if source_weight_dtype is not None else None
+    detected_metadata["resident_weight_dtype"] = str(resident_weight_dtype) if resident_weight_dtype is not None else None
     detected_metadata["manual_cast_dtype"] = str(manual_cast_dtype) if manual_cast_dtype is not None else None
-    detected_metadata["parameter_count"] = _estimate_flux_fill_parameter_count(state_probe)
+    detected_metadata["parameter_count"] = parameter_count
     detected_metadata["post_construct_runtime"] = _snapshot_module_runtime(model)
     return model, detected_metadata
 
@@ -734,9 +742,10 @@ def load_flux_fill_native_unet(
         load_device=load_device,
         offload_device=offload_device,
         preserve_source_artifact=False,
+        runtime_weight_dtype_override=_parse_torch_dtype(detected_config.get("resident_weight_dtype")),
     )
     runtime_weight_bytes = int(runtime_patcher.model_size())
-    runtime_weight_dtype = detected_config.get("manual_cast_dtype") or detected_config.get("weight_dtype")
+    runtime_weight_dtype = detected_config.get("resident_weight_dtype") or detected_config.get("weight_dtype")
     runtime_patcher.model_options["flux_fill"] = {
         "path": str(path),
         "arch": "flux",
@@ -745,6 +754,7 @@ def load_flux_fill_native_unet(
         "mode": "native_fp8",
         "runtime_weight_dtype": runtime_weight_dtype,
         "runtime_weight_bytes": runtime_weight_bytes,
+        "compute_weight_dtype": detected_config.get("manual_cast_dtype"),
         **direct_load_metadata,
     }
     return runtime_patcher
@@ -856,7 +866,7 @@ def load_flux_fill_native_unet_streaming(
         offload_device=host_offload_device,
         preserve_source_artifact=True,
     )
-    runtime_weight_dtype = detected_config.get("manual_cast_dtype") or detected_config.get("weight_dtype")
+    runtime_weight_dtype = detected_config.get("resident_weight_dtype") or detected_config.get("weight_dtype")
     runtime_patcher.model_options["flux_fill"] = {
         "path": str(path),
         "arch": "flux",
@@ -864,6 +874,7 @@ def load_flux_fill_native_unet_streaming(
         "execution_class": getattr(execution_class, "value", execution_class),
         "mode": "native_fp8_streaming",
         "runtime_weight_dtype": runtime_weight_dtype,
+        "compute_weight_dtype": detected_config.get("manual_cast_dtype"),
         **direct_load_metadata,
     }
     pinned_bytes = _pin_module_tensors_for_streaming(getattr(runtime_patcher, "model", None))
@@ -2007,6 +2018,8 @@ def denoise_flux_fill_latent(
     if flux_options:
         metadata["native_unet_load_diagnostics"] = {
             "detected_weight_dtype": flux_options.get("detected_config", {}).get("weight_dtype"),
+            "source_weight_dtype": flux_options.get("detected_config", {}).get("source_weight_dtype"),
+            "resident_weight_dtype": flux_options.get("detected_config", {}).get("resident_weight_dtype"),
             "manual_cast_dtype": flux_options.get("detected_config", {}).get("manual_cast_dtype"),
             "post_construct_runtime": flux_options.get("detected_config", {}).get("post_construct_runtime", {}),
             "post_load_runtime": flux_options.get("detected_config", {}).get("post_load_runtime", {}),
@@ -2153,6 +2166,8 @@ def denoise_flux_fill_precomputed_latent(
     if flux_options:
         metadata["native_unet_load_diagnostics"] = {
             "detected_weight_dtype": flux_options.get("detected_config", {}).get("weight_dtype"),
+            "source_weight_dtype": flux_options.get("detected_config", {}).get("source_weight_dtype"),
+            "resident_weight_dtype": flux_options.get("detected_config", {}).get("resident_weight_dtype"),
             "manual_cast_dtype": flux_options.get("detected_config", {}).get("manual_cast_dtype"),
             "post_construct_runtime": flux_options.get("detected_config", {}).get("post_construct_runtime", {}),
             "post_load_runtime": flux_options.get("detected_config", {}).get("post_load_runtime", {}),

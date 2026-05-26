@@ -38,6 +38,7 @@ class NexModelPatcher:
         self.model_options = {"transformer_options":{}}
         self.load_device = load_device
         self.offload_device = offload_device
+        self.runtime_weight_dtype_override = kwargs.get("runtime_weight_dtype_override")
         self.model_size()
         self.current_device = current_device
         self.weight_inplace_update = weight_inplace_update
@@ -127,6 +128,9 @@ class NexModelPatcher:
             return None
         if not weight.is_floating_point():
             return weight.dtype
+        override_dtype = self.runtime_weight_dtype_override
+        if override_dtype is not None:
+            return override_dtype
         target_device = device_to or self.load_device
         if target_device is None:
             return weight.dtype
@@ -366,7 +370,9 @@ class NexModelPatcher:
     def patch_weight_to_device(self, key, device_to=None, inplace_update=False):
         inplace_update = self.weight_inplace_update or inplace_update
         weight, set_func, convert_func = get_key_weight(self.model, key)
-        target_dtype = resources.unet_dtype(device=device_to, weight_dtype=weight.dtype)
+        target_dtype = self._target_weight_dtype(weight, device_to=device_to)
+        if target_dtype is None:
+            target_dtype = weight.dtype
 
         if key not in self.patches:
             if device_to is not None or target_dtype != weight.dtype:
