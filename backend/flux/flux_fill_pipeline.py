@@ -115,6 +115,14 @@ def _normalize_flux_checkpoint_dtype(value: Any) -> torch.dtype | None:
     return mapping.get(dtype_text)
 
 
+def _parse_torch_dtype(value: Any) -> torch.dtype | None:
+    if isinstance(value, torch.dtype):
+        return value
+    if value is None:
+        return None
+    return _normalize_flux_checkpoint_dtype(value)
+
+
 def _detect_flux_fill_weight_dtype(state_dict: dict[str, Any]) -> torch.dtype | None:
     for key in IMPORTANT_FLUX_NATIVE_DTYPE_KEYS:
         tensor = state_dict.get(key)
