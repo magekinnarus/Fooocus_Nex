@@ -1754,6 +1754,7 @@ def decode_flux_fill_latent(
 
         metadata["vae_runtime_before_decode"] = _snapshot_first_param_runtime(vae.first_stage_model)
         decoded = core.decode_vae(vae, {"samples": latent.detach().cpu()}, tiled=tiled)
+        metadata["vae_runtime_after_decode"] = _snapshot_first_param_runtime(vae.first_stage_model)
     finally:
         should_cleanup = cleanup_vae if cleanup_vae is not None else owned_vae
         if vae is not None:
