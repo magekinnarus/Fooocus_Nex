@@ -36,9 +36,9 @@ class NexModelPatcher:
         self.object_patches_backup = {}
         self.weight_wrapper_patches = {}
         self.model_options = {"transformer_options":{}}
-        self.model_size()
         self.load_device = load_device
         self.offload_device = offload_device
+        self.model_size()
         self.current_device = current_device
         self.weight_inplace_update = weight_inplace_update
         self.force_cast_weights = False
