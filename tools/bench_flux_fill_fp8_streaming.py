@@ -147,10 +147,8 @@ def _load_unet(
     prefetch_scan_ahead: int | None,
     bandwidth_limit_mb_s: float | None,
 ):
-    from backend.flux.flux_fill_pipeline import (
-        load_flux_fill_native_unet,
-        load_flux_fill_native_unet_streaming,
-    )
+    from backend.flux.flux_fill_loader import load_flux_fill_native_unet
+    from backend.flux.flux_streaming import load_flux_fill_native_unet_streaming
     unet_path = bundle.unet_path_for_mode(mode)
 
     if mode == "fp8_resident":
@@ -379,7 +377,9 @@ def _run_case(
         FluxFillPrecomputedDenoiseInput,
         _cleanup_model_patcher,
         denoise_flux_fill_precomputed_latent,
-        load_flux_fill_native_unet,
+    )
+    from backend.flux.flux_fill_loader import load_flux_fill_native_unet
+    from backend.flux.flux_streaming import (
         load_flux_fill_native_unet_streaming,
         measure_pinned_module_tensors,
     )

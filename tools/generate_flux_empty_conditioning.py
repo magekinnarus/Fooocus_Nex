@@ -13,11 +13,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from backend.flux.flux_fill_loader import FluxFillValidationError  # noqa: E402
 from backend.flux.flux_fill_pipeline import (  # noqa: E402
     EMPTY_FLUX_CROSS_ATTN_SHAPE,
     EMPTY_FLUX_POOLED_SHAPE,
     FluxEmptyConditioning,
-    FluxFillValidationError,
     load_flux_empty_conditioning_cache,
     save_flux_empty_conditioning_cache,
 )

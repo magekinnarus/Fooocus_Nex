@@ -9,7 +9,8 @@ import torch
 
 from backend import resources
 from backend.flux.flux_runtime import FluxFillPipeline, FluxFillPipelineConfig, FluxFillPipelineResult
-from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, load_flux_ae, load_flux_empty_conditioning_cache, load_flux_fill_unet
+from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, load_flux_empty_conditioning_cache
+from backend.flux.flux_fill_loader import load_flux_ae, load_flux_fill_unet
 
 
 @dataclass

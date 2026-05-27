@@ -41,12 +41,14 @@ try:
         FluxFillConfig,
         FluxFillPrecomputedDenoiseInput,
         _cleanup_model_patcher,
-        _snapshot_first_param_runtime,
-        _snapshot_module_runtime,
         decode_flux_fill_latent,
         denoise_flux_fill_precomputed_latent,
-        load_flux_ae,
         load_flux_empty_conditioning_cache,
+    )
+    from backend.flux.flux_fill_loader import (
+        _snapshot_first_param_runtime,
+        _snapshot_module_runtime,
+        load_flux_ae,
         load_flux_fill_native_unet,
     )
     from modules.core import numpy_to_pytorch
