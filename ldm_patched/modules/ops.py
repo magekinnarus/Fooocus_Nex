@@ -43,6 +43,26 @@ def _resolve_streaming_scheduler(module, device):
         return None
     return None
 
+
+def _record_tensor_stream_usage(tensor, device):
+    if not isinstance(tensor, torch.Tensor):
+        return
+    if not isinstance(device, torch.device):
+        return
+    try:
+        if device.type == "cuda" and torch.cuda.is_available() and tensor.device.type == "cuda":
+            tensor.record_stream(torch.cuda.current_stream(device))
+        elif device.type == "xpu" and hasattr(torch, "xpu") and tensor.device.type == "xpu":
+            tensor.record_stream(torch.xpu.current_stream(device))
+    except Exception:
+        pass
+
+
+def _record_weight_bias_stream_usage(weight, bias, device):
+    _record_tensor_stream_usage(weight, device)
+    if bias is not None:
+        _record_tensor_stream_usage(bias, device)
+
 def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
     wall_start = time.perf_counter()
     if input is not None:
@@ -62,6 +82,7 @@ def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
             bias_dtype=bias_dtype,
         )
         if prefetched is not None:
+            _record_weight_bias_stream_usage(prefetched[0], prefetched[1], device)
             scheduler.record_module_wall(
                 s,
                 path="prefetch",
@@ -113,6 +134,7 @@ def cast_bias_weight(s, input=None, dtype=None, device=None, bias_dtype=None):
         )
     else:
         ldm_patched.modules.model_management.sync_stream(device, offload_stream)
+    _record_weight_bias_stream_usage(weight, bias, device)
     return weight, bias
 
 class CastWeightBiasOp:
