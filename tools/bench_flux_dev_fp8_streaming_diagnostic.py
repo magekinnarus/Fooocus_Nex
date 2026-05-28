@@ -191,6 +191,7 @@ def main() -> int:
     parser.add_argument("--output-dir", default="outputs/P4-M13-W08c3_local_diagnostic", help="Output directory.")
     parser.add_argument("--save-latents", action="store_true", help="Save denoised latent PT file.")
     parser.add_argument("--decode-preview", action="store_true", help="Decode preview image.")
+    parser.add_argument("--scheduler", default="normal", help="Scheduler to use (e.g., normal, beta, simple, karras).")
     args = parser.parse_args()
 
     if not args.conditioning_cache:
@@ -279,7 +280,7 @@ def main() -> int:
         args.steps,
         device,
         "euler",
-        "simple",
+        args.scheduler,
         1.0,
         model_options=model_options,
     )
@@ -351,6 +352,7 @@ def main() -> int:
             "steps": args.steps,
             "guidance": args.guidance,
             "seed": args.seed,
+            "scheduler": args.scheduler,
         },
         "timings": {
             "encode_time_s": encode_time,

@@ -47,3 +47,4 @@ config_old.txt
 /backend/gguf/sdxl_glass_pipeline.py
 /thumbnails/private/
 notebooks/
+scratch/
