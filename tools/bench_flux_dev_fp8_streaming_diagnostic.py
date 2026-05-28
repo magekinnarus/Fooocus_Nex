@@ -322,6 +322,18 @@ def _run_subprocess_mode(
         mode_name,
         "--save-latents",
     ]
+    if args.prefetch_depth is not None:
+        command.extend(["--prefetch-depth", str(args.prefetch_depth)])
+    if args.prefetch_max_mb is not None:
+        command.extend(["--prefetch-max-mb", str(args.prefetch_max_mb)])
+    if args.vram_guard_mb is not None:
+        command.extend(["--vram-guard-mb", str(args.vram_guard_mb)])
+    if args.vram_guard_margin_mb is not None:
+        command.extend(["--vram-guard-margin-mb", str(args.vram_guard_margin_mb)])
+    if args.prefetch_scan_ahead is not None:
+        command.extend(["--prefetch-scan-ahead", str(args.prefetch_scan_ahead)])
+    if args.bandwidth_limit_mb_s is not None:
+        command.extend(["--bandwidth-limit-mb-s", str(args.bandwidth_limit_mb_s)])
     if args.conditioning_cache:
         command.extend(["--conditioning-cache", str(args.conditioning_cache)])
     else:
@@ -380,6 +392,14 @@ def _run_combined_comparison(args: argparse.Namespace, *, output_dir: Path) -> i
             "scheduler": args.scheduler,
             "comparison_mode": "both",
             "execution_strategy": "isolated_subprocesses",
+            "scheduler_overrides": {
+                "prefetch_depth": args.prefetch_depth,
+                "prefetch_max_mb": args.prefetch_max_mb,
+                "vram_guard_mb": args.vram_guard_mb,
+                "vram_guard_margin_mb": args.vram_guard_margin_mb,
+                "prefetch_scan_ahead": args.prefetch_scan_ahead,
+                "bandwidth_limit_mb_s": args.bandwidth_limit_mb_s,
+            },
         },
         "timings": {
             "combined_wall_time_s": float(time.perf_counter() - compare_start),
@@ -503,6 +523,12 @@ def main() -> int:
     parser.add_argument("--save-latents", action="store_true", help="Save denoised latent PT file.")
     parser.add_argument("--decode-preview", action="store_true", help="Decode preview image.")
     parser.add_argument("--scheduler", default="normal", help="Scheduler to use (e.g., normal, beta, simple, karras).")
+    parser.add_argument("--prefetch-depth", type=int, default=None, help="Streaming prefetch depth override.")
+    parser.add_argument("--prefetch-max-mb", type=float, default=None, help="Streaming max prefetch window in MB.")
+    parser.add_argument("--vram-guard-mb", type=float, default=None, help="Streaming VRAM guard override in MB.")
+    parser.add_argument("--vram-guard-margin-mb", type=float, default=None, help="Streaming VRAM guard margin override in MB.")
+    parser.add_argument("--prefetch-scan-ahead", type=int, default=None, help="Streaming scheduler scan-ahead override.")
+    parser.add_argument("--bandwidth-limit-mb-s", type=float, default=None, help="Streaming bandwidth cap in MB/s; omit for open bandwidth.")
     parser.add_argument(
         "--comparison-mode",
         choices=("streaming", "resident", "both"),
@@ -592,6 +618,12 @@ def main() -> int:
                     args.unet,
                     load_device="cpu",
                     offload_device="cpu",
+                    prefetch_depth=args.prefetch_depth,
+                    max_prefetch_bytes=int(args.prefetch_max_mb * 1024 * 1024) if args.prefetch_max_mb is not None else None,
+                    vram_guard_bytes=int(args.vram_guard_mb * 1024 * 1024) if args.vram_guard_mb is not None else None,
+                    vram_guard_margin_bytes=int(args.vram_guard_margin_mb * 1024 * 1024) if args.vram_guard_margin_mb is not None else None,
+                    prefetch_scan_ahead=args.prefetch_scan_ahead,
+                    bandwidth_limit_mb_s=args.bandwidth_limit_mb_s,
                 ),
                 False,
             )
@@ -658,6 +690,14 @@ def main() -> int:
             "guidance": args.guidance,
             "seed": args.seed,
             "scheduler": args.scheduler,
+            "scheduler_overrides": {
+                "prefetch_depth": args.prefetch_depth,
+                "prefetch_max_mb": args.prefetch_max_mb,
+                "vram_guard_mb": args.vram_guard_mb,
+                "vram_guard_margin_mb": args.vram_guard_margin_mb,
+                "prefetch_scan_ahead": args.prefetch_scan_ahead,
+                "bandwidth_limit_mb_s": args.bandwidth_limit_mb_s,
+            },
             "comparison_mode": args.comparison_mode,
         },
         "timings": {
