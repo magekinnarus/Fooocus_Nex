@@ -14,7 +14,9 @@ def build_settings_tab():
     results = {}
 
     default_aspect_ratio_labels = modules.config.get_aspect_ratio_labels_for_model(modules.config.default_base_model_name)
-    default_aspect_ratio_label = modules.config.get_default_aspect_ratio_label_for_model(modules.config.default_base_model_name)
+    default_aspect_ratio_label = modules.config.default_aspect_ratio
+    if default_aspect_ratio_label not in default_aspect_ratio_labels:
+        default_aspect_ratio_label = modules.config.get_default_aspect_ratio_label_for_model(modules.config.default_base_model_name)
 
     if not args_manager.args.disable_preset_selection:
         results['preset_selection'] = gr.Dropdown(

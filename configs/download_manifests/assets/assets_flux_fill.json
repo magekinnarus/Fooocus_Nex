@@ -15,7 +15,11 @@
       "requires": [
         "inpaint.flux_fill.ae"
       ],
-      "sources": []
+      "sources": [
+        {
+          "url": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/flux_fill/flux1-Fill-Dev_FP8.safetensors"
+        }
+      ]
     },
     {
       "id": "inpaint.flux_fill.unet.q8_0",

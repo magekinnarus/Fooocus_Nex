@@ -162,18 +162,20 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
     mode = "offloaded"
     
     if policy is not None:
+        from backend import sdxl_runtime_policy
+        
         if role == "unet":
             if policy.residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
                 return torch.device("cpu"), "cpu_resident"
             return get_torch_device(), "gpu_resident"
         
         if role == "clip":
-            if policy.clip_residency_mode == CLIP_RESIDENCY_GPU_RESIDENT:
+            if policy.clip_residency_mode == sdxl_runtime_policy.CLIP_RESIDENCY_GPU_RESIDENT:
                 return get_torch_device(), "gpu_resident"
             return torch.device("cpu"), "cpu_resident"
             
         if role == "vae":
-            if policy.vae_encode_mode == VAE_ENCODE_GPU_PREFERRED:
+            if policy.vae_encode_mode == sdxl_runtime_policy.VAE_ENCODE_GPU_PREFERRED:
                 return get_torch_device(), "gpu_resident"
             return torch.device("cpu"), "cpu_resident"
             

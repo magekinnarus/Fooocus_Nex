@@ -354,7 +354,12 @@ def update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio)
     if not labels:
         labels = modules.config.available_aspect_ratios_labels
 
-    value = current_aspect_ratio if current_aspect_ratio in labels else modules.config.get_default_aspect_ratio_label_for_model(base_model_name)
+    if current_aspect_ratio in labels:
+        value = current_aspect_ratio
+    elif modules.config.default_aspect_ratio in labels:
+        value = modules.config.default_aspect_ratio
+    else:
+        value = modules.config.get_default_aspect_ratio_label_for_model(base_model_name)
     return gr.update(choices=labels, value=value)
 
 
@@ -598,7 +603,9 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
             current_aspect_ratio = ''
 
     if not current_aspect_ratio:
-        current_aspect_ratio = modules.config.get_default_aspect_ratio_label_for_model(base_value)
+        current_aspect_ratio = modules.config.default_aspect_ratio
+        if current_aspect_ratio not in modules.config.get_aspect_ratio_labels_for_model(base_value):
+            current_aspect_ratio = modules.config.get_default_aspect_ratio_label_for_model(base_value)
 
     if drop_selector and drop_target:
         if drop_target == 'base_model':
