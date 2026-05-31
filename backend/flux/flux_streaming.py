@@ -58,6 +58,35 @@ def _clamp_int(value: int, *, minimum: int, maximum: int) -> int:
     return max(int(minimum), min(int(maximum), int(value)))
 
 
+FLUX_FILL_STREAMING_PROFILE_OPEN_C64_D1_S1 = "open_c64_d1_s1"
+FLUX_FILL_STREAMING_PROFILE_OPEN_C128_D1_S1 = "open_c128_d1_s1"
+FLUX_FILL_SANCTIONED_STREAMING_PROFILES: dict[str, dict[str, int]] = {
+    FLUX_FILL_STREAMING_PROFILE_OPEN_C64_D1_S1: {
+        "prefetch_depth": 1,
+        "max_prefetch_bytes": 64 * 1024 * 1024,
+        "prefetch_scan_ahead": 1,
+    },
+    FLUX_FILL_STREAMING_PROFILE_OPEN_C128_D1_S1: {
+        "prefetch_depth": 1,
+        "max_prefetch_bytes": 128 * 1024 * 1024,
+        "prefetch_scan_ahead": 1,
+    },
+}
+
+
+def resolve_flux_fill_sanctioned_streaming_profile(profile_name: str | None) -> tuple[str | None, dict[str, int]]:
+    normalized = str(profile_name or "").strip().lower().replace("-", "_")
+    if normalized == "":
+        return None, {}
+    try:
+        return normalized, dict(FLUX_FILL_SANCTIONED_STREAMING_PROFILES[normalized])
+    except KeyError as exc:
+        supported = ", ".join(sorted(FLUX_FILL_SANCTIONED_STREAMING_PROFILES))
+        raise FluxFillValidationError(
+            f"Unsupported Flux Fill streaming profile {profile_name!r}. Expected one of: {supported}."
+        ) from exc
+
+
 def _resolve_streaming_scheduler_policy(
     *,
     device: torch.device,
@@ -129,6 +158,7 @@ def load_flux_fill_native_unet_streaming(
     load_device: torch.device | str | None = None,
     offload_device: torch.device | str | None = None,
     execution_class: Any | None = None,
+    streaming_profile: str | None = None,
     prefetch_depth: int | None = None,
     max_prefetch_bytes: int | None = None,
     vram_guard_bytes: int | None = None,
@@ -165,18 +195,21 @@ def load_flux_fill_native_unet_streaming(
         "detected_config": dict(detected_config),
         "execution_class": getattr(execution_class, "value", execution_class),
         "mode": "native_fp8_streaming",
+        "runtime_family": "native_fp8",
+        "runtime_posture": "streaming",
         "runtime_weight_dtype": runtime_weight_dtype,
         "compute_weight_dtype": detected_config.get("manual_cast_dtype"),
         **direct_load_metadata,
     }
     pinned_bytes = _pin_module_tensors_for_streaming(getattr(runtime_patcher, "model", None))
+    selected_profile_name, sanctioned_profile = resolve_flux_fill_sanctioned_streaming_profile(streaming_profile)
     scheduler_policy = _resolve_streaming_scheduler_policy(
         device=compute_device,
-        prefetch_depth=prefetch_depth,
-        max_prefetch_bytes=max_prefetch_bytes,
+        prefetch_depth=prefetch_depth if prefetch_depth is not None else sanctioned_profile.get("prefetch_depth"),
+        max_prefetch_bytes=max_prefetch_bytes if max_prefetch_bytes is not None else sanctioned_profile.get("max_prefetch_bytes"),
         vram_guard_bytes=vram_guard_bytes,
         vram_guard_margin_bytes=vram_guard_margin_bytes,
-        prefetch_scan_ahead=prefetch_scan_ahead,
+        prefetch_scan_ahead=prefetch_scan_ahead if prefetch_scan_ahead is not None else sanctioned_profile.get("prefetch_scan_ahead"),
         bandwidth_limit_mb_s=bandwidth_limit_mb_s,
     )
     streaming_scheduler = FluxAsyncLayerPrefetchScheduler(
@@ -194,6 +227,7 @@ def load_flux_fill_native_unet_streaming(
     flux_options["single_host_artifact"] = bool(flux_options.get("direct_safetensors_load", False))
     flux_options["streaming_scheduler"] = streaming_scheduler
     flux_options["streaming_scheduler_kind"] = "flux_async_layer_prefetch_v1"
+    flux_options["streaming_profile"] = selected_profile_name
     flux_options["scheduled_module_count"] = int(scheduled_module_count)
     flux_options["direct_stream_runtime"] = True
     flux_options["compute_device"] = str(compute_device)

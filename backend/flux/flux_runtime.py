@@ -453,6 +453,11 @@ class FluxFillPipelineConfig:
     guidance: float = 15.0
     device: str | None = None
     execution_class: Any | None = None
+    runtime_family: str | None = None
+    runtime_posture: str | None = None
+    streaming_profile: str | None = None
+    resident_load_strategy: str | None = None
+    fallback_model_variant: str | None = None
     debug_output_dir: Path | str | None = None
     mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
     blend_mode: str = FLUX_FILL_GLASS_DEFAULT_BLEND_MODE
@@ -1157,6 +1162,10 @@ class FluxFillPipeline:
                 load_device=self.device,
                 offload_device=None,
                 execution_class=self.config.execution_class,
+                runtime_family=self.config.runtime_family,
+                runtime_posture=self.config.runtime_posture,
+                streaming_profile=self.config.streaming_profile,
+                resident_load_strategy=self.config.resident_load_strategy,
             )
         if self.config.verify_c_concat:
             c_concat_preview, c_concat_summary = self.verify_c_concat(unet_patcher, noise=noise, concat_latent=concat_latent, denoise_mask=denoise_mask)

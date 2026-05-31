@@ -2,6 +2,22 @@
   "version": 1,
   "assets": [
     {
+      "id": "inpaint.flux_fill.unet.fp8",
+      "kind": "inpaint_model",
+      "category": "inpaint",
+      "engine_family": "flux_fill",
+      "variant": "fp8",
+      "internal_only": true,
+      "loader_type": "flux_fill_unet",
+      "artifact_type": "file",
+      "destination": "unet",
+      "relative_path": "flux/flux1-Fill-Dev_FP8.safetensors",
+      "requires": [
+        "inpaint.flux_fill.ae"
+      ],
+      "sources": []
+    },
+    {
       "id": "inpaint.flux_fill.unet.q8_0",
       "kind": "inpaint_model",
       "category": "inpaint",

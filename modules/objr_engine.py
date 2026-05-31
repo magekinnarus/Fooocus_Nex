@@ -30,6 +30,7 @@ OBJR_ENGINE_MAT = "MAT512 (initial removal pass)"
 OBJR_ENGINE_FLUX_FILL = "Flux Fill (refinement pass)"
 OBJR_ENGINE_CHOICES = (OBJR_ENGINE_MAT, OBJR_ENGINE_FLUX_FILL)
 
+FLUX_FILL_TIER_FP8 = "fp8"
 FLUX_FILL_TIER_Q8 = "q8_0"
 FLUX_FILL_TIER_Q4 = "q4_k_s"
 FLUX_FILL_GUIDANCE_DEFAULT = 15.0
@@ -67,8 +68,19 @@ FLUX_FILL_MASK_BLUR = 6
 FLUX_FILL_BLEND_ALPHA = "alpha"
 FLUX_FILL_BLEND_MORPHOLOGICAL = "morphological"
 FLUX_FILL_UNET_ASSET_BY_TIER = {
+    FLUX_FILL_TIER_FP8: "inpaint.flux_fill.unet.fp8",
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
     FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
+}
+FLUX_FILL_MODEL_VARIANT_BY_TIER = {
+    FLUX_FILL_TIER_FP8: "flux_fill_fp8",
+    FLUX_FILL_TIER_Q8: "flux_fill_q8",
+    FLUX_FILL_TIER_Q4: "flux_fill_q4_k_s",
+}
+FLUX_FILL_TIER_BY_MODEL_VARIANT = {variant: tier for tier, variant in FLUX_FILL_MODEL_VARIANT_BY_TIER.items()}
+FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT = {
+    model_variant: FLUX_FILL_UNET_ASSET_BY_TIER[tier]
+    for tier, model_variant in FLUX_FILL_MODEL_VARIANT_BY_TIER.items()
 }
 FLUX_FILL_T5_ASSET_BY_VARIANT = {
     FLUX_FILL_T5_VARIANT_FP16: FLUX_FILL_T5XXL_FP16_ASSET_ID,
@@ -189,8 +201,9 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwarePr
         or 0.0
     )
     is_colab = bool(getattr(profile, "is_colab", False))
+    placement_plan = _resolve_flux_fill_placement_plan(profile)
 
-    if total_vram_mb >= FLUX_FILL_RUNTIME_RESIDENT_VRAM_MIN_MB:
+    if str(getattr(placement_plan, "runtime_posture", "") or "").lower() == "resident":
         vram_class = FLUX_FILL_VRAM_CLASS_RESIDENT
         runtime_posture = FLUX_FILL_RUNTIME_POSTURE_RESIDENT
     else:
@@ -207,6 +220,22 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwarePr
         vram_class=vram_class,
         runtime_posture=runtime_posture,
     )
+
+
+def _resolve_flux_fill_placement_plan(profile: Any | None = None):
+    from backend.staging_manager import PlacementSolver
+
+    if profile is None:
+        return PlacementSolver.solve_from_system(task_id="flux_fill")
+
+    profile, snapshot = _resolve_flux_fill_profile(profile)
+    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or getattr(snapshot, "total_ram_mb", 0.0) or 16384.0)
+    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or getattr(snapshot, "total_vram_mb", 0.0) or 0.0)
+    return PlacementSolver.solve(vram_total_mb=total_vram_mb, ram_total_mb=total_ram_mb, task_id="flux_fill")
+
+
+def _flux_fill_tier_for_model_variant(model_variant: str | None) -> str:
+    return FLUX_FILL_TIER_BY_MODEL_VARIANT.get(str(model_variant or "").strip().lower(), FLUX_FILL_TIER_Q4)
 
 
 def _normalize_route_family(route_family: Any | None) -> str:
@@ -251,39 +280,21 @@ def evaluate_flux_fill_text_encoder_residency(
 
 
 def select_flux_fill_tier(profile: Any | None = None) -> str:
-    profile, _snapshot = _resolve_flux_fill_profile(profile)
-
-    profile_name = str(getattr(profile, "name", "") or "").lower()
-    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or 0.0)
-    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or 0.0)
-
-    try:
-        from backend import environment_profile
-
-        if profile_name == environment_profile.PROFILE_COLAB_PRO:
-            return FLUX_FILL_TIER_Q8
-        if profile_name == environment_profile.PROFILE_COLAB_FREE:
-            return FLUX_FILL_TIER_Q4
-    except Exception:
-        if profile_name == "colab_pro":
-            return FLUX_FILL_TIER_Q8
-        if profile_name == "colab_free":
-            return FLUX_FILL_TIER_Q4
-
-    if total_ram_mb >= FLUX_FILL_LOCAL_Q8_MIN_RAM_MB and total_vram_mb >= FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB:
-        return FLUX_FILL_TIER_Q8
-    return FLUX_FILL_TIER_Q4
+    plan = _resolve_flux_fill_placement_plan(profile)
+    return _flux_fill_tier_for_model_variant(getattr(plan, "model_variant", None))
 
 
 def _normalize_flux_fill_tier(tier: str | None) -> str:
     if tier is None or str(tier).strip() == "":
         return select_flux_fill_tier()
     normalized = str(tier).strip().lower().replace("-", "_")
+    if normalized in {"fp8", "native_fp8"}:
+        return FLUX_FILL_TIER_FP8
     if normalized in {"q8", "q8_0"}:
         return FLUX_FILL_TIER_Q8
     if normalized in {"q4", "q4_k_s"}:
         return FLUX_FILL_TIER_Q4
-    raise ValueError(f"Unsupported Flux Fill tier: {tier!r}. Expected q8_0 or q4_k_s.")
+    raise ValueError(f"Unsupported Flux Fill tier: {tier!r}. Expected fp8, q8_0, or q4_k_s.")
 
 
 def normalize_flux_fill_t5_variant(variant: str | None) -> str:
@@ -546,24 +557,86 @@ def resolve_flux_fill_asset_paths(
     conditioning: str | None = None,
     conditioning_cache_path: str | None = None,
     progress: bool = True,
-) -> dict[str, str]:
-    selected_tier = _normalize_flux_fill_tier(tier)
+) -> dict[str, Any]:
+    policy_plan = _resolve_flux_fill_placement_plan()
+    fallback_tier = FLUX_FILL_TIER_Q4
+    selected_tier = (
+        _normalize_flux_fill_tier(tier)
+        if tier is not None and str(tier).strip() != ""
+        else _flux_fill_tier_for_model_variant(getattr(policy_plan, "model_variant", None))
+    )
+    selected_model_variant = FLUX_FILL_MODEL_VARIANT_BY_TIER[selected_tier]
+    runtime_family = getattr(policy_plan, "runtime_family", None)
+    runtime_posture = getattr(policy_plan, "runtime_posture", None)
+    streaming_profile = getattr(policy_plan, "streaming_profile", None)
+    resident_load_strategy = getattr(policy_plan, "resident_load_strategy", None)
+    fallback_model_variant = getattr(policy_plan, "fallback_model_variant", None) or FLUX_FILL_MODEL_VARIANT_BY_TIER[fallback_tier]
+    fallback_reason = None
+    fallback_engaged = False
+
+    force_q4_fallback = str(os.environ.get("FOOOCUS_NEX_FLUX_FILL_FORCE_Q4_FALLBACK", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if force_q4_fallback and selected_model_variant != fallback_model_variant:
+        logger.warning(
+            "Flux Fill policy requested %s, but FOOOCUS_NEX_FLUX_FILL_FORCE_Q4_FALLBACK is set; using %s instead.",
+            selected_model_variant,
+            fallback_model_variant,
+        )
+        selected_model_variant = fallback_model_variant
+        selected_tier = fallback_tier
+        fallback_reason = "env_force_q4_fallback"
+        fallback_engaged = True
+
     selected_conditioning = "prompt" if conditioning_cache_path else normalize_flux_fill_conditioning(conditioning)
-    unet_asset_id = FLUX_FILL_UNET_ASSET_BY_TIER[selected_tier]
-    unet_asset = model_registry.get_asset(unet_asset_id)
-    if unet_asset is None:
-        raise KeyError(f"Unknown Flux Fill UNet asset id: {unet_asset_id}")
 
-    required_asset_ids = list(unet_asset.get("requires", []))
-    if FLUX_FILL_AE_ASSET_ID not in required_asset_ids:
-        required_asset_ids.append(FLUX_FILL_AE_ASSET_ID)
+    def _resolve_unet_bundle(model_variant: str) -> tuple[str, str, str]:
+        unet_asset_id = FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT[model_variant]
+        unet_asset = model_registry.get_asset(unet_asset_id)
+        if unet_asset is None:
+            raise KeyError(f"Unknown Flux Fill UNet asset id: {unet_asset_id}")
 
-    resolved_required_paths = {}
-    for asset_id in required_asset_ids:
-        resolved_required_paths[asset_id] = model_registry.ensure_asset(asset_id, progress=progress)
+        required_asset_ids = list(unet_asset.get("requires", []))
+        if FLUX_FILL_AE_ASSET_ID not in required_asset_ids:
+            required_asset_ids.append(FLUX_FILL_AE_ASSET_ID)
 
-    unet_path = model_registry.ensure_asset(unet_asset_id, progress=progress)
-    ae_path = resolved_required_paths.get(FLUX_FILL_AE_ASSET_ID) or model_registry.ensure_asset(FLUX_FILL_AE_ASSET_ID, progress=progress)
+        resolved_required_paths = {}
+        for asset_id in required_asset_ids:
+            resolved_required_paths[asset_id] = model_registry.ensure_asset(asset_id, progress=progress)
+
+        unet_path = model_registry.ensure_asset(unet_asset_id, progress=progress)
+        ae_path = resolved_required_paths.get(FLUX_FILL_AE_ASSET_ID) or model_registry.ensure_asset(
+            FLUX_FILL_AE_ASSET_ID,
+            progress=progress,
+        )
+        return unet_asset_id, unet_path, ae_path
+
+    try:
+        unet_asset_id, unet_path, ae_path = _resolve_unet_bundle(selected_model_variant)
+    except Exception as exc:
+        if selected_model_variant != fallback_model_variant:
+            logger.warning(
+                "Flux Fill primary runtime %s is unavailable; falling back to %s. Recovery boundary: %s",
+                selected_model_variant,
+                fallback_model_variant,
+                exc,
+            )
+            selected_model_variant = fallback_model_variant
+            selected_tier = fallback_tier
+            fallback_reason = str(exc)
+            fallback_engaged = True
+            unet_asset_id, unet_path, ae_path = _resolve_unet_bundle(selected_model_variant)
+        else:
+            raise
+
+    if selected_model_variant != getattr(policy_plan, "model_variant", None):
+        runtime_family = "gguf"
+        streaming_profile = None
+        resident_load_strategy = None
+
     conditioning_asset_id = None
     if conditioning_cache_path:
         resolved_conditioning_cache_path = str(conditioning_cache_path)
@@ -573,6 +646,7 @@ def resolve_flux_fill_asset_paths(
 
     return {
         "tier": selected_tier,
+        "model_variant": selected_model_variant,
         "unet_asset_id": unet_asset_id,
         "unet_path": unet_path,
         "ae_asset_id": FLUX_FILL_AE_ASSET_ID,
@@ -580,14 +654,28 @@ def resolve_flux_fill_asset_paths(
         "conditioning_kind": selected_conditioning,
         "conditioning_asset_id": conditioning_asset_id,
         "conditioning_cache_path": resolved_conditioning_cache_path,
+        "runtime_family": runtime_family,
+        "runtime_posture": runtime_posture,
+        "streaming_profile": streaming_profile,
+        "resident_load_strategy": resident_load_strategy,
+        "fallback_model_variant": fallback_model_variant,
+        "fallback_engaged": bool(fallback_engaged),
+        "fallback_reason": str(fallback_reason) if fallback_reason is not None else "",
+        "policy_execution_class": getattr(policy_plan, "execution_class", None),
+        "policy_hardware_tier": getattr(policy_plan, "hardware_tier", None),
+        "policy_t5_mode": getattr(policy_plan, "t5_mode", None),
     }
 
 
-def _flux_fill_session_signature(asset_paths: dict[str, str]) -> tuple[str, str, str]:
+def _flux_fill_session_signature(asset_paths: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
     return (
         str(asset_paths["tier"]),
         str(asset_paths["unet_path"]),
         str(asset_paths["ae_path"]),
+        str(asset_paths.get("runtime_family", "")),
+        str(asset_paths.get("runtime_posture", "")),
+        str(asset_paths.get("streaming_profile", "")),
+        str(asset_paths.get("resident_load_strategy", "")),
     )
 
 
@@ -604,17 +692,19 @@ def has_active_flux_fill_session() -> bool:
     return session is not None and bool(session.started)
 
 
-def _build_flux_fill_session(asset_paths: dict[str, str]) -> FluxFillSession:
-    from backend.staging_manager import PlacementSolver
-
-    execution_class = PlacementSolver.solve_from_system(task_id="flux_fill").execution_class
+def _build_flux_fill_session(asset_paths: dict[str, Any]) -> FluxFillSession:
     session_config = FluxFillPipelineConfig(
         unet_path=asset_paths["unet_path"],
         ae_path=asset_paths["ae_path"],
         conditioning_cache_path=asset_paths["conditioning_cache_path"],
         tier=asset_paths["tier"],
         device=None,
-        execution_class=execution_class,
+        execution_class=asset_paths.get("policy_execution_class") or None,
+        runtime_family=asset_paths.get("runtime_family") or None,
+        runtime_posture=asset_paths.get("runtime_posture") or None,
+        streaming_profile=asset_paths.get("streaming_profile") or None,
+        resident_load_strategy=asset_paths.get("resident_load_strategy") or None,
+        fallback_model_variant=asset_paths.get("fallback_model_variant") or None,
     )
     conditioning_provider = FluxPromptConditioningCache(
         resolve_conditioning=generate_flux_fill_prompt_conditioning,
@@ -631,7 +721,7 @@ def ensure_active_flux_fill_session(
 ) -> FluxFillSession:
     global _active_flux_fill_session, _active_flux_fill_session_signature
 
-    selected_tier = _normalize_flux_fill_tier(tier)
+    selected_tier = _normalize_flux_fill_tier(tier) if tier is not None and str(tier).strip() != "" else None
     asset_paths = resolve_flux_fill_asset_paths(tier=selected_tier, conditioning=conditioning, progress=progress)
     session_signature = _flux_fill_session_signature(asset_paths)
 
@@ -1086,9 +1176,6 @@ def remove_object_flux_fill(
     )
 
     from backend.flux import FluxFillPipelineConfig, run_flux_fill_pipeline
-    from backend.staging_manager import PlacementSolver
-
-    execution_class = PlacementSolver.solve_from_system(task_id="flux_fill").execution_class
 
     flux_config = FluxFillPipelineConfig(
         unet_path=asset_paths["unet_path"],
@@ -1102,7 +1189,12 @@ def remove_object_flux_fill(
         guidance=float(guidance),
         mode=selected_mode,
         blend_mode=selected_blend_mode,
-        execution_class=execution_class,
+        execution_class=asset_paths.get("policy_execution_class"),
+        runtime_family=asset_paths.get("runtime_family"),
+        runtime_posture=asset_paths.get("runtime_posture"),
+        streaming_profile=asset_paths.get("streaming_profile"),
+        resident_load_strategy=asset_paths.get("resident_load_strategy"),
+        fallback_model_variant=asset_paths.get("fallback_model_variant"),
     )
     result = run_flux_fill_pipeline(
         flux_config,

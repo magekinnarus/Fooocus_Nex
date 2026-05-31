@@ -128,6 +128,11 @@ class FluxFillConfig:
     guidance: float = 15.0
     device: str | None = None
     execution_class: Any | None = None
+    runtime_family: str | None = None
+    runtime_posture: str | None = None
+    streaming_profile: str | None = None
+    resident_load_strategy: str | None = None
+    fallback_model_variant: str | None = None
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
         if self.steps < 1:
@@ -692,6 +697,10 @@ def denoise_flux_fill_latent(
             load_device=device,
             offload_device=offload_device,
             execution_class=config.execution_class,
+            runtime_family=config.runtime_family,
+            runtime_posture=config.runtime_posture,
+            streaming_profile=config.streaming_profile,
+            resident_load_strategy=config.resident_load_strategy,
         )
     timings["unet_load"] = time.perf_counter() - unet_load_start
 
@@ -840,6 +849,10 @@ def denoise_flux_fill_precomputed_latent(
             load_device=device,
             offload_device=offload_device,
             execution_class=config.execution_class,
+            runtime_family=config.runtime_family,
+            runtime_posture=config.runtime_posture,
+            streaming_profile=config.streaming_profile,
+            resident_load_strategy=config.resident_load_strategy,
         )
     timings["unet_load"] = time.perf_counter() - unet_load_start
 

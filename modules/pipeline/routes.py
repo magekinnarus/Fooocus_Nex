@@ -777,7 +777,6 @@ class FluxFillInpaintStage(PipelineStage):
             ctx = prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask)
 
         active_session = objr_engine.ensure_active_flux_fill_session(
-            tier=objr_engine.select_flux_fill_tier(),
             conditioning=getattr(task_state, 'flux_fill_conditioning', None),
             progress=False,
         )

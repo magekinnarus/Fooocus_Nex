@@ -226,7 +226,6 @@ def _resolve_flux_fill_process_key(
             return None
 
         asset_paths = objr_engine.resolve_flux_fill_asset_paths(
-            tier=objr_engine.select_flux_fill_tier(),
             conditioning=getattr(task_state, 'flux_fill_conditioning', None),
             progress=False,
         )

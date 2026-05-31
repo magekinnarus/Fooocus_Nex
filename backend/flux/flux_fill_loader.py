@@ -457,6 +457,10 @@ def load_flux_fill_unet(
     offload_device: torch.device | str | None = None,
     handle_prefix: str | None = "model.diffusion_model.",
     execution_class: Any | None = None,
+    runtime_family: str | None = None,
+    runtime_posture: str | None = None,
+    streaming_profile: str | None = None,
+    resident_load_strategy: str | None = None,
 ) -> Any:
     path = Path(unet_path)
     if not path.exists():
@@ -468,9 +472,45 @@ def load_flux_fill_unet(
     from backend.gguf.patcher import GGUFModelPatcher
     from ldm_patched.modules import model_detection
 
-    load_device = torch.device(load_device) if load_device is not None else resources.get_torch_device()
-    offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
-    streaming = is_streaming_execution_class(execution_class)
+    selected_runtime_family = str(runtime_family or "").strip().lower().replace("-", "_")
+    selected_runtime_posture = str(runtime_posture or "").strip().lower().replace("-", "_")
+    selected_resident_load_strategy = str(resident_load_strategy or "").strip().lower().replace("-", "_")
+    if selected_runtime_posture == "":
+        selected_runtime_posture = "streaming" if is_streaming_execution_class(execution_class) else "resident"
+    if selected_runtime_family == "":
+        selected_runtime_family = "native_fp8" if path.suffix.lower() == ".safetensors" else "gguf"
+
+    if selected_runtime_family == "native_fp8" or path.suffix.lower() == ".safetensors":
+        from backend.flux.flux_streaming import load_flux_fill_native_unet_streaming
+
+        if selected_runtime_posture == "streaming":
+            return load_flux_fill_native_unet_streaming(
+                path,
+                load_device=torch.device("cpu"),
+                offload_device=torch.device("cpu"),
+                execution_class=execution_class,
+                streaming_profile=streaming_profile,
+            )
+
+        resident_load_device = torch.device(load_device) if load_device is not None else resources.get_torch_device()
+        resident_offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
+        if selected_resident_load_strategy == "sticky_no_cpu_shadow":
+            if resident_load_device.type != "cuda":
+                resident_load_device = resources.get_torch_device()
+            if resident_load_device.type != "cuda":
+                raise RuntimeError("Flux Fill sticky resident fp8 path requires a CUDA load device.")
+            resident_offload_device = resident_load_device
+        return load_flux_fill_native_unet(
+            path,
+            load_device=resident_load_device,
+            offload_device=resident_offload_device,
+            execution_class=execution_class,
+            resident_load_strategy=selected_resident_load_strategy or None,
+        )
+
+    streaming = selected_runtime_posture == "streaming" or is_streaming_execution_class(execution_class)
+    load_device = torch.device("cpu") if streaming else (torch.device(load_device) if load_device is not None else resources.get_torch_device())
+    offload_device = torch.device("cpu") if streaming else (torch.device(offload_device) if offload_device is not None else resources.unet_offload_device())
     if streaming:
         if load_device.type != "cpu" or offload_device.type != "cpu":
             raise RuntimeError("Streaming-class Flux GGUF loads must stage weights on CPU pinned host memory.")
@@ -512,6 +552,11 @@ def load_flux_fill_unet(
         "path": str(path),
         "arch": arch,
         "detected_config": dict(detected_config),
+        "execution_class": getattr(execution_class, "value", execution_class),
+        "runtime_family": selected_runtime_family,
+        "runtime_posture": selected_runtime_posture,
+        "streaming_profile": streaming_profile,
+        "resident_load_strategy": selected_resident_load_strategy or None,
     }
     return patcher
 
@@ -522,6 +567,7 @@ def load_flux_fill_native_unet(
     load_device: torch.device | str | None = None,
     offload_device: torch.device | str | None = None,
     execution_class: Any | None = None,
+    resident_load_strategy: str | None = None,
 ) -> Any:
     path = Path(unet_path)
     if not path.exists():
@@ -556,6 +602,9 @@ def load_flux_fill_native_unet(
         "detected_config": dict(detected_config),
         "execution_class": getattr(execution_class, "value", execution_class),
         "mode": "native_fp8",
+        "runtime_family": "native_fp8",
+        "runtime_posture": "resident",
+        "resident_load_strategy": resident_load_strategy,
         "runtime_weight_dtype": runtime_weight_dtype,
         "runtime_weight_bytes": runtime_weight_bytes,
         "compute_weight_dtype": detected_config.get("manual_cast_dtype"),

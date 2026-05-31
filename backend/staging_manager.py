@@ -50,6 +50,21 @@ STREAMING_EXECUTION_CLASSES = {
     ExecutionClass.FLUX_STREAMING_T3,
 }
 
+FLUX_RUNTIME_FAMILY_NATIVE_FP8 = "native_fp8"
+FLUX_RUNTIME_FAMILY_GGUF = "gguf"
+FLUX_RUNTIME_POSTURE_STREAMING = "streaming"
+FLUX_RUNTIME_POSTURE_RESIDENT = "resident"
+FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1 = "open_c64_d1_s1"
+FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1 = "open_c128_d1_s1"
+FLUX_FILL_STREAMING_PROFILE_OPEN_C64_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
+FLUX_FILL_STREAMING_PROFILE_OPEN_C128_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
+FLUX_RESIDENT_LOAD_STANDARD = "resident_cpu_shadow"
+FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW = "sticky_no_cpu_shadow"
+FLUX_RESIDENT_EXECUTION_CLASSES = {
+    ExecutionClass.FLUX_RESIDENT_T5,
+    ExecutionClass.FLUX_RESIDENT_T6,
+}
+
 
 DEFAULT_PLATFORM_BASELINE_MB = {
     "windows": 650.0,
@@ -266,6 +281,11 @@ class PlacementPlan:
     ledger_pinned_cpu_mb: float
     available_gpu_mb: float
     available_ram_mb: float
+    runtime_family: str | None = None
+    runtime_posture: str | None = None
+    streaming_profile: str | None = None
+    resident_load_strategy: str | None = None
+    fallback_model_variant: str | None = None
     reusable_components: tuple[str, ...] = field(default_factory=tuple)
     notes: tuple[str, ...] = field(default_factory=tuple)
 
@@ -572,13 +592,14 @@ class ModelUniverseRegistry:
                 return "sdxl_q8"
             return "sdxl_fp16"
         if family == "flux":
-            if execution_class == ExecutionClass.FLUX_STREAMING_T3:
-                return "flux_fill_q4_k_s"
-            if execution_class == ExecutionClass.FLUX_RESIDENT_T4:
-                return "flux_fill_q4_k_s"
-            if execution_class == ExecutionClass.FLUX_RESIDENT_T5:
+            if execution_class in {
+                ExecutionClass.FLUX_STREAMING_T3,
+                ExecutionClass.FLUX_RESIDENT_T4,
+                ExecutionClass.FLUX_RESIDENT_T5,
+                ExecutionClass.FLUX_RESIDENT_T6,
+            }:
                 return "flux_fill_fp8"
-            return "flux_fill_q8"
+            return "flux_fill_q4_k_s"
         raise ValueError(f"No default variant for family {family!r}")
 
     def canonical_variant_for_request(
@@ -781,6 +802,73 @@ class PlacementPlanner:
             reusable=False,
         )
 
+    def _resolve_flux_runtime_contract(
+        self,
+        *,
+        request: ResolvedRequest,
+    ) -> dict[str, str | None]:
+        if request.family != "flux":
+            return {
+                "runtime_family": None,
+                "runtime_posture": None,
+                "streaming_profile": None,
+                "resident_load_strategy": None,
+                "fallback_model_variant": None,
+            }
+
+        if request.model_variant == "flux_fill_fp8":
+            runtime_family = FLUX_RUNTIME_FAMILY_NATIVE_FP8
+            fallback_model_variant = "flux_fill_q4_k_s"
+            if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
+                runtime_posture = FLUX_RUNTIME_POSTURE_RESIDENT
+                streaming_profile = None
+                resident_load_strategy = (
+                    FLUX_RESIDENT_LOAD_STANDARD
+                    if request.t5_mode == "cpu_fp16_resident"
+                    else FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW
+                )
+            else:
+                runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
+                resident_load_strategy = None
+                if request.hardware_tier in {
+                    HardwareTier.T1_VERY_LOW,
+                    HardwareTier.T2_LOW,
+                    HardwareTier.T3_LOW_NORMAL,
+                }:
+                    streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
+                else:
+                    streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
+            return {
+                "runtime_family": runtime_family,
+                "runtime_posture": runtime_posture,
+                "streaming_profile": streaming_profile,
+                "resident_load_strategy": resident_load_strategy,
+                "fallback_model_variant": fallback_model_variant,
+            }
+
+        runtime_posture = (
+            FLUX_RUNTIME_POSTURE_RESIDENT
+            if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES
+            else FLUX_RUNTIME_POSTURE_STREAMING
+        )
+        return {
+            "runtime_family": FLUX_RUNTIME_FAMILY_GGUF,
+            "runtime_posture": runtime_posture,
+            "streaming_profile": None,
+            "resident_load_strategy": None,
+            "fallback_model_variant": None,
+        }
+
+    @staticmethod
+    def _uses_streaming_posture(
+        *,
+        request: ResolvedRequest,
+        runtime_posture: str | None,
+    ) -> bool:
+        if request.execution_class in STREAMING_EXECUTION_CLASSES:
+            return True
+        return request.family == "flux" and runtime_posture == FLUX_RUNTIME_POSTURE_STREAMING
+
     def _streaming_unet(
         self,
         *,
@@ -933,16 +1021,20 @@ class PlacementPlanner:
         profile: InferenceCostProfile,
         execution_class: ExecutionClass,
         greedy: bool,
+        prefer_resident: bool | None = None,
         ledger: ResourceLedger,
         available_gpu_mb: float,
     ) -> ComponentPlacement:
-        resident_preferred = greedy or execution_class in {
-            ExecutionClass.SDXL_RESIDENT_T2,
-            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-            ExecutionClass.FLUX_RESIDENT_T4,
-            ExecutionClass.FLUX_RESIDENT_T5,
-            ExecutionClass.FLUX_RESIDENT_T6,
-        }
+        if prefer_resident is None:
+            resident_preferred = greedy or execution_class in {
+                ExecutionClass.SDXL_RESIDENT_T2,
+                ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+                ExecutionClass.FLUX_RESIDENT_T4,
+                ExecutionClass.FLUX_RESIDENT_T5,
+                ExecutionClass.FLUX_RESIDENT_T6,
+            }
+        else:
+            resident_preferred = bool(prefer_resident)
         if resident_preferred and available_gpu_mb >= profile.vae_mb:
             residency_mode = ResidencyMode.GPU_RESIDENT.value
             load_device = "cuda"
@@ -1065,8 +1157,8 @@ class PlacementPlanner:
         *,
         request: ResolvedRequest,
         components: Mapping[str, ComponentPlacement],
+        streaming: bool,
     ) -> Dict[str, PhasePlan]:
-        streaming = request.execution_class in STREAMING_EXECUTION_CLASSES
         greedy = request.execution_class == ExecutionClass.SDXL_GPU_GREEDY_T3PLUS
         unet = components.get("unet")
         clip = components.get("clip")
@@ -1166,6 +1258,7 @@ class PlacementPlanner:
         }
 
     def _startup_plan(self, request: ResolvedRequest, hardware: HardwareProfile, ledger: ResourceLedger) -> PlacementPlan:
+        runtime_contract = self._resolve_flux_runtime_contract(request=request)
         components = {
             "unet": ComponentPlacement(
                 component_id="unet",
@@ -1216,7 +1309,14 @@ class PlacementPlanner:
                 variant=request.model_variant,
             ),
         }
-        phase_plans = self._phase_plans(request=request, components=components)
+        phase_plans = self._phase_plans(
+            request=request,
+            components=components,
+            streaming=self._uses_streaming_posture(
+                request=request,
+                runtime_posture=runtime_contract["runtime_posture"],
+            ),
+        )
         return PlacementPlan(
             execution_class=request.execution_class,
             task_family=request.family,
@@ -1230,6 +1330,11 @@ class PlacementPlanner:
             ledger_pinned_cpu_mb=ledger.get_total_pinned_cpu_mb(),
             available_gpu_mb=hardware.available_vram_mb,
             available_ram_mb=hardware.total_ram_mb,
+            runtime_family=runtime_contract["runtime_family"],
+            runtime_posture=runtime_contract["runtime_posture"],
+            streaming_profile=runtime_contract["streaming_profile"],
+            resident_load_strategy=runtime_contract["resident_load_strategy"],
+            fallback_model_variant=runtime_contract["fallback_model_variant"],
             reusable_components=(),
             notes=("startup",),
         )
@@ -1257,7 +1362,11 @@ class PlacementPlanner:
         available_ram_mb = ledger.available_ram_mb(hardware.total_ram_mb)
         planning_gpu_mb = hardware.available_vram_mb
         profile = request.profile
-        streaming = request.execution_class in STREAMING_EXECUTION_CLASSES
+        runtime_contract = self._resolve_flux_runtime_contract(request=request)
+        streaming = self._uses_streaming_posture(
+            request=request,
+            runtime_posture=runtime_contract["runtime_posture"],
+        )
         greedy = request.execution_class == ExecutionClass.SDXL_GPU_GREEDY_T3PLUS
 
         components: Dict[str, ComponentPlacement] = {}
@@ -1320,6 +1429,24 @@ class PlacementPlanner:
             profile=profile,
             execution_class=request.execution_class,
             greedy=greedy or request.execution_class in {ExecutionClass.FLUX_RESIDENT_T6},
+            prefer_resident=(
+                greedy
+                or request.execution_class in {
+                    ExecutionClass.FLUX_RESIDENT_T4,
+                    ExecutionClass.FLUX_RESIDENT_T5,
+                    ExecutionClass.FLUX_RESIDENT_T6,
+                }
+                or (
+                    request.family == "flux"
+                    and request.hardware_tier
+                    in {
+                        HardwareTier.T3_LOW_NORMAL,
+                        HardwareTier.T4_NORMAL,
+                        HardwareTier.T5_HIGH_NORMAL,
+                        HardwareTier.T6_HIGH,
+                    }
+                )
+            ),
             ledger=ledger,
             available_gpu_mb=planning_gpu_mb,
         )
@@ -1346,7 +1473,11 @@ class PlacementPlanner:
             if lora_component is not None:
                 components["lora"] = lora_component
 
-        phase_plans = self._phase_plans(request=request, components=components)
+        phase_plans = self._phase_plans(
+            request=request,
+            components=components,
+            streaming=streaming,
+        )
         reusable_components = tuple(
             sorted(
                 component_id
@@ -1377,6 +1508,18 @@ class PlacementPlanner:
             f"required_gpu_mb={total_required_gpu_mb:.1f}",
             f"preferred_gpu_mb={total_preferred_gpu_mb:.1f}",
         ]
+        if runtime_contract["runtime_family"] is not None:
+            notes.append(f"runtime_family={runtime_contract['runtime_family']}")
+        if runtime_contract["runtime_posture"] is not None:
+            notes.append(f"runtime_posture={runtime_contract['runtime_posture']}")
+        if runtime_contract["streaming_profile"] is not None:
+            notes.append(f"streaming_profile={runtime_contract['streaming_profile']}")
+        if runtime_contract["resident_load_strategy"] is not None:
+            notes.append(f"resident_load_strategy={runtime_contract['resident_load_strategy']}")
+        if runtime_contract["fallback_model_variant"] is not None:
+            notes.append(f"fallback_model_variant={runtime_contract['fallback_model_variant']}")
+        if request.family == "flux" and streaming:
+            notes.append("overlap_status=cpu_bound_or_overlap_unproven")
         if request.requested_variant is not None and request.requested_variant != request.model_variant:
             notes.append(
                 f"variant_overridden={request.requested_variant}->{request.model_variant}"
@@ -1396,6 +1539,11 @@ class PlacementPlanner:
             ledger_pinned_cpu_mb=ledger.get_total_pinned_cpu_mb(),
             available_gpu_mb=available_gpu_mb,
             available_ram_mb=available_ram_mb,
+            runtime_family=runtime_contract["runtime_family"],
+            runtime_posture=runtime_contract["runtime_posture"],
+            streaming_profile=runtime_contract["streaming_profile"],
+            resident_load_strategy=runtime_contract["resident_load_strategy"],
+            fallback_model_variant=runtime_contract["fallback_model_variant"],
             reusable_components=reusable_components,
             notes=tuple(notes),
         )

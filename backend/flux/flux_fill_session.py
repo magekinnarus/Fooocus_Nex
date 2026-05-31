@@ -152,6 +152,10 @@ class FluxFillSession:
                 load_device=self.device,
                 offload_device=None,
                 execution_class=self.config.execution_class,
+                runtime_family=self.config.runtime_family,
+                runtime_posture=self.config.runtime_posture,
+                streaming_profile=self.config.streaming_profile,
+                resident_load_strategy=self.config.resident_load_strategy,
             )
             self.unet_load_count += 1
         if self.vae is None:
