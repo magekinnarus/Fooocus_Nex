@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
 import torch
 
 from backend import resources
 from backend.flux.flux_runtime import FluxFillPipeline, FluxFillPipelineConfig, FluxFillPipelineResult
-from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, load_flux_empty_conditioning_cache
+from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, FluxFillLatentSource, load_flux_empty_conditioning_cache
 from backend.flux.flux_fill_loader import load_flux_ae, load_flux_fill_unet
 
 
@@ -135,12 +137,81 @@ class FluxFillSession:
     vae_load_count: int = 0
     generation_count: int = 0
     conditioning_cache_count: int = 0
+    latent_cache_hit_count: int = 0
+    latent_cache_miss_count: int = 0
+    latent_source_fingerprint: str | None = None
+    latent_source: FluxFillLatentSource | None = None
 
     def __post_init__(self) -> None:
         if self.device is None:
             self.device = torch.device(self.config.device) if self.config.device else resources.get_torch_device()
         else:
             self.device = torch.device(self.device)
+
+    def _keep_vae_resident(self) -> bool:
+        keep_vae_resident = getattr(self.config, "keep_vae_resident", None)
+        if keep_vae_resident is None:
+            return True
+        return bool(keep_vae_resident)
+
+    def _release_vae(self) -> None:
+        if self.vae is None:
+            return
+        try:
+            resources.eject_model(self.vae.patcher)
+        except Exception:
+            detach = getattr(self.vae.patcher, "detach", None)
+            if callable(detach):
+                detach()
+        finally:
+            self.vae = None
+
+    def _clear_latent_source_cache(self) -> None:
+        self.latent_source_fingerprint = None
+        self.latent_source = None
+
+    def _supports_latent_source_cache(self, mode: str | None) -> bool:
+        return str(mode or self.config.mode or "").strip().lower() == "baseline"
+
+    def _build_latent_source_fingerprint(self, image: Any, mask: Any, *, mode: str | None) -> str:
+        image_np = np.ascontiguousarray(np.asarray(image, dtype=np.uint8))
+        mask_np = np.ascontiguousarray(np.asarray(mask, dtype=np.uint8))
+        digest = hashlib.sha256()
+        digest.update(b"flux_fill_latent_source/v1")
+        digest.update(str(mode or self.config.mode or "").strip().lower().encode("utf-8"))
+        digest.update(str(self.config.ae_path).encode("utf-8"))
+        for label, value in (("image", image_np), ("mask", mask_np)):
+            digest.update(label.encode("utf-8"))
+            digest.update(str(value.shape).encode("utf-8"))
+            digest.update(str(value.dtype).encode("utf-8"))
+            digest.update(value.tobytes())
+        return digest.hexdigest()
+
+    def _prepare_latent_source(
+        self,
+        pipeline: FluxFillPipeline,
+        image: Any,
+        mask: Any,
+        *,
+        vae: Any,
+    ) -> FluxFillLatentSource:
+        source_pixels, _source_pixels_summary = pipeline.prepare_source_pixels(image)
+        concat_pixels, _concat_pixels_summary = pipeline.prepare_concat_pixels(image, mask)
+        source_latent, _source_summary = pipeline.encode_source_latent(source_pixels, vae=vae, cleanup_vae=False)
+        concat_latent, _concat_summary = pipeline.encode_concat_latent(concat_pixels, vae=vae, cleanup_vae=False)
+        if tuple(source_latent.shape) != tuple(concat_latent.shape):
+            raise ValueError(
+                f"Flux latent source prep shape mismatch: {list(source_latent.shape)} vs {list(concat_latent.shape)}."
+            )
+        denoise_mask, _denoise_summary = pipeline.prepare_denoise_mask(mask, source_latent.shape)
+        return FluxFillLatentSource(
+            context=None,
+            source_latent=source_latent.detach().cpu(),
+            concat_latent=concat_latent.detach().cpu(),
+            denoise_mask=denoise_mask.detach().cpu(),
+            width=int(np.asarray(image).shape[1]),
+            height=int(np.asarray(image).shape[0]),
+        )
 
     def start(self) -> dict[str, Any]:
         self.config.validate_static(require_existing_assets=True)
@@ -158,9 +229,11 @@ class FluxFillSession:
                 resident_load_strategy=self.config.resident_load_strategy,
             )
             self.unet_load_count += 1
-        if self.vae is None:
+        if self._keep_vae_resident() and self.vae is None:
             self.vae = load_flux_ae(self.config.ae_path, load_device=self.device, offload_device=None)
             self.vae_load_count += 1
+        elif not self._keep_vae_resident():
+            self._release_vae()
 
         self.started = True
         return self.snapshot()
@@ -248,14 +321,47 @@ class FluxFillSession:
             conditioning_cache_path=conditioning_cache_path or self.config.conditioning_cache_path,
         )
         pipeline = FluxFillPipeline(session_config, device=self.device)
+        keep_vae_resident = self._keep_vae_resident()
+        runtime_vae = self.vae
+        cleanup_vae = False
+        if not keep_vae_resident:
+            runtime_vae = load_flux_ae(self.config.ae_path, load_device=self.device, offload_device=None)
+            self.vae_load_count += 1
+            cleanup_vae = True
+        latent_source = None
+        latent_source_summary = {
+            "cacheable": False,
+            "cache_hit": False,
+            "input_fingerprint": None,
+            "cached": self.latent_source is not None,
+        }
+        if self._supports_latent_source_cache(session_config.mode):
+            input_fingerprint = self._build_latent_source_fingerprint(image, mask, mode=session_config.mode)
+            cache_hit = self.latent_source is not None and self.latent_source_fingerprint == input_fingerprint
+            if cache_hit:
+                latent_source = self.latent_source
+                self.latent_cache_hit_count += 1
+            else:
+                latent_source = self._prepare_latent_source(pipeline, image, mask, vae=runtime_vae)
+                self.latent_source = latent_source
+                self.latent_source_fingerprint = input_fingerprint
+                self.latent_cache_miss_count += 1
+            latent_source_summary = {
+                "cacheable": True,
+                "cache_hit": cache_hit,
+                "input_fingerprint": input_fingerprint,
+                "cached": self.latent_source is not None,
+            }
         result = pipeline.run(
             image,
             mask,
             disable_pbar=disable_pbar,
             unet_patcher=self.unet_patcher,
-            vae=self.vae,
+            vae=runtime_vae,
+            cleanup_vae=cleanup_vae,
             empty_conditioning=conditioning,
             callback=callback,
+            latent_source=latent_source,
         )
         result.debug_summary.setdefault("session", {})
         result.debug_summary["session"].update(
@@ -264,8 +370,10 @@ class FluxFillSession:
                 "start_count": self.start_count,
                 "unet_load_count": self.unet_load_count,
                 "vae_load_count": self.vae_load_count,
+                "keep_vae_resident": keep_vae_resident,
                 "generation_count": self.generation_count + 1,
                 "conditioning": conditioning_summary,
+                "latent_source": latent_source_summary,
             }
         )
         self.generation_count += 1
@@ -327,6 +435,12 @@ class FluxFillSession:
         disable_pbar: bool = True,
         progress: bool = True,
     ) -> FluxFillPipelineResult:
+        prompt_text = str(prompt or "").strip()
+        if prompt_text == "" and conditioning is None and conditioning_cache_path is None:
+            raise ValueError(
+                "Flux Fill inpaint requires a non-empty prompt or explicit prompt-conditioned payload/cache; "
+                "empty conditioning is removal-only."
+            )
         return self._run_pipeline(
             image,
             mask,
@@ -356,18 +470,11 @@ class FluxFillSession:
             finally:
                 self.unet_patcher = None
 
-        if self.vae is not None:
-            try:
-                resources.eject_model(self.vae.patcher)
-            except Exception:
-                detach = getattr(self.vae.patcher, "detach", None)
-                if callable(detach):
-                    detach()
-            finally:
-                self.vae = None
+        self._release_vae()
 
         self.started = False
         self.end_count += 1
+        self._clear_latent_source_cache()
         if self.conditioning_provider is not None:
             self.conditioning_provider.clear()
         gc.collect()
@@ -386,9 +493,14 @@ class FluxFillSession:
             "vae_load_count": int(self.vae_load_count),
             "generation_count": int(self.generation_count),
             "conditioning_cache_count": int(self.conditioning_cache_count),
+            "latent_cache_hit_count": int(self.latent_cache_hit_count),
+            "latent_cache_miss_count": int(self.latent_cache_miss_count),
             "unet_loaded": self.unet_patcher is not None,
+            "keep_vae_resident": self._keep_vae_resident(),
             "vae_loaded": self.vae is not None,
             "unet_id": id(self.unet_patcher) if self.unet_patcher is not None else None,
             "vae_id": id(self.vae) if self.vae is not None else None,
+            "latent_source_cached": self.latent_source is not None,
+            "latent_source_fingerprint": self.latent_source_fingerprint,
             "conditioning_provider": type(self.conditioning_provider).__name__ if self.conditioning_provider is not None else None,
         }

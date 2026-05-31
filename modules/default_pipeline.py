@@ -1,13 +1,10 @@
 import modules.core as core
-import os
-import gc
 import torch
 import modules.patch
 import modules.config
 import modules.flags
 import modules.model_taxonomy
 from backend import conditioning, process_transition, resources, schedulers, lora
-from backend import environment_profile
 from backend import sdxl_runtime_policy
 import extras.vae_interpose as vae_interpose
 
@@ -24,18 +21,10 @@ final_vae = None
 loaded_ControlNets = {}
 
 
-def _resolved_memory_profile():
-    return getattr(modules.config, 'resolved_memory_environment_profile', None)
-
-
 def _should_skip_eager_pipeline_preload() -> bool:
     # Nex Universal Clean Slate Policy: Never load models at startup.
     # Models are slotted in UI settings but remain unloaded until the first task.
     return True
-
-
-def _controlnet_residency_summary():
-    return {'cached_paths': len(loaded_ControlNets)}
 
 
 def _offload_controlnet(model):

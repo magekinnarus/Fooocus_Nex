@@ -868,6 +868,33 @@ class PlacementPlanner:
             return True
         return request.family == "flux" and runtime_posture == FLUX_RUNTIME_POSTURE_STREAMING
 
+    def _prefer_vae_resident(
+        self,
+        *,
+        request: ResolvedRequest,
+        runtime_contract: dict[str, str | None],
+        greedy: bool,
+    ) -> bool:
+        if greedy:
+            return True
+        if request.family != "flux":
+            return request.execution_class in {
+                ExecutionClass.SDXL_RESIDENT_T2,
+                ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+            }
+
+        runtime_posture = str(runtime_contract.get("runtime_posture") or "").strip().lower()
+        if runtime_posture == FLUX_RUNTIME_POSTURE_RESIDENT:
+            return True
+
+        streaming_profile = str(runtime_contract.get("streaming_profile") or "").strip().lower()
+        vram_total_mb = float(request.vram_total_mb)
+        if streaming_profile == FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1:
+            return vram_total_mb >= 8192.0
+        if streaming_profile == FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1:
+            return vram_total_mb >= 10240.0
+        return False
+
     def _streaming_unet(
         self,
         *,
@@ -1434,23 +1461,10 @@ class PlacementPlanner:
             profile=profile,
             execution_class=request.execution_class,
             greedy=greedy or request.execution_class in {ExecutionClass.FLUX_RESIDENT_T6},
-            prefer_resident=(
-                greedy
-                or request.execution_class in {
-                    ExecutionClass.FLUX_RESIDENT_T4,
-                    ExecutionClass.FLUX_RESIDENT_T5,
-                    ExecutionClass.FLUX_RESIDENT_T6,
-                }
-                or (
-                    request.family == "flux"
-                    and request.hardware_tier
-                    in {
-                        HardwareTier.T3_LOW_NORMAL,
-                        HardwareTier.T4_NORMAL,
-                        HardwareTier.T5_HIGH_NORMAL,
-                        HardwareTier.T6_HIGH,
-                    }
-                )
+            prefer_resident=self._prefer_vae_resident(
+                request=request,
+                runtime_contract=runtime_contract,
+                greedy=greedy or request.execution_class in {ExecutionClass.FLUX_RESIDENT_T6},
             ),
             ledger=ledger,
             available_gpu_mb=planning_gpu_mb,

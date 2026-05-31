@@ -147,8 +147,11 @@ def _residency_plan_for_phase(target_phase=None, task=None):
 
 def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str]:
     """
-    Nex Integration: Returns (device, mode) for a specific model role 
-    by inspecting the active SDXL policy derived from PlacementSolver.
+    Compatibility bridge for the shared SDXL loader path.
+
+    This helper translates an already-selected SDXL policy into concrete
+    devices. It does not choose runtime family, Flux posture, streaming
+    profile, or T5 policy; those remain owned upstream.
     """
     if policy is None:
         from modules import default_pipeline
@@ -159,8 +162,6 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
     mode = "offloaded"
     
     if policy is not None:
-        # Notes contain (Tier, Mode) for the UNet
-        # We can also check residency_class
         if role == "unet":
             if policy.residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
                 return torch.device("cpu"), "cpu_resident"
@@ -845,6 +846,8 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
     
     current_vram_state = VRAMState.HIGH_VRAM if force_high_vram else vram_state
     _warn_legacy_vram_mode_if_needed(current_vram_state)
+    # Phase residency here is mechanism-only cache guidance for the shared stack.
+    # Runtime family and sanctioned Flux behavior are chosen before this loader seam.
     residency_plan = _residency_plan_for_phase(target_phase=target_phase)
 
     inference_memory = minimum_inference_memory()
@@ -1275,10 +1278,6 @@ def should_use_bf16(device=None, model_params=0, prioritize_performance=True, ma
     if device is not None and is_device_cpu(device): return False
     if config.force_fp32: return False
     return torch.cuda.is_bf16_supported()
-
-def unet_offload_device():
-    # DEPRECATED: Use get_component_plan('unet')
-    return torch.device("cpu")
 
 def vae_device():
     # Legacy helper, VAE is always fp32 cpu for Nex pipelines unless specifically requested

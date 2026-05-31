@@ -106,7 +106,7 @@ def _move_resource_to_evictable(resource_id: str, pinned: list[str], warm: list[
         evictable.append(resource_id)
 
 
-def _task_uses_dedicated_gguf_route(task) -> bool:
+def _task_uses_legacy_sdxl_gguf_fallback(task) -> bool:
     if task is None:
         return False
 
@@ -425,7 +425,9 @@ class MemoryGovernor:
         profile_name = self.profile_name()
         notes['profile'] = profile_name
 
-        uses_dedicated_gguf_route = _task_uses_dedicated_gguf_route(task)
+        # This governor only decides phase-local warmth and eviction for legacy/shared mechanisms.
+        # It must not re-plan model family, runtime posture, or Flux fallback policy.
+        uses_dedicated_gguf_route = _task_uses_legacy_sdxl_gguf_fallback(task)
         plan_table = GGUF_RESIDENCY_PLANS if uses_dedicated_gguf_route else BASE_RESIDENCY_PLANS
         base_plan = plan_table.get(phase_name, BASE_RESIDENCY_PLANS[MemoryPhase.IDLE.value])
         pinned = list(base_plan['pinned'])

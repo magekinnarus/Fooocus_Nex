@@ -13,6 +13,9 @@ PROFILE_LOCAL_LOW_VRAM = 'local_low_vram'
 PROFILE_LOCAL_NORMAL = 'local_normal'
 PROFILE_CUSTOM = 'custom'
 PROFILE_AUTO = 'auto'
+FLUX_ACCELERATION_CLASS_TENSOR_CORE = 'tensor_core_accelerated'
+FLUX_ACCELERATION_CLASS_LEGACY_CUDA = 'legacy_cuda'
+FLUX_ACCELERATION_CLASS_UNKNOWN = 'unknown'
 
 KNOWN_PROFILE_OVERRIDES = {
     PROFILE_AUTO,
@@ -121,6 +124,54 @@ def detect_total_vram_mb() -> float:
     return 0.0
 
 
+def classify_flux_acceleration(
+    *,
+    gpu_name: str | None = None,
+    cuda_capability: tuple[int, int] | None = None,
+) -> str:
+    normalized_name = str(gpu_name or '').strip().lower()
+    if normalized_name.startswith('gtx ') or ' gtx ' in f' {normalized_name} ':
+        return FLUX_ACCELERATION_CLASS_LEGACY_CUDA
+
+    if cuda_capability is not None:
+        major, _minor = cuda_capability
+        if int(major) >= 7:
+            return FLUX_ACCELERATION_CLASS_TENSOR_CORE
+        if int(major) > 0:
+            return FLUX_ACCELERATION_CLASS_LEGACY_CUDA
+
+    return FLUX_ACCELERATION_CLASS_UNKNOWN
+
+
+def detect_primary_gpu_notes() -> Dict[str, Any]:
+    notes: Dict[str, Any] = {}
+    try:
+        import torch
+
+        if hasattr(torch, 'cuda') and torch.cuda.is_available():
+            device_index = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(device_index)
+            gpu_name = str(getattr(props, 'name', '') or torch.cuda.get_device_name(device_index) or '').strip() or None
+            major = int(getattr(props, 'major', 0) or 0)
+            minor = int(getattr(props, 'minor', 0) or 0)
+            cuda_capability = f'{major}.{minor}' if major > 0 else None
+            flux_acceleration_class = classify_flux_acceleration(
+                gpu_name=gpu_name,
+                cuda_capability=(major, minor) if major > 0 else None,
+            )
+            notes.update(
+                {
+                    'gpu_name': gpu_name,
+                    'cuda_capability': cuda_capability,
+                    'flux_acceleration_class': flux_acceleration_class,
+                    'tensor_core_accelerated': flux_acceleration_class == FLUX_ACCELERATION_CLASS_TENSOR_CORE,
+                }
+            )
+    except Exception:
+        pass
+    return notes
+
+
 def detect_is_colab() -> bool:
     if any(key in os.environ for key in ('COLAB_GPU', 'COLAB_RELEASE_TAG', 'COLAB_BACKEND_VERSION')):
         return True
@@ -202,5 +253,6 @@ def resolve_environment_profile(
         policy_overrides=_merge_policy_overrides(profile_name, custom_policy_overrides=custom_policy_overrides),
         notes={
             'requested_override': requested,
+            **detect_primary_gpu_notes(),
         },
     )

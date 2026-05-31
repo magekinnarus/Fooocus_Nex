@@ -232,6 +232,7 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
             progressbar_callback=progressbar_callback,
         )
     else:
+        # Legacy shared diffusion fallback for routes the unified runtime does not currently own.
         if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified':
             print(f'[UnifiedRuntime] Falling back to shared diffusion path: {rejection_reason}')
 

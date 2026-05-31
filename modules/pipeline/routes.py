@@ -255,17 +255,17 @@ def _build_flux_preview_transform(active_session):
 
             previewer_holder["latent_format"] = latent_format
             if latent_format is not None:
-                if load_device is not None:
+                if getattr(latent_format, "latent_rgb_factors", None) is not None:
+                    try:
+                        previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
+                    except Exception:
+                        previewer = None
+                if previewer is None and load_device is not None:
                     try:
                         from modules.config import path_vae_approx
                     except Exception:
                         path_vae_approx = None
                     previewer = resolve_taesd_previewer(load_device, latent_format, vae_approx_path=path_vae_approx)
-                if previewer is None and getattr(latent_format, "latent_rgb_factors", None) is not None:
-                    try:
-                        previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
-                    except Exception:
-                        previewer = None
             previewer_holder["previewer"] = previewer
             latent_format = previewer_holder["latent_format"]
 
@@ -273,7 +273,11 @@ def _build_flux_preview_transform(active_session):
             return None
 
         try:
-            preview_array = decode_latent_preview(previewer, latent_format, preview_payload)
+            preview_input = preview_payload
+            process_out = getattr(latent_format, "process_out", None)
+            if callable(process_out):
+                preview_input = process_out(preview_input)
+            preview_array = decode_latent_preview(previewer, latent_format, preview_input)
         except Exception:
             return None
 

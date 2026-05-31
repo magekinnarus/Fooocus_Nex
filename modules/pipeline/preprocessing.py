@@ -20,11 +20,9 @@ def _uses_unified_sdxl_runtime_owner(task_state) -> bool:
     return str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified'
 
 
-def _resolve_residency_class(task_state, route_context=None, residency_class=None):
+def _resolve_residency_class(task_state, residency_class=None):
     if residency_class is not None:
         return resources.normalize_sdxl_residency_class(residency_class)
-    if route_context is not None and getattr(route_context, 'residency_class', None) is not None:
-        return resources.normalize_sdxl_residency_class(route_context.residency_class)
     return resources.normalize_sdxl_residency_class(getattr(task_state, 'sdxl_residency_class', None))
 
 
@@ -213,6 +211,7 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     sdxl_policy = getattr(task_state, 'sdxl_execution_policy', None)
 
     if not unified_runtime_owner:
+        # Legacy shared-pipeline fallback: refresh the inherited SDXL bridge and encode CLIP here.
         with resources.memory_phase_scope(
             resources.MemoryPhase.MODEL_REFRESH,
             task=task_state,
@@ -309,6 +308,7 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
         return cached_tasks
 
     if unified_runtime_owner:
+        # Unified SDXL owns prompt execution later; keep only the prompt task blueprint here.
         task_state.use_expansion = use_expansion
         task_state.positive_cond = None
         task_state.negative_cond = None

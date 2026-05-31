@@ -457,6 +457,7 @@ class FluxFillPipelineConfig:
     runtime_posture: str | None = None
     streaming_profile: str | None = None
     resident_load_strategy: str | None = None
+    keep_vae_resident: bool | None = None
     fallback_model_variant: str | None = None
     debug_output_dir: Path | str | None = None
     mode: str = FLUX_FILL_GLASS_DEFAULT_MODE
@@ -761,7 +762,8 @@ class FluxFillPipeline:
                 if callable(move_model):
                     move_model(device=vae_device, dtype=torch.float32)
 
-                live_param = next(first_stage_model.parameters(), None)
+                parameters = getattr(first_stage_model, "parameters", None)
+                live_param = next(parameters(), None) if callable(parameters) else None
                 vae_input_device = vae_device
                 vae_input_dtype = torch.float32
                 if isinstance(live_param, torch.Tensor):
@@ -985,7 +987,9 @@ class FluxFillPipeline:
         disable_pbar: bool = True,
         unet_patcher: Any | None = None,
         vae: Any | None = None,
+        cleanup_vae: bool | None = None,
         empty_conditioning: FluxEmptyConditioning | None = None,
+        latent_source: FluxFillLatentSource | None = None,
     ) -> FluxFillPipelineResult:
         self.config.validate_static(require_existing_assets=True)
         mode = self.config.mode
@@ -1115,39 +1119,97 @@ class FluxFillPipeline:
         timings["prepare_concat_pixels"] = time.perf_counter() - stage_start
         debug_summary["stages"]["prepare_concat_pixels"] = concat_pixels_summary
 
-        # Reclaim CPU RAM from text conditioning before loading VAE/UNet state dicts.
-        # In the session path (vae/unet already provided), this is a cheap no-op.
-        if vae is None or unet_patcher is None:
-            import gc as _gc
-            _gc.collect()
-            resources.soft_empty_cache(force=True)
+        if latent_source is not None:
+            source_latent = latent_source.source_latent.detach().cpu()
+            concat_latent = latent_source.concat_latent.detach().cpu()
+            denoise_mask = latent_source.denoise_mask.detach().cpu()
+            expected_height = int(working_image.shape[0])
+            expected_width = int(working_image.shape[1])
+            expected_latent_shape = (expected_height // 8, expected_width // 8)
+            if int(latent_source.height) != expected_height or int(latent_source.width) != expected_width:
+                raise FluxFillValidationError(
+                    "Injected Flux latent source geometry does not match working image geometry: "
+                    f"expected {expected_width}x{expected_height}, got {latent_source.width}x{latent_source.height}."
+                )
+            if tuple(source_latent.shape[-2:]) != expected_latent_shape:
+                raise FluxFillValidationError(
+                    "Injected Flux source latent shape does not match working image geometry: "
+                    f"expected {list(expected_latent_shape)}, got {list(source_latent.shape[-2:])}."
+                )
+            if tuple(source_latent.shape) != tuple(concat_latent.shape):
+                raise FluxFillValidationError(
+                    f"source_latent shape {list(source_latent.shape)} does not match concat_latent shape {list(concat_latent.shape)}."
+                )
+            if tuple(denoise_mask.shape[0:1] + denoise_mask.shape[2:4]) != tuple(source_latent.shape[0:1] + source_latent.shape[2:4]):
+                raise FluxFillValidationError(
+                    "Injected Flux denoise_mask shape does not match latent shape: "
+                    f"{list(denoise_mask.shape)} vs {list(source_latent.shape)}."
+                )
+            timings["encode_source_latent"] = 0.0
+            debug_summary["stages"]["encode_source_latent"] = {
+                "stage": "encode_source_latent",
+                "latent": _tensor_summary(source_latent),
+                "elapsed": 0.0,
+                "latent_format": "processed",
+                "resident_vae": vae is not None,
+                "cleanup_vae": False,
+                "source": "injected_latent_source",
+            }
+            timings["encode_concat_latent"] = 0.0
+            debug_summary["stages"]["encode_concat_latent"] = {
+                "stage": "encode_concat_latent",
+                "latent": _tensor_summary(concat_latent),
+                "elapsed": 0.0,
+                "latent_format": "raw_vae",
+                "resident_vae": vae is not None,
+                "cleanup_vae": False,
+                "source": "injected_latent_source",
+            }
+            timings["prepare_denoise_mask"] = 0.0
+            debug_summary["stages"]["prepare_denoise_mask"] = {
+                "stage": "prepare_denoise_mask",
+                "mask": _tensor_summary(denoise_mask),
+                "coverage": float(denoise_mask.float().mean().item()) if denoise_mask.numel() else 0.0,
+                "latent_shape": [int(dim) for dim in source_latent.shape],
+                "source": "injected_latent_source",
+            }
+        else:
+            # Reclaim CPU RAM from text conditioning before loading VAE/UNet state dicts.
+            # In the session path (vae/unet already provided), this is a cheap no-op.
+            if vae is None or unet_patcher is None:
+                import gc as _gc
+                _gc.collect()
+                try:
+                    resources.soft_empty_cache(force=True)
+                except TypeError:
+                    resources.soft_empty_cache()
 
-        stage_start = time.perf_counter()
-        source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae)
-        timings["encode_source_latent"] = time.perf_counter() - stage_start
-        debug_summary["stages"]["encode_source_latent"] = source_latent_summary
+            stage_start = time.perf_counter()
+            source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae, cleanup_vae=False if vae is not None else cleanup_vae)
+            timings["encode_source_latent"] = time.perf_counter() - stage_start
+            debug_summary["stages"]["encode_source_latent"] = source_latent_summary
 
-        stage_start = time.perf_counter()
-        concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels, vae=vae)
-        timings["encode_concat_latent"] = time.perf_counter() - stage_start
-        debug_summary["stages"]["encode_concat_latent"] = concat_latent_summary
+            stage_start = time.perf_counter()
+            concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels, vae=vae, cleanup_vae=False if vae is not None else cleanup_vae)
+            timings["encode_concat_latent"] = time.perf_counter() - stage_start
+            debug_summary["stages"]["encode_concat_latent"] = concat_latent_summary
 
-        if tuple(source_latent.shape) != tuple(concat_latent.shape):
-            raise FluxFillValidationError(f"source_latent shape {list(source_latent.shape)} does not match concat_latent shape {list(concat_latent.shape)}.")
+            if tuple(source_latent.shape) != tuple(concat_latent.shape):
+                raise FluxFillValidationError(f"source_latent shape {list(source_latent.shape)} does not match concat_latent shape {list(concat_latent.shape)}.")
 
-        stage_start = time.perf_counter()
-        denoise_mask, denoise_mask_summary = self.prepare_denoise_mask(working_mask, source_latent.shape)
-        timings["prepare_denoise_mask"] = time.perf_counter() - stage_start
-        debug_summary["stages"]["prepare_denoise_mask"] = denoise_mask_summary
+            stage_start = time.perf_counter()
+            denoise_mask, denoise_mask_summary = self.prepare_denoise_mask(working_mask, source_latent.shape)
+            timings["prepare_denoise_mask"] = time.perf_counter() - stage_start
+            debug_summary["stages"]["prepare_denoise_mask"] = denoise_mask_summary
 
-        latent_source = FluxFillLatentSource(
-            context=None,
-            source_latent=source_latent,
-            concat_latent=concat_latent,
-            denoise_mask=denoise_mask,
-            width=int(source_latent.shape[-1] * 8),
-            height=int(source_latent.shape[-2] * 8),
-        )
+            latent_source = FluxFillLatentSource(
+                context=None,
+                source_latent=source_latent,
+                concat_latent=concat_latent,
+                denoise_mask=denoise_mask,
+                width=int(source_latent.shape[-1] * 8),
+                height=int(source_latent.shape[-2] * 8),
+            )
 
         if empty_conditioning is None:
             empty_conditioning = load_flux_empty_conditioning_cache(self.config.conditioning_cache_path)
@@ -1189,7 +1251,7 @@ class FluxFillPipeline:
         debug_summary["stages"]["denoise"] = denoise_summary
 
         stage_start = time.perf_counter()
-        decoded, decode_summary = self.decode(samples, vae=vae, cleanup_vae=vae is None)
+        decoded, decode_summary = self.decode(samples, vae=vae, cleanup_vae=cleanup_vae if vae is not None else None)
         timings["decode"] = time.perf_counter() - stage_start
         debug_summary["stages"]["decode"] = decode_summary
 

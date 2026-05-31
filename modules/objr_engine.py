@@ -34,8 +34,6 @@ FLUX_FILL_TIER_FP8 = "fp8"
 FLUX_FILL_TIER_Q8 = "q8_0"
 FLUX_FILL_TIER_Q4 = "q4_k_s"
 FLUX_FILL_GUIDANCE_DEFAULT = 15.0
-FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 24 * 1024
-FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 16 * 1024
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
 FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
@@ -45,15 +43,10 @@ FLUX_FILL_T5XXL_Q4_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.q4_k_m"
 FLUX_FILL_T5_VARIANT_FP16 = "fp16"
 FLUX_FILL_T5_VARIANT_Q8 = "q8_0"
 FLUX_FILL_T5_VARIANT_Q4 = "q4_k_m"
-FLUX_FILL_LOCAL_FP16_MIN_RAM_MB = 32 * 1024
-FLUX_FILL_LOCAL_Q8_MIN_RAM_MB = 16 * 1024
-FLUX_FILL_LOCAL_Q8_MIN_VRAM_MB = 12 * 1024
-FLUX_FILL_RUNTIME_RESIDENT_VRAM_MIN_MB = 14 * 1024
 FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB = 4 * 1024
 FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB = 8 * 1024
 FLUX_FILL_T5_FP16_MIN_BUDGET_MB = 24 * 1024
 FLUX_FILL_T5_Q8_MIN_BUDGET_MB = 12 * 1024
-FLUX_FILL_T5_RESIDENT_TOTAL_RAM_MIN_MB = 32 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
 FLUX_FILL_INPAINT_ROUTE_SDXL = "sdxl"
@@ -135,6 +128,25 @@ class FluxFillHardwareProfile:
     is_colab: bool
     vram_class: str
     runtime_posture: str
+    gpu_name: str | None = None
+    cuda_capability: str | None = None
+    flux_acceleration_class: str | None = None
+    tensor_core_accelerated: bool = False
+
+
+@dataclass(frozen=True)
+class _FluxFillPolicyContext:
+    profile_name: str
+    total_ram_mb: float
+    available_ram_mb: float
+    total_vram_mb: float
+    available_vram_mb: float
+    is_colab: bool
+    gpu_name: str | None
+    cuda_capability: str | None
+    flux_acceleration_class: str | None
+    tensor_core_accelerated: bool
+    placement_plan: Any
 
 
 def normalize_objr_engine(engine: str | None) -> str:
@@ -180,11 +192,11 @@ def _resolve_flux_fill_profile(profile: Any | None = None) -> tuple[Any | None, 
     return profile, snapshot
 
 
-def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwareProfile:
+def _resolve_flux_fill_policy_context(profile: Any | None = None) -> _FluxFillPolicyContext:
     profile, snapshot = _resolve_flux_fill_profile(profile)
-
     profile_name = str(getattr(profile, "name", "") or "").lower()
-    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or getattr(snapshot, "total_ram_mb", 0.0) or 0.0)
+    profile_notes = getattr(profile, "notes", {}) or {}
+    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or getattr(snapshot, "total_ram_mb", 0.0) or 16384.0)
     total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or getattr(snapshot, "total_vram_mb", 0.0) or 0.0)
     available_ram_mb = float(
         getattr(profile, "free_ram_mb", 0.0)
@@ -201,7 +213,46 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwarePr
         or 0.0
     )
     is_colab = bool(getattr(profile, "is_colab", False))
-    placement_plan = _resolve_flux_fill_placement_plan(profile)
+    from backend.staging_manager import PlacementSolver, ResourceLedger
+
+    planning_ledger = None
+    used_host_ram_mb = max(0.0, float(total_ram_mb) - float(available_ram_mb))
+    if used_host_ram_mb > 0.0:
+        planning_ledger = ResourceLedger()
+        # Reflect current host pressure into the staging solve without re-deciding policy locally.
+        planning_ledger.register_load(
+            "__host_ram_in_use__",
+            current_device="cpu",
+            residency_mode="cpu_only",
+            family="system",
+            variant="host_ram_in_use",
+            pinned_cpu_mb=0.0,
+            host_ram_mb=used_host_ram_mb,
+            reusable=False,
+        )
+    placement_plan = PlacementSolver.solve(
+        vram_total_mb=total_vram_mb,
+        ram_total_mb=total_ram_mb,
+        task_id="flux_fill",
+        current_ledger=planning_ledger,
+    )
+    return _FluxFillPolicyContext(
+        profile_name=profile_name,
+        total_ram_mb=total_ram_mb,
+        available_ram_mb=available_ram_mb,
+        total_vram_mb=total_vram_mb,
+        available_vram_mb=available_vram_mb,
+        is_colab=is_colab,
+        gpu_name=str(profile_notes.get("gpu_name") or "").strip() or None,
+        cuda_capability=str(profile_notes.get("cuda_capability") or "").strip() or None,
+        flux_acceleration_class=str(profile_notes.get("flux_acceleration_class") or "").strip() or None,
+        tensor_core_accelerated=bool(profile_notes.get("tensor_core_accelerated", False)),
+        placement_plan=placement_plan,
+    )
+
+
+def _hardware_profile_from_policy_context(policy_context: _FluxFillPolicyContext) -> FluxFillHardwareProfile:
+    placement_plan = policy_context.placement_plan
 
     if str(getattr(placement_plan, "runtime_posture", "") or "").lower() == "resident":
         vram_class = FLUX_FILL_VRAM_CLASS_RESIDENT
@@ -211,27 +262,27 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwarePr
         runtime_posture = FLUX_FILL_RUNTIME_POSTURE_HYBRID
 
     return FluxFillHardwareProfile(
-        profile_name=profile_name,
-        total_ram_mb=total_ram_mb,
-        available_ram_mb=available_ram_mb,
-        total_vram_mb=total_vram_mb,
-        available_vram_mb=available_vram_mb,
-        is_colab=is_colab,
+        profile_name=policy_context.profile_name,
+        total_ram_mb=policy_context.total_ram_mb,
+        available_ram_mb=policy_context.available_ram_mb,
+        total_vram_mb=policy_context.total_vram_mb,
+        available_vram_mb=policy_context.available_vram_mb,
+        is_colab=policy_context.is_colab,
         vram_class=vram_class,
         runtime_posture=runtime_posture,
+        gpu_name=policy_context.gpu_name,
+        cuda_capability=policy_context.cuda_capability,
+        flux_acceleration_class=policy_context.flux_acceleration_class,
+        tensor_core_accelerated=policy_context.tensor_core_accelerated,
     )
 
 
+def inspect_flux_fill_hardware(profile: Any | None = None) -> FluxFillHardwareProfile:
+    return _hardware_profile_from_policy_context(_resolve_flux_fill_policy_context(profile))
+
+
 def _resolve_flux_fill_placement_plan(profile: Any | None = None):
-    from backend.staging_manager import PlacementSolver
-
-    if profile is None:
-        return PlacementSolver.solve_from_system(task_id="flux_fill")
-
-    profile, snapshot = _resolve_flux_fill_profile(profile)
-    total_ram_mb = float(getattr(profile, "total_ram_mb", 0.0) or getattr(snapshot, "total_ram_mb", 0.0) or 16384.0)
-    total_vram_mb = float(getattr(profile, "total_vram_mb", 0.0) or getattr(snapshot, "total_vram_mb", 0.0) or 0.0)
-    return PlacementSolver.solve(vram_total_mb=total_vram_mb, ram_total_mb=total_ram_mb, task_id="flux_fill")
+    return _resolve_flux_fill_policy_context(profile).placement_plan
 
 
 def _flux_fill_tier_for_model_variant(model_variant: str | None) -> str:
@@ -271,9 +322,11 @@ def evaluate_flux_fill_text_encoder_residency(
     *,
     next_route_family: Any | None = None,
 ) -> dict[str, Any]:
-    hardware = inspect_flux_fill_hardware(profile)
-    t5_mode = _resolve_flux_fill_t5_mode(profile)
+    policy_context = _resolve_flux_fill_policy_context(profile)
+    hardware = _hardware_profile_from_policy_context(policy_context)
+    t5_mode = str(getattr(policy_context.placement_plan, "t5_mode", "") or "").strip().lower() or None
     normalized_next_route_family = _normalize_route_family(next_route_family)
+    # Cache retention is a bridge concern only. The staging plan has already selected the sanctioned T5 mode.
     resident_cost_mb = (
         FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
         if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT
@@ -286,7 +339,7 @@ def evaluate_flux_fill_text_encoder_residency(
         else FLUX_FILL_T5_Q8_MIN_BUDGET_MB
     )
     baseline_keep = t5_mode == "cpu_fp16_resident"
-    available_after_next_route_mb = max(0.0, float(hardware.available_ram_mb) - float(next_route_budget_mb))
+    available_after_next_route_mb = max(0.0, float(policy_context.available_ram_mb) - float(next_route_budget_mb))
     keep_resident = baseline_keep and available_after_next_route_mb >= float(resident_cost_mb + required_t5_budget_mb)
     policy = "flux_fill_fp16_disk_paged_default"
     if t5_mode == "disk_paged_q8":
@@ -301,9 +354,9 @@ def evaluate_flux_fill_text_encoder_residency(
         "resident_cost_mb": float(resident_cost_mb),
         "next_route_budget_mb": float(next_route_budget_mb),
         "required_t5_budget_mb": float(required_t5_budget_mb),
-        "available_ram_mb": float(hardware.available_ram_mb),
+        "available_ram_mb": float(policy_context.available_ram_mb),
         "available_after_next_route_mb": float(available_after_next_route_mb),
-        "total_ram_mb": float(hardware.total_ram_mb),
+        "total_ram_mb": float(policy_context.total_ram_mb),
         "t5_mode": t5_mode,
         "hardware": hardware,
         "policy": policy,
@@ -339,15 +392,6 @@ def normalize_flux_fill_t5_variant(variant: str | None) -> str:
     if normalized in {"q4", "q4_k_m", "t5xxl_q4_k_m"}:
         return FLUX_FILL_T5_VARIANT_Q4
     raise ValueError(f"Unsupported Flux Fill T5 variant: {variant!r}. Expected fp16, q8_0, or q4_k_m.")
-
-
-def _flux_fill_t5_budget_mb(hardware: FluxFillHardwareProfile) -> float:
-    reserve_mb = (
-        FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
-        if hardware.runtime_posture == FLUX_FILL_RUNTIME_POSTURE_RESIDENT
-        else FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB
-    )
-    return max(0.0, float(hardware.available_ram_mb) - float(reserve_mb))
 
 
 def should_keep_flux_fill_text_encoder_resident(
@@ -389,6 +433,7 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if override is None:
         override = os.environ.get("FOOOCUS_NEX_FLUX_FILL_T5_VARIANT")
     if override is not None and str(override).strip() != "":
+        # Manual compatibility override. Production policy still defaults to staging-owned fp16 selection.
         return normalize_flux_fill_t5_variant(override)
 
     t5_mode = _resolve_flux_fill_t5_mode(profile)
@@ -417,6 +462,7 @@ def ensure_flux_fill_t5_asset(
         if selected_variant != FLUX_FILL_T5_VARIANT_FP16:
             raise
 
+        # Explicit compatibility fallback boundary: only use q8 when the sanctioned fp16 asset is unavailable.
         fallback_variant = FLUX_FILL_T5_VARIANT_Q8
         fallback_asset_id = FLUX_FILL_T5_ASSET_BY_VARIANT[fallback_variant]
         logger.warning(
@@ -604,6 +650,16 @@ def get_flux_empty_conditioning_cache_path(conditioning: str | None = None, *, p
     return get_flux_fill_conditioning_cache_path(conditioning, progress=progress)
 
 
+def _component_is_gpu_resident(component: Any | None) -> bool:
+    if component is None:
+        return False
+    residency_mode = str(getattr(component, "residency_mode", "") or "").strip().lower()
+    if residency_mode:
+        return residency_mode == "gpu_resident"
+    mode = getattr(component, "mode", None)
+    return str(getattr(mode, "value", "") or mode or "").strip().lower() == "gpu_resident"
+
+
 def resolve_flux_fill_asset_paths(
     tier: str | None = None,
     *,
@@ -613,6 +669,7 @@ def resolve_flux_fill_asset_paths(
 ) -> dict[str, Any]:
     policy_plan = _resolve_flux_fill_placement_plan()
     fallback_tier = FLUX_FILL_TIER_Q4
+    # `tier=` remains an explicit compatibility override; the production path consumes the staging-selected variant.
     selected_tier = (
         _normalize_flux_fill_tier(tier)
         if tier is not None and str(tier).strip() != ""
@@ -671,6 +728,7 @@ def resolve_flux_fill_asset_paths(
         unet_asset_id, unet_path, ae_path = _resolve_unet_bundle(selected_model_variant)
     except Exception as exc:
         if selected_model_variant != fallback_model_variant:
+            # Explicit compatibility fallback boundary: preserve Q4 when the primary asset cannot be resolved.
             logger.warning(
                 "Flux Fill primary runtime %s is unavailable; falling back to %s. Recovery boundary: %s",
                 selected_model_variant,
@@ -711,6 +769,7 @@ def resolve_flux_fill_asset_paths(
         "runtime_posture": runtime_posture,
         "streaming_profile": streaming_profile,
         "resident_load_strategy": resident_load_strategy,
+        "keep_vae_resident": _component_is_gpu_resident(getattr(policy_plan, "vae", None)),
         "fallback_model_variant": fallback_model_variant,
         "fallback_engaged": bool(fallback_engaged),
         "fallback_reason": str(fallback_reason) if fallback_reason is not None else "",
@@ -720,7 +779,7 @@ def resolve_flux_fill_asset_paths(
     }
 
 
-def _flux_fill_session_signature(asset_paths: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+def _flux_fill_session_signature(asset_paths: dict[str, Any]) -> tuple[str, str, str, str, str, str, str, str]:
     return (
         str(asset_paths["tier"]),
         str(asset_paths["unet_path"]),
@@ -729,6 +788,7 @@ def _flux_fill_session_signature(asset_paths: dict[str, Any]) -> tuple[str, str,
         str(asset_paths.get("runtime_posture", "")),
         str(asset_paths.get("streaming_profile", "")),
         str(asset_paths.get("resident_load_strategy", "")),
+        str(asset_paths.get("keep_vae_resident", "")),
     )
 
 
@@ -757,6 +817,7 @@ def _build_flux_fill_session(asset_paths: dict[str, Any]) -> FluxFillSession:
         runtime_posture=asset_paths.get("runtime_posture") or None,
         streaming_profile=asset_paths.get("streaming_profile") or None,
         resident_load_strategy=asset_paths.get("resident_load_strategy") or None,
+        keep_vae_resident=asset_paths.get("keep_vae_resident"),
         fallback_model_variant=asset_paths.get("fallback_model_variant") or None,
     )
     conditioning_provider = FluxPromptConditioningCache(
@@ -1247,6 +1308,7 @@ def remove_object_flux_fill(
         runtime_posture=asset_paths.get("runtime_posture"),
         streaming_profile=asset_paths.get("streaming_profile"),
         resident_load_strategy=asset_paths.get("resident_load_strategy"),
+        keep_vae_resident=asset_paths.get("keep_vae_resident"),
         fallback_model_variant=asset_paths.get("fallback_model_variant"),
     )
     result = run_flux_fill_pipeline(
