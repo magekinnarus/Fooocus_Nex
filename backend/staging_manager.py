@@ -97,6 +97,7 @@ class InferenceCostProfile:
 class T5CostProfile:
     cpu_fp16_resident_mb: float = 9334.0
     cpu_q8_resident_mb: float = 4827.0
+    disk_paged_fp16_mb: float = 9334.0
     disk_paged_q8_mb: float = 2762.0
 
 
@@ -194,6 +195,8 @@ class ResolvedRequest:
     hardware_tier: HardwareTier
     profile: InferenceCostProfile
     t5_mode: str | None
+    vram_total_mb: float
+    total_ram_mb: float
     lora_count: int = 0
 
 
@@ -658,11 +661,9 @@ class ExecutionClassSolver:
         available_ram_mb = total_ram_mb
         if ledger is not None:
             available_ram_mb = ledger.available_ram_mb(total_ram_mb)
-        if total_ram_mb >= 32768.0 and available_ram_mb >= 30000.0:
+        if total_ram_mb >= 40960.0 and available_ram_mb >= 32768.0:
             return "cpu_fp16_resident"
-        if total_ram_mb >= 16384.0 and available_ram_mb >= 12000.0:
-            return "cpu_q8_resident"
-        return "disk_paged_q8"
+        return "disk_paged_fp16"
 
     def resolve_request(
         self,
@@ -688,6 +689,8 @@ class ExecutionClassSolver:
             hardware_tier=hardware_tier,
             profile=profile,
             t5_mode=t5_mode,
+            vram_total_mb=float(vram_total_mb),
+            total_ram_mb=float(total_ram_mb),
             lora_count=lora_count,
         )
 
@@ -830,11 +833,7 @@ class PlacementPlanner:
             else:
                 runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
                 resident_load_strategy = None
-                if request.hardware_tier in {
-                    HardwareTier.T1_VERY_LOW,
-                    HardwareTier.T2_LOW,
-                    HardwareTier.T3_LOW_NORMAL,
-                }:
+                if float(request.vram_total_mb) <= 8192.0:
                     streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
                 else:
                     streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
@@ -1093,13 +1092,19 @@ class PlacementPlanner:
             residency_mode = t5_mode
             load_device = "cpu"
             offload_device = "cpu"
+        elif t5_mode == "disk_paged_fp16":
+            pinned_cpu_mb = 0.0
+            host_ram_mb = costs.disk_paged_fp16_mb
+            residency_mode = t5_mode
+            load_device = "disk"
+            offload_device = "disk"
         else:
             pinned_cpu_mb = 0.0
             host_ram_mb = costs.disk_paged_q8_mb
             residency_mode = t5_mode
             load_device = "disk"
             offload_device = "disk"
-        if t5_mode != "disk_paged_q8":
+        if t5_mode not in {"disk_paged_fp16", "disk_paged_q8"}:
             host_ram_mb = pinned_cpu_mb
         return self._build_component(
             component_id="t5",
@@ -1456,7 +1461,7 @@ class PlacementPlanner:
             components["t5"] = self._t5(
                 family=request.family,
                 variant=request.model_variant,
-                t5_mode=request.t5_mode or "cpu_q8_resident",
+                t5_mode=request.t5_mode or "disk_paged_fp16",
                 ledger=ledger,
                 available_ram_mb=available_ram_mb,
             )

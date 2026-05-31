@@ -247,7 +247,23 @@ def _normalize_route_family(route_family: Any | None) -> str:
 
 def _flux_fill_next_route_budget_mb(route_family: Any | None) -> float:
     normalized_route_family = _normalize_route_family(route_family)
+    if normalized_route_family == "":
+        return 0.0
     return float(FLUX_FILL_TEXT_ENCODER_ROUTE_BUDGET_MB.get(normalized_route_family, 6144.0))
+
+
+def _resolve_flux_fill_t5_mode(profile: Any | None = None) -> str | None:
+    plan = _resolve_flux_fill_placement_plan(profile)
+    return str(getattr(plan, "t5_mode", "") or "").strip().lower() or None
+
+
+def _variant_for_flux_fill_t5_mode(t5_mode: str | None) -> str:
+    normalized_t5_mode = str(t5_mode or "").strip().lower()
+    if normalized_t5_mode in {"cpu_fp16_resident", "disk_paged_fp16"}:
+        return FLUX_FILL_T5_VARIANT_FP16
+    if normalized_t5_mode in {"cpu_q8_resident", "disk_paged_q8"}:
+        return FLUX_FILL_T5_VARIANT_Q8
+    return FLUX_FILL_T5_VARIANT_FP16
 
 
 def evaluate_flux_fill_text_encoder_residency(
@@ -256,7 +272,7 @@ def evaluate_flux_fill_text_encoder_residency(
     next_route_family: Any | None = None,
 ) -> dict[str, Any]:
     hardware = inspect_flux_fill_hardware(profile)
-    baseline_keep = False
+    t5_mode = _resolve_flux_fill_t5_mode(profile)
     normalized_next_route_family = _normalize_route_family(next_route_family)
     resident_cost_mb = (
         FLUX_FILL_T5_RESIDENT_RESERVE_RAM_MB
@@ -264,7 +280,19 @@ def evaluate_flux_fill_text_encoder_residency(
         else FLUX_FILL_T5_HYBRID_RESERVE_RAM_MB
     )
     next_route_budget_mb = _flux_fill_next_route_budget_mb(normalized_next_route_family)
-    keep_resident = False
+    required_t5_budget_mb = (
+        FLUX_FILL_T5_FP16_MIN_BUDGET_MB
+        if t5_mode in {"cpu_fp16_resident", "disk_paged_fp16"}
+        else FLUX_FILL_T5_Q8_MIN_BUDGET_MB
+    )
+    baseline_keep = t5_mode == "cpu_fp16_resident"
+    available_after_next_route_mb = max(0.0, float(hardware.available_ram_mb) - float(next_route_budget_mb))
+    keep_resident = baseline_keep and available_after_next_route_mb >= float(resident_cost_mb + required_t5_budget_mb)
+    policy = "flux_fill_fp16_disk_paged_default"
+    if t5_mode == "disk_paged_q8":
+        policy = "flux_fill_q8_disk_paged_fallback"
+    elif keep_resident:
+        policy = "flux_fill_fp16_resident_roomy_cache"
 
     return {
         "keep_resident": keep_resident,
@@ -272,10 +300,13 @@ def evaluate_flux_fill_text_encoder_residency(
         "next_route_family": normalized_next_route_family or None,
         "resident_cost_mb": float(resident_cost_mb),
         "next_route_budget_mb": float(next_route_budget_mb),
+        "required_t5_budget_mb": float(required_t5_budget_mb),
         "available_ram_mb": float(hardware.available_ram_mb),
+        "available_after_next_route_mb": float(available_after_next_route_mb),
         "total_ram_mb": float(hardware.total_ram_mb),
+        "t5_mode": t5_mode,
         "hardware": hardware,
-        "policy": "flux_fill_streamed_t5_default",
+        "policy": policy,
     }
 
 
@@ -360,17 +391,9 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if override is not None and str(override).strip() != "":
         return normalize_flux_fill_t5_variant(override)
 
-    profile, _snapshot = _resolve_flux_fill_profile(profile)
-    profile_name = str(getattr(profile, "name", "") or "").lower()
-
-    try:
-        from backend import environment_profile
-
-        if profile_name == environment_profile.PROFILE_COLAB_FREE:
-            return FLUX_FILL_T5_VARIANT_Q8
-    except Exception:
-        if profile_name == "colab_free":
-            return FLUX_FILL_T5_VARIANT_Q8
+    t5_mode = _resolve_flux_fill_t5_mode(profile)
+    if t5_mode is not None:
+        return _variant_for_flux_fill_t5_mode(t5_mode)
 
     return FLUX_FILL_T5_VARIANT_FP16
 
@@ -378,6 +401,30 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
 def get_flux_fill_t5_asset_id(variant: str | None = None, *, profile: Any | None = None) -> str:
     selected_variant = select_flux_fill_t5_variant(profile, variant=variant)
     return FLUX_FILL_T5_ASSET_BY_VARIANT[selected_variant]
+
+
+def ensure_flux_fill_t5_asset(
+    variant: str | None = None,
+    *,
+    profile: Any | None = None,
+    progress: bool = True,
+) -> tuple[str, str, str]:
+    selected_variant = select_flux_fill_t5_variant(profile, variant=variant)
+    primary_asset_id = FLUX_FILL_T5_ASSET_BY_VARIANT[selected_variant]
+    try:
+        return selected_variant, primary_asset_id, model_registry.ensure_asset(primary_asset_id, progress=progress)
+    except Exception as exc:
+        if selected_variant != FLUX_FILL_T5_VARIANT_FP16:
+            raise
+
+        fallback_variant = FLUX_FILL_T5_VARIANT_Q8
+        fallback_asset_id = FLUX_FILL_T5_ASSET_BY_VARIANT[fallback_variant]
+        logger.warning(
+            "Flux Fill fp16 T5 asset is unavailable; falling back to %s. Recovery boundary: %s",
+            fallback_variant,
+            exc,
+        )
+        return fallback_variant, fallback_asset_id, model_registry.ensure_asset(fallback_asset_id, progress=progress)
 
 
 def normalize_flux_fill_conditioning(conditioning: str | None) -> str:
@@ -492,7 +539,10 @@ def generate_flux_fill_prompt_conditioning_cache(
         raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
 
     clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
-    t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
+    _resolved_t5_variant, _resolved_t5_asset_id, t5_path = ensure_flux_fill_t5_asset(
+        t5_variant,
+        progress=progress,
+    )
     output_path = _flux_fill_prompt_cache_path(prompt_text, clip_l_path, t5_path, cache_mode)
     if output_path.exists():
         return str(output_path)
@@ -526,7 +576,10 @@ def generate_flux_fill_prompt_conditioning(
         raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
 
     clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID, progress=progress)
-    t5_path = model_registry.ensure_asset(get_flux_fill_t5_asset_id(t5_variant), progress=progress)
+    _resolved_t5_variant, _resolved_t5_asset_id, t5_path = ensure_flux_fill_t5_asset(
+        t5_variant,
+        progress=progress,
+    )
     keep_resident = should_keep_flux_fill_text_encoder_resident()
     try:
         if not keep_resident:
