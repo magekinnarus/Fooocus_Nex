@@ -211,6 +211,14 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     sdxl_policy = getattr(task_state, 'sdxl_execution_policy', None)
 
     if not unified_runtime_owner:
+        import modules.model_taxonomy as model_taxonomy
+        taxonomy = config.resolve_model_taxonomy(task_state.base_model_name)
+        if taxonomy.architecture == model_taxonomy.ARCHITECTURE_SDXL:
+            raise RuntimeError(
+                f"Legacy shared diffusion path is gutted. Standard SDXL execution requires the unified runtime. "
+                f"Model: {task_state.base_model_name}"
+            )
+
         # Legacy shared-pipeline fallback: refresh the inherited SDXL bridge and encode CLIP here.
         with resources.memory_phase_scope(
             resources.MemoryPhase.MODEL_REFRESH,

@@ -104,6 +104,13 @@ def _supports_unified_sdxl_runtime_owner(task_state) -> bool:
     if base_model_name == '' or base_model_name.lower().endswith('.gguf'):
         return False
 
+    import modules.config as config
+    import modules.model_taxonomy as model_taxonomy
+
+    taxonomy = config.resolve_model_taxonomy(base_model_name)
+    if taxonomy.architecture != model_taxonomy.ARCHITECTURE_SDXL:
+        return False
+
     execution_family = str(
         getattr(task_state, 'sdxl_execution_family', None)
         or getattr(policy, 'execution_family', None)

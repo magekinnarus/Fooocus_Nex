@@ -236,6 +236,14 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
         )
     else:
         # Legacy shared diffusion fallback for routes the unified runtime does not currently own.
+        import modules.model_taxonomy as model_taxonomy
+        taxonomy = config.resolve_model_taxonomy(task_state.base_model_name)
+        if taxonomy.architecture == model_taxonomy.ARCHITECTURE_SDXL:
+            raise RuntimeError(
+                f"Legacy shared diffusion path is gutted. Standard SDXL execution requires the unified runtime. "
+                f"Model: {task_state.base_model_name}"
+            )
+
         if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified':
             if route_family in {'txt2img', 'image_input'}:
                 raise RuntimeError(
@@ -271,42 +279,25 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
                             positive_cond, negative_cond,
                             cn_net, cn_img, cn_weight, 0, cn_stop)
 
-        callback = get_sampling_callback(
-            task_state, progressbar_callback, current_task_id, total_count,
-            preparation_steps, all_steps
-        )
-
-        imgs = pipeline.process_diffusion(
-            positive_cond=positive_cond,
-            negative_cond=negative_cond,
-            steps=task_state.steps,
-            width=task_state.width,
-            height=task_state.height,
-            image_seed=task_dict['task_seed'],
-            callback=callback,
-            sampler_name=task_state.sampler_name,
-            scheduler_name=final_scheduler_name,
-            latent=task_state.initial_latent,
-            denoise=denoising_strength,
-            tiled=task_state.tiled,
-            cfg_scale=task_state.cfg_scale,
-            disable_preview=task_state.disable_preview,
-            quality=quality,
-            task_state=task_state
+        # For non-SDXL (SD 1.5) models that passed preprocessing, raise an explicit error here
+        # since process_diffusion has been deleted as part of the SDXL gutting pass.
+        raise RuntimeError(
+            f"Legacy shared diffusion path is gutted. SD 1.5 execution is no longer supported. "
+            f"Model: {task_state.base_model_name}"
         )
 
         del positive_cond, negative_cond  # Save memory
 
-        if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
-            with resources.memory_phase_scope(
-                resources.MemoryPhase.STITCH,
-                task=task_state,
-                notes={'current_task_id': current_task_id},
-                end_notes={'completed': True},
-            ):
-                from modules.pipeline.inpaint import InpaintPipeline
-                inpaint = InpaintPipeline()
-                imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
+    if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.STITCH,
+            task=task_state,
+            notes={'current_task_id': current_task_id},
+            end_notes={'completed': True},
+        ):
+            from modules.pipeline.inpaint import InpaintPipeline
+            inpaint = InpaintPipeline()
+            imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
 
     current_progress = int(preparation_steps + (100 - preparation_steps) / float(all_steps) * task_state.steps)
 
