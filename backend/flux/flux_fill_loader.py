@@ -356,9 +356,8 @@ def _instantiate_flux_fill_native_model(
     *,
     offload_device: torch.device,
 ) -> tuple[Any, dict[str, Any]]:
-    from backend import resources
+    from backend import resources, precision
     from ldm_patched.modules import model_detection
-    from ldm_patched.modules import model_management
     from ldm_patched.modules import supported_models_base
 
     state_probe = _load_flux_fill_native_probe(str(path))
@@ -367,7 +366,7 @@ def _instantiate_flux_fill_native_model(
     inference_device = resources.get_torch_device()
     resident_weight_dtype = source_weight_dtype
     if source_weight_dtype is not None:
-        resident_weight_dtype = model_management.unet_dtype(
+        resident_weight_dtype = precision.unet_dtype(
             device=inference_device,
             model_params=parameter_count,
             weight_dtype=source_weight_dtype,
@@ -383,7 +382,7 @@ def _instantiate_flux_fill_native_model(
 
     manual_cast_dtype = None
     if resident_weight_dtype is not None:
-        manual_cast_dtype = model_management.unet_manual_cast(resident_weight_dtype, inference_device)
+        manual_cast_dtype = precision.unet_manual_cast(resident_weight_dtype, inference_device)
         model_config.set_manual_cast(manual_cast_dtype)
     elif isinstance(model_config, supported_models_base.BASE):
         model_config.set_manual_cast(torch.float16 if inference_device.type == "cuda" else torch.float32)

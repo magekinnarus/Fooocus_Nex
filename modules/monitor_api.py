@@ -3,7 +3,7 @@ import torch
 import subprocess
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-import ldm_patched.modules.model_management as model_management
+from backend import resources
 
 monitor_router = APIRouter()
 
@@ -33,7 +33,7 @@ async def get_monitor_data():
         vram_total = 0.0
         vram_free = 0.0
         
-        device = model_management.get_torch_device()
+        device = resources.get_torch_device()
         device_index = 0
         if device.type == 'cuda':
             try:

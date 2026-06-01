@@ -13,7 +13,6 @@ import ldm_patched.modules.latent_formats
 from ldm_patched.modules.sd import load_checkpoint_guess_config
 import math
 import json
-import ldm_patched.modules.model_management
 import ldm_patched.modules.model_sampling
 import ldm_patched.modules.sd
 import ldm_patched.modules.latent_formats
@@ -58,7 +57,7 @@ class VAEEncodeTiled:
 
 class EmptyLatentImage:
     def __init__(self):
-        self.device = ldm_patched.modules.model_management.intermediate_device()
+        self.device = resources.intermediate_device()
 
     def generate(self, width, height, batch_size=1):
         latent = torch.zeros([batch_size, 4, height // 8, width // 8], device=self.device)
@@ -552,7 +551,7 @@ def get_previewer(model):
     global VAE_approx_models
 
     from modules.config import path_vae_approx
-    from ldm_patched.utils.latent_visualization import decode_latent_preview, resolve_taesd_previewer
+    from backend.preview import decode_latent_preview, resolve_taesd_previewer
 
     latent_format = model.model.latent_format
     load_device = model.load_device

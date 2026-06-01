@@ -2,6 +2,13 @@ import torch
 import logging
 import contextlib
 
+from ldm_patched.modules.model_management import (
+    unet_dtype,
+    unet_manual_cast,
+    text_encoder_dtype,
+    pick_weight_dtype,
+)
+
 def autocast_context(device, enabled=True):
     """
     Returns a consistent autocast context for the given device.

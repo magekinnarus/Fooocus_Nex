@@ -4,7 +4,7 @@ import numpy as np
 import logging
 
 import modules.core as core
-import ldm_patched.modules.model_management
+import backend.resources as resources
 import ldm_patched.modules.utils
 import ldm_patched.pfn.model_loading as loading
 from modules.config import path_upscale_models
@@ -89,7 +89,7 @@ def clear_model_cache():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
     
-    ldm_patched.modules.model_management.soft_empty_cache()
+    resources.soft_empty_cache()
     print("Upscale model cache cleared and memory reclaimed.")
 
 def perform_upscale(img, model_name=None, scale_override=None):
@@ -120,7 +120,7 @@ def perform_upscale(img, model_name=None, scale_override=None):
     print(f'Upscaling image with shape {str(img.shape)} using {model_name} ...')
 
     model = load_model(model_name)
-    device = ldm_patched.modules.model_management.get_torch_device()
+    device = resources.get_torch_device()
     
     # Precision selection: prefer Float32 for GANs by default for maximum compatibility.
     # Pascal (10x0) and older GPUs see massive performance hits in FP16.

@@ -216,7 +216,7 @@ def _build_flux_preview_transform(active_session):
     def decode_preview(preview_payload):
         try:
             import torch
-            from ldm_patched.utils.latent_visualization import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
+            from backend.preview import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
         except Exception:
             return None
 

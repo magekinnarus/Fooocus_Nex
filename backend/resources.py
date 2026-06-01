@@ -1291,6 +1291,13 @@ def vae_offload_device():
     # DEPRECATED: Use get_component_plan('vae')
     return torch.device("cpu")
 
+def intermediate_device():
+    from ldm_patched.modules.args_parser import args
+    if getattr(args, "always_gpu", False):
+        return get_torch_device()
+    else:
+        return torch.device("cpu")
+
 def unload_all_models():
     free_memory(1e30, get_torch_device())
 

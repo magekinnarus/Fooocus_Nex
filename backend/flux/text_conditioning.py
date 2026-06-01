@@ -11,7 +11,7 @@ import torch
 from transformers import T5TokenizerFast
 
 import backend.patching as patching
-import ldm_patched.modules.model_management as model_management
+from backend import precision
 import ldm_patched.modules.ops as base_ops
 import ldm_patched.modules.sd1_clip as sd1_clip
 import ldm_patched.modules.utils as comfy_utils
@@ -400,7 +400,7 @@ class FluxClipModel(torch.nn.Module):
     def __init__(self, *, dtype_t5=None, device="cpu", dtype=None, model_options: dict[str, Any] | None = None):
         super().__init__()
         model_options = model_options or {}
-        dtype_t5 = model_management.pick_weight_dtype(dtype_t5, dtype, device)
+        dtype_t5 = precision.pick_weight_dtype(dtype_t5, dtype, device)
         self.clip_l = sd1_clip.SDClipModel(device=device, dtype=dtype)
         self.t5xxl = T5XXLTextEncoder(device=device, dtype=dtype_t5, model_options=model_options)
         self.dtypes = {dtype, dtype_t5}
@@ -665,7 +665,7 @@ def load_flux_prompt_text_encoder(
     # decisions are about RAM fit instead of opportunistic GPU residency.
     load_device = torch.device("cpu")
     offload_device = torch.device("cpu")
-    dtype = model_management.text_encoder_dtype(load_device)
+    dtype = precision.text_encoder_dtype(load_device)
     model_options = {}
     model_options.update(clip_l_options)
     model_options.update(t5_options)
