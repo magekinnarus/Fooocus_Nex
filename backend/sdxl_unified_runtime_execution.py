@@ -350,8 +350,15 @@ class UnifiedSDXLRuntimeExecutionMixin:
         prepared_inputs: Any,
         device: torch.device,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        spatial = prepared_inputs.spatial_conditioning
         payload = prepared_inputs.payload or {}
+        if "initial_latent" in payload and payload["initial_latent"] is not None:
+            latent = payload["initial_latent"]
+            denoise_mask = payload.get("denoise_mask")
+            latent = self._move_nested_tensors_to_device(latent, device)
+            denoise_mask = self._move_nested_tensors_to_device(denoise_mask, device)
+            return latent, denoise_mask
+
+        spatial = prepared_inputs.spatial_conditioning
         if spatial is None:
             return None, None
 
@@ -402,13 +409,14 @@ class UnifiedSDXLRuntimeExecutionMixin:
     def _calculate_sigmas(self, device: torch.device, *, execution_unet: Any | None = None) -> torch.Tensor:
         sampler_model = execution_unet or self.unet
         quality = dict(getattr(self.config, "quality", {}) or {})
+        denoise_val = float(getattr(self.config, "denoise_strength", None) or getattr(self.config, "denoise", None) or 1.0)
         sampler_instance = sampling.KSampler(
             sampler_model,
             int(self.config.steps),
             device,
             self.config.sampler,
             self.config.scheduler,
-            1.0,
+            denoise_val,
             model_options={"quality": quality} if quality else {},
         )
         return sampler_instance.sigmas

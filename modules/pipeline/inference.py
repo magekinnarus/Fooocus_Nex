@@ -50,8 +50,6 @@ def _uses_unified_sdxl_runtime(task_state, *, route_family=None):
         return False, 'runtime_owner_not_unified'
     if str(getattr(task_state, 'base_model_name', '') or '').strip().lower().endswith('.gguf'):
         return False, 'gguf_runtime_owned_elsewhere'
-    if bool(getattr(task_state, 'tiled', False)):
-        return False, 'tiled_decode_not_supported'
 
     if route_family not in {None, 'txt2img', 'image_input'}:
         return False, f'unsupported_route_family:{route_family}'
@@ -187,7 +185,7 @@ def _run_unified_sdxl_task(
             callback=callback,
             disable_pbar=True,
         )
-        decoded_images, _, _ = runtime.decode_latent(denoise_result.samples)
+        decoded_images, _, _ = runtime.decode_latent(denoise_result.samples, tiled=bool(getattr(task_state, 'tiled', False)))
         return core.pytorch_to_numpy(decoded_images)
     finally:
         runtime.close()
@@ -239,7 +237,7 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
     else:
         # Legacy shared diffusion fallback for routes the unified runtime does not currently own.
         if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified':
-            if route_family in {'txt2img', 'image_input'} and not bool(getattr(task_state, 'tiled', False)):
+            if route_family in {'txt2img', 'image_input'}:
                 raise RuntimeError(
                     f"Unified SDXL runtime owner selected but failed to execute on standard route: {rejection_reason}"
                 )

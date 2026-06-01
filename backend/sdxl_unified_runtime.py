@@ -72,6 +72,9 @@ class UnifiedSDXLRuntimeConfig:
     controlnet_quality: dict[str, float] = field(default_factory=dict)
     contextual_tasks: dict[str, tuple[tuple[Any, ...], ...]] = field(default_factory=dict)
     contextual_assets: dict[str, Any] = field(default_factory=dict)
+    initial_latent: Any | None = None
+    denoise_strength: float | None = None
+
 
 
 @dataclass
@@ -307,7 +310,10 @@ class UnifiedSDXLRuntime(
                 "lora_specs": self._resolved_lora_specs,
                 "base_model_fingerprint": self.base_model.fingerprint,
                 "compiled_unet_fingerprint": self.compiled_unet.artifact_fingerprint,
+                "initial_latent": self.config.initial_latent,
+                "denoise_strength": self.config.denoise_strength,
                 **structural_payload,
+
                 **spatial_payload,
                 **injected_payload,
             },
@@ -407,7 +413,7 @@ class UnifiedSDXLRuntime(
             metrics=metrics,
         )
 
-    def decode_latent(self, latent: torch.Tensor) -> tuple[torch.Tensor, float, float]:
+    def decode_latent(self, latent: torch.Tensor, tiled: bool = False) -> tuple[torch.Tensor, float, float]:
         self.load_components()
         decode_device = self._execution_device()
         self._park_compiled_unet_before_decode()
@@ -428,7 +434,7 @@ class UnifiedSDXLRuntime(
         decode_start = time.perf_counter()
         try:
             with torch.inference_mode():
-                decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=False)
+                decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=tiled)
                 images = self._compose_decoded_images(decoded_patch)
         finally:
             self._detach_component(getattr(self.vae, "patcher", None))

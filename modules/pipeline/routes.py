@@ -122,9 +122,6 @@ def _supports_unified_sdxl_runtime_owner(task_state) -> bool:
     }:
         return False
 
-    if bool(getattr(task_state, 'tiled', False)):
-        return False
-
     return True
 
 
@@ -905,7 +902,13 @@ class UpscaleStage(PipelineStage):
 
         direct_return = apply_upscale(task_state, context.progressbar_callback)
         if not direct_return:
-            task_state.uov_input_image = apply_tiled_diffusion_refinement(task_state, task_state.uov_input_image, context.progressbar_callback)
+            prompt_task = context.prompt_tasks[0] if len(context.prompt_tasks) > 0 else None
+            task_state.uov_input_image = apply_tiled_diffusion_refinement(
+                task_state,
+                task_state.uov_input_image,
+                context.progressbar_callback,
+                prompt_task=prompt_task,
+            )
 
         if context.progressbar_callback is not None:
             context.progressbar_callback(task_state, 100, 'Saving image to system ...')
