@@ -113,6 +113,9 @@ def _run_unified_sdxl_task(
 ):
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
 
+    policy = getattr(task_state, 'sdxl_execution_policy', None)
+    stream_budget = float(getattr(policy, 'stream_budget_mb', 256.0))
+
     resolved_loras = list(getattr(task_state, 'loras_processed', None) or loras or [])
     resolved_additional_loras = list(base_model_additional_loras or [])
     merged_loras = tuple((str(path), float(weight)) for path, weight in (resolved_loras + resolved_additional_loras))
@@ -137,9 +140,11 @@ def _run_unified_sdxl_task(
         model_variant='sdxl',
         execution_class=str(
             getattr(task_state, 'sdxl_execution_family', None)
-            or getattr(getattr(task_state, 'sdxl_execution_policy', None), 'execution_family', None)
+            or getattr(policy, 'execution_family', None)
             or 'standard_sdxl'
         ),
+        streamlike_budget_mb=stream_budget,
+        quality=quality,
         checkpoint_path=_resolve_unified_checkpoint_path(task_state),
         vae_path=_resolve_unified_vae_path(task_state),
         prompt=str(task_dict.get('task_prompt', task_state.prompt) or ''),
@@ -234,6 +239,10 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
     else:
         # Legacy shared diffusion fallback for routes the unified runtime does not currently own.
         if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified':
+            if route_family in {'txt2img', 'image_input'} and not bool(getattr(task_state, 'tiled', False)):
+                raise RuntimeError(
+                    f"Unified SDXL runtime owner selected but failed to execute on standard route: {rejection_reason}"
+                )
             print(f'[UnifiedRuntime] Falling back to shared diffusion path: {rejection_reason}')
 
         positive_cond = task_dict['c']

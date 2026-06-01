@@ -59,7 +59,8 @@ class UnifiedSDXLRuntimeConfig:
     batch_size: int = 1
     lora_specs: tuple[tuple[str, float], ...] = field(default_factory=tuple)
     pin_base_unet_without_lora: bool = False
-    streamlike_budget_mb: int = 256
+    streamlike_budget_mb: float = 256.0
+    quality: dict[str, float] = field(default_factory=dict)
     source_pixels: Any | None = None
     source_mask: Any | None = None
     spatial_mode: str | None = None
@@ -206,6 +207,8 @@ class UnifiedSDXLRuntime(
             self.config.height,
             target_width=self.config.width,
             target_height=self.config.height,
+            adm_scale_positive=float((self.config.quality or {}).get("adm_scaler_positive", 1.5)),
+            adm_scale_negative=float((self.config.quality or {}).get("adm_scaler_negative", 0.8)),
         )
         adm_build_wall = time.perf_counter() - adm_start
 
@@ -340,6 +343,7 @@ class UnifiedSDXLRuntime(
     ) -> UnifiedSDXLDenoiseResult:
         _ = callback
         _ = disable_pbar
+        resources.soft_empty_cache(force=True)
         self.load_components()
         self._validate_prepared_inputs(prepared_inputs)
         self.prepared_inputs = prepared_inputs
@@ -520,6 +524,8 @@ class UnifiedSDXLRuntime(
 
     def _clean_unet_budget_bytes(self, device: torch.device) -> int:
         if device.type != "cuda":
+            return 0
+        if self.config.streamlike_budget_mb <= 0:
             return 0
         return max(64, int(self.config.streamlike_budget_mb)) * 1024 * 1024
 

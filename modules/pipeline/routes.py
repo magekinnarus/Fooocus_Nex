@@ -125,19 +125,8 @@ def _supports_unified_sdxl_runtime_owner(task_state) -> bool:
     if bool(getattr(task_state, 'tiled', False)):
         return False
 
-    default_quality = {
-        'sharpness': 2.0,
-        'adaptive_cfg': 7.0,
-        'adm_scaler_positive': 1.5,
-        'adm_scaler_negative': 0.8,
-        'adm_scaler_end': 0.3,
-        'controlnet_softness': 0.25,
-    }
-    for field_name, default_value in default_quality.items():
-        if abs(float(getattr(task_state, field_name, default_value)) - float(default_value)) > 1e-6:
-            return False
-
     return True
+
 
 
 def describe_route(route: PipelineRoute) -> list[str]:

@@ -401,6 +401,7 @@ class UnifiedSDXLRuntimeExecutionMixin:
 
     def _calculate_sigmas(self, device: torch.device, *, execution_unet: Any | None = None) -> torch.Tensor:
         sampler_model = execution_unet or self.unet
+        quality = dict(getattr(self.config, "quality", {}) or {})
         sampler_instance = sampling.KSampler(
             sampler_model,
             int(self.config.steps),
@@ -408,7 +409,7 @@ class UnifiedSDXLRuntimeExecutionMixin:
             self.config.sampler,
             self.config.scheduler,
             1.0,
-            model_options={},
+            model_options={"quality": quality} if quality else {},
         )
         return sampler_instance.sigmas
 
@@ -524,6 +525,37 @@ class UnifiedSDXLRuntimeExecutionMixin:
         except TypeError:
             return model_sampling.noise_scaling(sigma, noise, latent_image, False)
 
+    def _diffusion_progress(self, model_sampling: Any, sigma: Any) -> float:
+        try:
+            timestep = model_sampling.timestep(sigma)
+            if isinstance(timestep, torch.Tensor):
+                timestep_value = float(timestep.detach().reshape(-1)[0].item())
+            else:
+                timestep_value = float(timestep)
+        except Exception:
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - timestep_value / 999.0))
+
+    def _apply_sharpness_quality(
+        self,
+        x_input: torch.Tensor,
+        cond_pred: torch.Tensor,
+        *,
+        sharpness: float,
+        diffusion_progress: float,
+    ) -> torch.Tensor:
+        if sharpness <= 0.0:
+            return cond_pred
+
+        alpha = 0.001 * sharpness * diffusion_progress
+        if alpha < 0.01:
+            return cond_pred
+
+        positive_eps = x_input - cond_pred
+        degraded_eps = sampling.anisotropic.adaptive_anisotropic_filter(x=positive_eps, g=cond_pred)
+        positive_eps_weighted = degraded_eps * alpha + positive_eps * (1.0 - alpha)
+        return x_input - positive_eps_weighted
+
     def _build_direct_model_callable(
         self,
         execution_unet: Any,
@@ -533,7 +565,10 @@ class UnifiedSDXLRuntimeExecutionMixin:
         reference_noise: torch.Tensor,
         denoise_mask: torch.Tensor | None,
     ):
-        model_options = getattr(execution_unet, "model_options", {}) or {}
+        model_options = dict(getattr(execution_unet, "model_options", {}) or {})
+        quality = dict(getattr(self.config, "quality", {}) or {})
+        if quality and "quality" not in model_options:
+            model_options["quality"] = quality
         disable_cfg1_optimization = bool(model_options.get("disable_cfg1_optimization", False))
         cfg_pp = "_cfg_pp" in self.config.sampler
         model_sampling = execution_unet.model.model_sampling
@@ -562,6 +597,13 @@ class UnifiedSDXLRuntimeExecutionMixin:
                 x_input,
                 sigma,
             )
+            diffusion_progress = self._diffusion_progress(model_sampling, sigma)
+            cond_pred = self._apply_sharpness_quality(
+                x_input,
+                cond_pred,
+                sharpness=float(quality.get("sharpness", 0.0)),
+                diffusion_progress=diffusion_progress,
+            )
             out = sampling.cfg_function(
                 execution_unet.model,
                 cond_pred,
@@ -571,6 +613,8 @@ class UnifiedSDXLRuntimeExecutionMixin:
                 sigma,
                 model_options=model_options,
                 cfg_pp=cfg_pp,
+                adaptive_cfg=float(quality.get("adaptive_cfg", 0.0)),
+                diffusion_progress=diffusion_progress,
             )
             if active_mask is not None and latent_mask is not None:
                 latent_ref = latent_image.to(device=out.device, dtype=out.dtype)

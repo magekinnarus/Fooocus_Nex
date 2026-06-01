@@ -37,6 +37,7 @@ class SDXLExecutionPolicy:
     prefer_clip_gpu: bool = False
     prefer_gpu_vae_encode: bool = False
     notes: tuple[str, ...] = field(default_factory=tuple)
+    stream_budget_mb: float = 256.0
 
     def cache_domain(self) -> tuple[str | None, str | None, str | None]:
         return self.execution_family, self.residency_class, self.clip_residency_mode
@@ -122,6 +123,8 @@ def resolve_sdxl_execution_policy(
     if is_legacy_sdxl_gguf:
         notes.append(SDXL_GGUF_DEPRECATED_NOTE)
 
+    stream_budget_mb = 0.0 if plan.unet.mode == ResidencyMode.GPU_RESIDENT else 256.0
+
     return SDXLExecutionPolicy(
         enabled=True,
         architecture=normalized_architecture,
@@ -134,4 +137,5 @@ def resolve_sdxl_execution_policy(
         prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
         prefer_gpu_vae_encode=(plan.vae.mode == ResidencyMode.GPU_RESIDENT),
         notes=tuple(notes),
+        stream_budget_mb=stream_budget_mb,
     )
