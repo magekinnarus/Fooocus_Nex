@@ -387,8 +387,7 @@ def load_model(
             vae_source=external_vae_filename_abs if external_vae_filename_abs and os.path.exists(external_vae_filename_abs) else None,
         )
     else:
-        # SD1.5 usually follows a fixed policy but can also benefit from solver if needed
-        unet, clip, vae = loader.load_sd15_checkpoint(ckpt_filename)
+        raise RuntimeError("SD 1.5 execution is no longer supported.")
 
     loaded_architecture = _resolve_loaded_architecture(unet)
     if loaded_architecture is not None and loaded_architecture != resolved_taxonomy.architecture:

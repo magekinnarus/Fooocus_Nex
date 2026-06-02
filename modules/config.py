@@ -1149,7 +1149,14 @@ def is_deprecated_sdxl_base_model_selector(name_or_path):
         return True
     if lowered.endswith('.gguf'):
         return True
+
+    # Exclude SD 1.5 checkpoints from active base model selection
+    taxonomy = resolve_model_taxonomy(normalized)
+    if taxonomy.architecture == modules.model_taxonomy.ARCHITECTURE_SD15:
+        return True
+
     return False
+
 
 
 def filter_supported_sdxl_base_model_choices(candidates):
@@ -1166,6 +1173,57 @@ def filter_supported_sdxl_base_model_choices(candidates):
         filtered.append(candidate)
 
     return filtered
+
+
+def coerce_active_base_model_selection(name_or_path, choices=None):
+    active_choices = list(choices if choices is not None else model_filenames or [])
+    active_choices = filter_supported_sdxl_base_model_choices(active_choices)
+
+    if not active_choices:
+        return 'None'
+
+    resolved = resolve_dropdown_choice(
+        name_or_path,
+        active_choices,
+        folder_paths=paths_checkpoints,
+        root_keys=('checkpoints', 'unet'),
+    )
+    return resolved or active_choices[0]
+
+
+def _filter_model_choices_for_architecture(candidates, architecture, *, root_keys, folder_paths=None):
+    filtered = []
+    seen = set()
+    for candidate in list(candidates or []):
+        normalized = _normalize_model_selector(candidate)
+        if normalized is None or normalized in seen:
+            continue
+        taxonomy = resolve_model_taxonomy(candidate, root_keys=root_keys, folder_paths=folder_paths)
+        if taxonomy.architecture != architecture:
+            continue
+        seen.add(normalized)
+        filtered.append(candidate)
+    return filtered
+
+
+def get_compatible_clip_choices_for_model(base_model_name):
+    base_taxonomy = resolve_model_taxonomy(base_model_name, root_keys=('checkpoints', 'unet'), folder_paths=paths_checkpoints)
+    return _filter_model_choices_for_architecture(
+        clip_filenames,
+        base_taxonomy.architecture,
+        root_keys=('clip',),
+        folder_paths=paths_clips,
+    )
+
+
+def get_compatible_vae_choices_for_model(base_model_name):
+    base_taxonomy = resolve_model_taxonomy(base_model_name, root_keys=('checkpoints', 'unet'), folder_paths=paths_checkpoints)
+    return _filter_model_choices_for_architecture(
+        vae_filenames,
+        base_taxonomy.architecture,
+        root_keys=('vae',),
+        folder_paths=path_vae,
+    )
 
 
 def _register_embedding_alias(lookup, alias, full_path):
@@ -1236,12 +1294,21 @@ def resolve_embedding_path(name_or_path):
 
 def update_files():
     global model_filenames, clip_filenames, lora_filenames, embedding_filenames, vae_filenames, available_presets
+    global default_base_model_name, default_model, default_model_taxonomy
 
     start = time.perf_counter()
 
     model_start = time.perf_counter()
     model_filenames = sorted(list(set(get_model_filenames(paths_checkpoint_bases))))
     model_filenames = filter_supported_sdxl_base_model_choices(model_filenames)
+    active_default_base_model_name = coerce_active_base_model_selection(default_base_model_name, model_filenames)
+    if active_default_base_model_name != default_base_model_name:
+        print(
+            f'[Startup] Selected_model [{default_base_model_name}] is no longer an active UI base model. '
+            f'Using [{active_default_base_model_name}] instead.'
+        )
+    default_base_model_name = default_model = active_default_base_model_name
+    default_model_taxonomy = resolve_model_taxonomy(default_base_model_name)
     model_elapsed = time.perf_counter() - model_start
 
     clip_start = time.perf_counter()

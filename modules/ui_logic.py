@@ -372,8 +372,14 @@ def get_filtered_lora_choices_for_model(base_model_name):
     return ['None'] + choices
 
 
+def get_filtered_vae_choices_for_model(base_model_name):
+    if _base_model_requires_default_vae(base_model_name):
+        return [modules.flags.default_vae]
+    return [modules.flags.default_vae] + modules.config.get_compatible_vae_choices_for_model(base_model_name)
+
+
 def get_synced_clip_update_for_base_model(base_model_name, current_clip_model):
-    clip_choices = ['None'] + modules.config.clip_filenames
+    clip_choices = ['None'] + modules.config.get_compatible_clip_choices_for_model(base_model_name)
     current_clip_value = modules.config.resolve_dropdown_choice(
         current_clip_model,
         clip_choices,
@@ -461,7 +467,7 @@ def _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_ch
 
 def update_model_dependent_choices(base_model_name, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
     aspect_ratio_update = update_aspect_ratio_choices_for_model(base_model_name, current_aspect_ratio)
-    vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
+    vae_choices = get_filtered_vae_choices_for_model(base_model_name)
     vae_value = _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_choices)
     clip_update = get_synced_clip_update_for_base_model(base_model_name, current_clip_model)
     lora_choices = get_filtered_lora_choices_for_model(base_model_name)
@@ -565,8 +571,8 @@ def _selector_matches_base_architecture(selector, base_model_name):
 
 def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_model, current_clip_model, *current_lora_ctrl_values):
     base_choices, base_value = _get_base_model_dropdown_state(current_base_model)
-    vae_choices = [modules.flags.default_vae] + modules.config.vae_filenames
-    clip_choices = ['None'] + modules.config.clip_filenames
+    vae_choices = get_filtered_vae_choices_for_model(base_value)
+    clip_choices = ['None'] + modules.config.get_compatible_clip_choices_for_model(base_value)
     lora_slot_count = modules.config.default_max_lora_number
 
     current_lora_enabled = []

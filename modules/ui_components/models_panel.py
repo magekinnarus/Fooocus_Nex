@@ -23,6 +23,16 @@ def build_models_tab():
         folder_paths=modules.config.paths_checkpoints,
         root_keys=('checkpoints', 'unet'),
     ) or base_model_choices[0]
+    base_model_entry = modules.config.resolve_model_catalog_entry(
+        base_model_value,
+        root_keys=('checkpoints', 'unet'),
+        folder_paths=modules.config.paths_checkpoints,
+    )
+    compatible_vae_choices = modules.config.get_compatible_vae_choices_for_model(base_model_value)
+    vae_choices = [flags.default_vae]
+    if getattr(base_model_entry, 'root_key', None) != 'checkpoints':
+        vae_choices += compatible_vae_choices
+    clip_choices = ['None'] + modules.config.get_compatible_clip_choices_for_model(base_model_value)
 
     with gr.Group():
         with gr.Row():
@@ -35,7 +45,7 @@ def build_models_tab():
             )
             results['vae_model'] = gr.Dropdown(
                 label='VAE',
-                choices=[flags.default_vae] + modules.config.vae_filenames,
+                choices=vae_choices,
                 value=modules.config.default_vae,
                 show_label=True,
                 elem_id='model_vae_dropdown',
@@ -43,10 +53,10 @@ def build_models_tab():
 
         results['clip_model'] = gr.Dropdown(
             label='Force CLIP',
-            choices=['None'] + modules.config.clip_filenames,
+            choices=clip_choices,
             value=modules.config.resolve_dropdown_choice(
                 modules.config.default_clip,
-                ['None'] + modules.config.clip_filenames,
+                clip_choices,
                 folder_paths=modules.config.paths_clips,
                 root_keys=('clip',),
             ) or 'None',

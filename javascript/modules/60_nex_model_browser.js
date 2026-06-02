@@ -4,7 +4,6 @@
             label: 'Checkpoints',
             rootKeys: ['checkpoints'],
             subTabs: [
-                { key: 'sd15', label: 'SD15', match: (record) => record.architecture === 'sd15' },
                 { key: 'sdxl', label: 'SDXL', match: (record) => record.architecture === 'sdxl' && (record.sub_architecture === 'base' || record.sub_architecture === 'general') },
                 { key: 'pony', label: 'Pony', match: (record) => record.architecture === 'sdxl' && record.sub_architecture === 'pony' },
                 { key: 'illustrious', label: 'Illustrious', match: (record) => record.architecture === 'sdxl' && record.sub_architecture === 'illustrious' },
@@ -15,7 +14,6 @@
             label: 'LoRAs',
             rootKeys: ['loras'],
             subTabs: [
-                { key: 'sd15', label: 'SD15', match: (record) => record.architecture === 'sd15' },
                 { key: 'sdxl', label: 'SDXL', match: (record) => record.architecture === 'sdxl' && (record.sub_architecture === 'base' || record.sub_architecture === 'general') },
                 { key: 'pony', label: 'Pony', match: (record) => record.architecture === 'sdxl' && record.sub_architecture === 'pony' },
                 { key: 'illustrious', label: 'Illustrious', match: (record) => record.architecture === 'sdxl' && record.sub_architecture === 'illustrious' },
@@ -36,9 +34,7 @@
             rootKeys: ['clip', 'vae', 'embeddings'],
             subTabs: [
                 { key: 'clip', label: 'CLIP', match: (record) => record.root_key === 'clip' },
-                { key: 'sd15_vae', label: 'SD15 VAE', match: (record) => record.root_key === 'vae' && record.architecture === 'sd15' },
                 { key: 'sdxl_vae', label: 'SDXL VAE', match: (record) => record.root_key === 'vae' && record.architecture === 'sdxl' },
-                { key: 'sd15_embeddings', label: 'SD15 Embeddings', match: (record) => record.root_key === 'embeddings' && record.architecture === 'sd15' },
                 { key: 'sdxl_embeddings', label: 'SDXL Embeddings', match: (record) => record.root_key === 'embeddings' && record.architecture === 'sdxl' },
             ],
         },

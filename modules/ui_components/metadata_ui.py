@@ -186,28 +186,32 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
 
     results = []
     base_model_name = loaded_parameter_dict.get('base_model', loaded_parameter_dict.get('Base Model', modules.config.default_base_model_name))
-    resolution_labels = modules.config.get_aspect_ratio_labels_for_model(base_model_name)
+    active_base_model_name = modules.config.coerce_active_base_model_selection(base_model_name)
+    normalized_parameter_dict = dict(loaded_parameter_dict)
+    normalized_parameter_dict['base_model'] = active_base_model_name
+    normalized_parameter_dict['Base Model'] = active_base_model_name
+    resolution_labels = modules.config.get_aspect_ratio_labels_for_model(active_base_model_name)
 
-    get_image_number('image_number', 'Image Number', loaded_parameter_dict, results)
-    get_str('prompt', 'Prompt', loaded_parameter_dict, results)
-    get_str('negative_prompt', 'Negative Prompt', loaded_parameter_dict, results)
-    get_list('styles', 'Styles', loaded_parameter_dict, results)
-    get_steps('steps', 'Steps', loaded_parameter_dict, results)
-    get_resolution('resolution', 'Resolution', loaded_parameter_dict, results, valid_labels=resolution_labels)
-    get_number('guidance_scale', 'Guidance Scale', loaded_parameter_dict, results)
-    get_number('sharpness', 'Sharpness', loaded_parameter_dict, results)
-    get_adm_guidance('adm_guidance', 'ADM Guidance', loaded_parameter_dict, results)
-    get_number('adaptive_cfg', 'CFG Mimicking from TSNR', loaded_parameter_dict, results)
-    get_number('clip_skip', 'CLIP Skip', loaded_parameter_dict, results, cast_type=int)
-    get_str('base_model', 'Base Model', loaded_parameter_dict, results)
-    get_str('vae', 'VAE', loaded_parameter_dict, results)
-    get_str('clip_model', 'Force CLIP', loaded_parameter_dict, results)
-    get_str('sampler', 'Sampler', loaded_parameter_dict, results)
-    get_str('scheduler', 'Scheduler', loaded_parameter_dict, results)
-    get_seed('seed', 'Seed', loaded_parameter_dict, results)
-    get_outpaint_engine_version('outpaint_engine_version', 'Outpaint Engine Version', loaded_parameter_dict, results)
-    get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', loaded_parameter_dict, results)
-    get_inpaint_route('inpaint_route', 'Inpaint Route', loaded_parameter_dict, results)
+    get_image_number('image_number', 'Image Number', normalized_parameter_dict, results)
+    get_str('prompt', 'Prompt', normalized_parameter_dict, results)
+    get_str('negative_prompt', 'Negative Prompt', normalized_parameter_dict, results)
+    get_list('styles', 'Styles', normalized_parameter_dict, results)
+    get_steps('steps', 'Steps', normalized_parameter_dict, results)
+    get_resolution('resolution', 'Resolution', normalized_parameter_dict, results, valid_labels=resolution_labels)
+    get_number('guidance_scale', 'Guidance Scale', normalized_parameter_dict, results)
+    get_number('sharpness', 'Sharpness', normalized_parameter_dict, results)
+    get_adm_guidance('adm_guidance', 'ADM Guidance', normalized_parameter_dict, results)
+    get_number('adaptive_cfg', 'CFG Mimicking from TSNR', normalized_parameter_dict, results)
+    get_number('clip_skip', 'CLIP Skip', normalized_parameter_dict, results, cast_type=int)
+    get_str('base_model', 'Base Model', normalized_parameter_dict, results)
+    get_str('vae', 'VAE', normalized_parameter_dict, results)
+    get_str('clip_model', 'Force CLIP', normalized_parameter_dict, results)
+    get_str('sampler', 'Sampler', normalized_parameter_dict, results)
+    get_str('scheduler', 'Scheduler', normalized_parameter_dict, results)
+    get_seed('seed', 'Seed', normalized_parameter_dict, results)
+    get_outpaint_engine_version('outpaint_engine_version', 'Outpaint Engine Version', normalized_parameter_dict, results)
+    get_inpaint_engine_version('inpaint_engine_version', 'Inpaint Engine Version', normalized_parameter_dict, results)
+    get_inpaint_route('inpaint_route', 'Inpaint Route', normalized_parameter_dict, results)
 
     if is_generating:
         results.append(gr.update())
@@ -217,7 +221,7 @@ def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
     results.append(gr.update(visible=False))
 
     for i in range(modules.config.default_max_lora_number):
-        get_lora(f'lora_combined_{i + 1}', f'LoRA {i + 1}', loaded_parameter_dict, results)
+        get_lora(f'lora_combined_{i + 1}', f'LoRA {i + 1}', normalized_parameter_dict, results)
 
     return results
 

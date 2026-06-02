@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+import modules.model_taxonomy as model_taxonomy
 from modules.model_download.policy import ModelDownloadPolicy
 from modules.model_download.resolver import CivitAIResolver, DirectResolver, HuggingFaceResolver
 from modules.model_download.transport import Aria2Transport
@@ -12,6 +13,24 @@ from modules.model_manager import ModelManager, default_model_manager
 
 
 DEFAULT_DOWNLOAD_MESSAGE = 'Download queued'
+
+
+def _resolve_browser_architecture_scope(
+    *,
+    root_key: str | None,
+    base_model_name: str | None,
+    architecture: str | None,
+    sub_architecture: str | None,
+) -> tuple[str | None, str | None]:
+    if architecture is not None or base_model_name is not None:
+        return architecture, sub_architecture
+
+    if root_key in {'checkpoints', 'unet', 'loras', 'vae', 'embeddings'}:
+        # W05 keeps dormant SD 1.5 records queryable via explicit filters, but
+        # the live browser defaults should only surface active SDXL families.
+        return model_taxonomy.ARCHITECTURE_SDXL, None
+
+    return architecture, sub_architecture
 
 
 def _queue_download_with_companion(manager: ModelManager, worker, entry, queued_jobs: list, skipped: list, queued_ids: set[str]):
@@ -303,6 +322,12 @@ def create_model_router(manager: ModelManager | None = None, download_worker=Non
             architecture = scope['architecture']
         if sub_architecture is None:
             sub_architecture = scope['sub_architecture']
+        architecture, sub_architecture = _resolve_browser_architecture_scope(
+            root_key=root_key,
+            base_model_name=base_model_name,
+            architecture=architecture,
+            sub_architecture=sub_architecture,
+        )
 
         records = manager.iter_inventory(
             architecture=architecture,
