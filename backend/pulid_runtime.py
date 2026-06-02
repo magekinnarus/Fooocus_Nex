@@ -6,7 +6,7 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 import ldm_patched.ldm.modules.attention as attention
-import ldm_patched.modules.model_management as model_management
+import backend.resources as runtime_resources
 
 import backend.ip_adapter as contextual_ip_adapter
 
@@ -135,7 +135,7 @@ def preprocess(img, model_path, eva_clip_path, insightface_model_names=None):
         raise RuntimeError('PuLID preprocessing could not detect a face in the reference image.')
 
     eva_clip = eva_clip.to(load_device, dtype=dtype)
-    model_management.load_model_gpu(entry['image_proj_model'])
+    runtime_resources.load_model_gpu(entry['image_proj_model'])
 
     bg_label = [0, 16, 18, 7, 8, 9, 14, 15]
     cond_embeddings = []
@@ -187,7 +187,7 @@ def preprocess(img, model_path, eva_clip_path, insightface_model_names=None):
     cond = torch.cat([cond, zero_tensor], dim=1)
     uncond = torch.cat([uncond, zero_tensor], dim=1)
 
-    model_management.load_model_gpu(entry['ip_layers'])
+    runtime_resources.load_model_gpu(entry['ip_layers'])
     kv_modules = contextual_ip_adapter._sorted_kv_modules(entry['ip_layers'].model)
     ip_conds = [module(cond).cpu() for module in kv_modules]
     ip_unconds = [module(uncond).cpu() for module in kv_modules]

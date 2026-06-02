@@ -6,7 +6,7 @@ import collections
 import ldm_patched.modules.weight_adapter as weight_adapter
 from ldm_patched.modules import utils as comfy_utils
 from .. import patching
-from ldm_patched.modules import model_management as comfy_model_management
+from backend import resources as comfy_model_management
 
 from .ops import GGMLOps
 from .loader import gguf_sd_loader

@@ -2,7 +2,7 @@ import torch
 import logging
 import contextlib
 
-from ldm_patched.modules.model_management import (
+from backend.resources import (
     unet_dtype,
     unet_manual_cast,
     text_encoder_dtype,

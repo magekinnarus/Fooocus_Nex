@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import ldm_patched.ldm.modules.attention as attention
 import ldm_patched.modules.clip_vision
-import ldm_patched.modules.model_management as model_management
+import backend.resources as runtime_resources
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from ldm_patched.modules.model_patcher import ModelPatcher
@@ -638,10 +638,10 @@ def preprocess_ip_adapter(img, model_path, ip_negative_path=None):
     cond = outputs.penultimate_hidden_states if adapter_model.plus else outputs.image_embeds
     cond = cond.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    model_management.load_model_gpu(image_proj_model)
+    runtime_resources.load_model_gpu(image_proj_model)
     cond = image_proj_model.model(cond).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    model_management.load_model_gpu(ip_layers)
+    runtime_resources.load_model_gpu(ip_layers)
     kv_modules = _sorted_kv_modules(ip_layers.model)
 
     ip_unconds = entry["ip_unconds"]
@@ -694,7 +694,7 @@ def preprocess_faceid(img, model_path, clip_vision_path=None, insightface_model_
     cond_embeds = []
     uncond_embeds = []
 
-    model_management.load_model_gpu(image_proj_model)
+    runtime_resources.load_model_gpu(image_proj_model)
 
     for face in sorted(faces, key=lambda current: (current.bbox[2] - current.bbox[0]) * (current.bbox[3] - current.bbox[1]), reverse=True):
         with warnings.catch_warnings():
@@ -731,7 +731,7 @@ def preprocess_faceid(img, model_path, clip_vision_path=None, insightface_model_
     cond = torch.mean(torch.cat(cond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
     uncond = torch.mean(torch.cat(uncond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    model_management.load_model_gpu(ip_layers)
+    runtime_resources.load_model_gpu(ip_layers)
     kv_modules = _sorted_kv_modules(ip_layers.model)
     ip_conds = [module(cond).cpu() for module in kv_modules]
     ip_unconds = [module(uncond).cpu() for module in kv_modules]

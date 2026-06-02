@@ -1,6 +1,5 @@
 import modules.core as core
 import torch
-import modules.patch
 import modules.config
 import modules.flags
 import modules.model_taxonomy

@@ -702,7 +702,7 @@ class LoadedModel:
 
     def _set_model(self, model):
         self._model = weakref.ref(model)
-        if model.parent is not None:
+        if hasattr(model, "parent") and model.parent is not None:
             self._parent_model = weakref.ref(model.parent)
             self._patcher_finalizer = weakref.finalize(model, self._switch_parent)
 
@@ -1459,3 +1459,71 @@ def throw_exception_if_processing_interrupted():
         if interrupt_processing:
             interrupt_processing = False
             raise InterruptProcessingException()
+
+def load_model_gpu(model):
+    return load_models_gpu([model])
+
+def unet_manual_cast(weight_dtype, inference_device, supported_dtypes=[torch.float16, torch.bfloat16, torch.float32]):
+    if weight_dtype == torch.float32 or weight_dtype == torch.float64:
+        return None
+
+    fp16_supported = should_use_fp16(inference_device, prioritize_performance=False)
+    if fp16_supported and weight_dtype == torch.float16:
+        return None
+
+    bf16_supported = should_use_bf16(inference_device)
+    if bf16_supported and weight_dtype == torch.bfloat16:
+        return None
+
+    fp16_supported = should_use_fp16(inference_device, prioritize_performance=True)
+    for dt in supported_dtypes:
+        if dt == torch.float16 and fp16_supported:
+            return torch.float16
+        if dt == torch.bfloat16 and bf16_supported:
+            return torch.bfloat16
+
+    return torch.float32
+
+def text_encoder_dtype(device=None):
+    from ldm_patched.modules.args_parser import args
+    if args.clip_in_fp8_e4m3fn:
+        return torch.float8_e4m3fn
+    elif args.clip_in_fp8_e5m2:
+        return torch.float8_e5m2
+    elif args.clip_in_fp16:
+        return torch.float16
+    elif args.clip_in_fp32:
+        return torch.float32
+
+    if is_device_cpu(device):
+        return torch.float16
+    return torch.float16
+
+def supports_cast(device, dtype):
+    if dtype == torch.float32:
+        return True
+    if dtype == torch.float16:
+        return True
+    if directml_enabled:
+        return False
+    if dtype == torch.bfloat16:
+        return True
+    if is_device_mps(device):
+        return False
+    if dtype == torch.float8_e4m3fn:
+        return True
+    if dtype == torch.float8_e5m2:
+        return True
+    return False
+
+def pick_weight_dtype(dtype, fallback_dtype, device=None):
+    from backend.utils import dtype_size
+    if dtype is None:
+        dtype = fallback_dtype
+    elif dtype_size(dtype) > dtype_size(fallback_dtype):
+        dtype = fallback_dtype
+
+    if not supports_cast(device, dtype):
+        dtype = fallback_dtype
+
+    return dtype

@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from ldm_patched.modules import ops as comfy_ops
-from ldm_patched.modules import model_management as comfy_model_management
+from backend import resources as comfy_model_management
 from .dequant import dequantize_tensor, is_quantized, dequantize_functions
 
 # --- Workspace Management ---
