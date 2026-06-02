@@ -237,7 +237,14 @@ class CpuArtifactCompiler:
         patcher.model.requires_grad_(False)
         patcher.model.eval()
         
-        cpu_device = torch.device("cpu")
+        target_device = torch.device("cpu")
+        for param in list(patcher.model.parameters()) + list(patcher.model.buffers()):
+            target_device = param.device
+            break
+
+        if target_device.type != "cpu":
+            pin_unet_host = False
+
         patch_count = len(getattr(patcher, "patches", {}) or {})
         if patch_count == 0:
             if pin_unet_host:
@@ -246,7 +253,7 @@ class CpuArtifactCompiler:
 
         num_workers = cls._resolve_worker_count(num_workers, patch_count)
 
-        logging.info(f"[CpuArtifactCompiler] Compiling {patch_count} patches across {num_workers} worker threads.")
+        logging.info(f"[CpuArtifactCompiler] Compiling {patch_count} patches on device {target_device} across {num_workers} worker threads.")
 
         tasks = list(patcher.patches.keys())
         cls._run_tasks(
@@ -256,7 +263,7 @@ class CpuArtifactCompiler:
                 lambda: cls._compile_single_key_patcher(
                     patcher,
                     tasks[index],
-                    cpu_device,
+                    target_device,
                     pin_output=pin_unet_host,
                 )
             ),
@@ -272,7 +279,7 @@ class CpuArtifactCompiler:
         patcher.model.model_loaded_weight_memory = patcher.model_size()
         patcher.model.model_lowvram = False
         patcher.model.lowvram_patch_counter = 0
-        patcher.model.device = cpu_device
+        patcher.model.device = target_device
 
         host_pinned_bytes = 0
         if pin_unet_host:
@@ -312,6 +319,14 @@ class CpuArtifactCompiler:
             for target_key, payload in patch_dict.items():
                 compiled_patches[target_key].append((strength, payload, 1.0, None, _identity))
 
+        target_device = torch.device("cpu")
+        for param in list(model.parameters()) + list(model.buffers()):
+            target_device = param.device
+            break
+
+        if target_device.type != "cpu":
+            pin_unet_host = False
+
         patch_count = len(compiled_patches)
         if patch_count == 0:
             if pin_unet_host:
@@ -320,9 +335,8 @@ class CpuArtifactCompiler:
 
         num_workers = cls._resolve_worker_count(num_workers, patch_count)
 
-        logging.info(f"[CpuArtifactCompiler] Isolated compile: {patch_count} patches across {num_workers} threads.")
+        logging.info(f"[CpuArtifactCompiler] Isolated compile: {patch_count} patches on device {target_device} across {num_workers} threads.")
 
-        cpu_device = torch.device("cpu")
         model.requires_grad_(False)
         model.eval()
 
@@ -336,7 +350,7 @@ class CpuArtifactCompiler:
                     tasks[index][0],
                     *get_key_weight(model, tasks[index][0]),
                     tasks[index][1],
-                    cpu_device,
+                    target_device,
                     pin_output=pin_unet_host,
                 )
             ),
@@ -399,15 +413,23 @@ class CpuArtifactCompiler:
         """
         Entrypoint for standalone dictionary patching.
         """
+        target_device = torch.device("cpu")
+        for tensor in base_state_dict.values():
+            if isinstance(tensor, torch.Tensor):
+                target_device = tensor.device
+                break
+
+        if target_device.type != "cpu":
+            pin_unet_host = False
+
         patch_count = len(compiled_patches)
         if patch_count == 0:
             return {"status": "noop", "patch_count": 0}
 
         num_workers = cls._resolve_worker_count(num_workers, patch_count)
 
-        logging.info(f"[CpuArtifactCompiler] Standalone compile: {patch_count} target keys across {num_workers} threads.")
+        logging.info(f"[CpuArtifactCompiler] Standalone compile: {patch_count} target keys on device {target_device} across {num_workers} threads.")
 
-        cpu_device = torch.device("cpu")
         keys = list(compiled_patches.keys())
         cls._run_tasks(
             num_workers,
@@ -417,7 +439,7 @@ class CpuArtifactCompiler:
                     base_state_dict,
                     keys[index],
                     compiled_patches[keys[index]],
-                    cpu_device,
+                    target_device,
                 )
             ),
             torch_threads_per_worker=torch_threads_per_worker,
@@ -439,14 +461,14 @@ class CpuArtifactCompiler:
         cls,
         patcher: Any,
         key: str,
-        cpu_device: torch.device,
+        target_device: torch.device,
         *,
         pin_output: bool = False,
     ):
         weight, set_func, convert_func = get_key_weight(patcher.model, key)
         preserved_dtype = weight.dtype
-        # We work directly on a CPU copy or in-place
-        temp_weight = weight.to(device=cpu_device, dtype=preserved_dtype, copy=False)
+        # We work directly on target_device
+        temp_weight = weight.to(device=target_device, dtype=preserved_dtype, copy=False)
         if convert_func is not None:
             temp_weight = convert_func(temp_weight, inplace=True)
 
@@ -476,12 +498,12 @@ class CpuArtifactCompiler:
         set_func: Any,
         convert_func: Any,
         patches: list[Any],
-        cpu_device: torch.device,
+        target_device: torch.device,
         *,
         pin_output: bool = False,
     ):
         preserved_dtype = weight.dtype
-        temp_weight = weight.to(device=cpu_device, dtype=preserved_dtype, copy=False)
+        temp_weight = weight.to(device=target_device, dtype=preserved_dtype, copy=False)
         if convert_func is not None:
             temp_weight = convert_func(temp_weight, inplace=True)
 
@@ -508,11 +530,11 @@ class CpuArtifactCompiler:
         base_state_dict: dict[str, torch.Tensor],
         key: str,
         patches: list[Any],
-        cpu_device: torch.device,
+        target_device: torch.device,
     ):
         weight = base_state_dict[key]
         preserved_dtype = weight.dtype
-        temp_weight = weight.to(device=cpu_device, dtype=preserved_dtype, copy=False)
+        temp_weight = weight.to(device=target_device, dtype=preserved_dtype, copy=False)
         out_weight = cls._patch_single_layer_worker(key, temp_weight, patches, preserved_dtype)
         out_weight = backend_float_ops.stochastic_rounding(
             out_weight,

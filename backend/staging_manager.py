@@ -589,10 +589,6 @@ class ModelUniverseRegistry:
     def default_variant_for(self, family: str, execution_class: ExecutionClass) -> str:
         family = family.lower()
         if family == "sdxl":
-            if execution_class == ExecutionClass.SDXL_STREAMING_T1:
-                return "sdxl_q8"
-            if execution_class == ExecutionClass.SDXL_RESIDENT_T2:
-                return "sdxl_q8"
             return "sdxl_fp16"
         if family == "flux":
             if execution_class in {
@@ -638,9 +634,9 @@ class ExecutionClassSolver:
         family = family.lower()
         tier = self.hardware_tier_for_vram(vram_total_mb)
         if family == "sdxl":
-            if tier == HardwareTier.T1_VERY_LOW:
+            if vram_total_mb < 8192.0:
                 return ExecutionClass.SDXL_STREAMING_T1, tier
-            if tier == HardwareTier.T2_LOW:
+            if tier == HardwareTier.T3_LOW_NORMAL:
                 return ExecutionClass.SDXL_RESIDENT_T2, tier
             return ExecutionClass.SDXL_GPU_GREEDY_T3PLUS, tier
         if family == "flux":

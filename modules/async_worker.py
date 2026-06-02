@@ -175,37 +175,16 @@ def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | Non
     if not base_model_name:
         return None
 
-    execution_family = getattr(task_state, 'sdxl_execution_family', None) or getattr(policy, 'execution_family', None)
-    residency_class = getattr(task_state, 'sdxl_residency_class', None) or getattr(policy, 'residency_class', None)
-    normalized_execution_family = str(execution_family or '').strip().lower()
-    normalized_residency_class = str(residency_class or '').strip().lower()
-    route_family = 'sdxl'
-    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
-        route_family = 'sdxl'
-    elif (
-        normalized_execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
-        or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
-        or normalized_residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-    ):
-        route_family = 'gguf'
+    loras = getattr(task_state, 'loras', []) or []
+    additional_loras = getattr(task_state, 'base_model_additional_loras', []) or []
 
-    authoritative_identity = (
-        (str(base_model_name or ''),)
-        if route_family == 'gguf'
-        else (
-            str(base_model_name or ''),
-            str(vae_name or ''),
-            str(clip_name or ''),
-        )
-    )
-
-    return process_transition.build_process_key(
-        family=process_transition.PROCESS_FAMILY_SDXL,
-        process_class=execution_family,
-        authoritative_identity=authoritative_identity,
-        execution_family=execution_family,
-        residency_class=residency_class,
-        route_family=route_family,
+    import modules.default_pipeline as default_pipeline
+    return default_pipeline._sdxl_process_key(
+        base_model_name=base_model_name,
+        vae_name=vae_name,
+        clip_name=clip_name,
+        sdxl_policy=policy,
+        loras=list(loras) + list(additional_loras),
     )
 
 
@@ -358,6 +337,7 @@ def handler(async_task: AsyncTask):
         profile=active_profile,
         requested_residency_class=getattr(task_state, 'sdxl_residency_class', None) or None,
     )
+    task_state.sdxl_execution_class = getattr(task_state.sdxl_execution_policy, 'execution_class', None)
     task_state.sdxl_execution_family = str(getattr(task_state.sdxl_execution_policy, 'execution_family', '') or '')
     task_state.sdxl_residency_class = str(getattr(task_state.sdxl_execution_policy, 'residency_class', '') or '')
     task_state.sdxl_clip_residency_mode = str(getattr(task_state.sdxl_execution_policy, 'clip_residency_mode', '') or '')

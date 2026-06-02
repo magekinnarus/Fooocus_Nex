@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend import environment_profile
-from backend.staging_manager import PlacementSolver, ResidencyMode
+from backend.staging_manager import ExecutionClass, PlacementSolver, ResidencyMode
 
 
 EXECUTION_FAMILY_STANDARD = "standard_sdxl"
@@ -17,8 +17,11 @@ CLIP_RESIDENCY_GPU_RESIDENT = "gpu_resident"
 
 VAE_ENCODE_CPU_DEFAULT = "cpu_default"
 VAE_ENCODE_GPU_PREFERRED = "gpu_preferred"
+VAE_POSTURE_TRANSIENT_GPU = "transient_gpu"
+VAE_POSTURE_GPU_RESIDENT = "gpu_resident"
 
 SDXL_RESIDENCY_CLASS_FULL = "full_resident"
+SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING = "unified_streaming"
 SDXL_RESIDENCY_CLASS_GGUF_STAGED = "gguf_staged_residency"
 SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING = "gguf_true_streaming"
 SDXL_GGUF_DEPRECATED_NOTE = "sdxl_gguf_deprecated"
@@ -76,6 +79,7 @@ def normalize_residency_class(residency_class: Any | None) -> str:
     normalized = str(residency_class or "").strip().lower()
     if normalized in {
         SDXL_RESIDENCY_CLASS_FULL,
+        SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING,
         SDXL_RESIDENCY_CLASS_GGUF_STAGED,
         SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
     }:
@@ -103,23 +107,42 @@ def resolve_sdxl_execution_policy(
     if normalized_architecture == "flux":
         task_id = "flux_fill"
 
-    plan = PlacementSolver.solve_from_system(task_id=task_id)
+    if profile is not None:
+        plan = PlacementSolver.solve(
+            vram_total_mb=getattr(profile, "total_vram_mb", 8192.0),
+            ram_total_mb=getattr(profile, "total_ram_mb", 16384.0),
+            task_id=task_id,
+        )
+    else:
+        plan = PlacementSolver.solve_from_system(task_id=task_id)
 
+    unet_streaming = plan.execution_class == ExecutionClass.SDXL_STREAMING_T1 or plan.unet.mode in {
+        ResidencyMode.CPU_RESIDENT,
+        ResidencyMode.DISK_PAGED,
+    }
     residency_class = SDXL_RESIDENCY_CLASS_FULL
-    if plan.unet.mode == ResidencyMode.CPU_RESIDENT:
-        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING if allow_gguf_runtime_family else SDXL_RESIDENCY_CLASS_FULL
-    elif plan.unet.mode == ResidencyMode.DISK_PAGED:
-        residency_class = SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING if allow_gguf_runtime_family else SDXL_RESIDENCY_CLASS_FULL
+    if allow_gguf_runtime_family:
+        residency_class = (
+            SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+            if unet_streaming
+            else SDXL_RESIDENCY_CLASS_GGUF_STAGED
+        )
+    elif normalized_architecture == "sdxl" and unet_streaming:
+        residency_class = SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING
 
     clip_residency_mode = CLIP_RESIDENCY_CPU_ONLY
     if plan.clip.mode == ResidencyMode.GPU_RESIDENT:
         clip_residency_mode = CLIP_RESIDENCY_GPU_RESIDENT
 
     vae_encode_mode = VAE_ENCODE_CPU_DEFAULT
-    if plan.vae.mode == ResidencyMode.GPU_RESIDENT:
-        vae_encode_mode = VAE_ENCODE_GPU_PREFERRED
+    if plan.vae.residency_mode == ResidencyMode.GPU_RESIDENT.value:
+        vae_encode_mode = VAE_POSTURE_GPU_RESIDENT
+    elif plan.vae.residency_mode == ResidencyMode.TRANSIENT_GPU.value:
+        vae_encode_mode = VAE_POSTURE_TRANSIENT_GPU
+    elif plan.vae.mode == ResidencyMode.GPU_RESIDENT:
+        vae_encode_mode = VAE_POSTURE_GPU_RESIDENT
 
-    notes = [plan.tier.name, plan.unet.mode.name]
+    notes = [plan.tier.name, plan.execution_class.name, plan.unet.mode.name]
     if is_legacy_sdxl_gguf:
         notes.append(SDXL_GGUF_DEPRECATED_NOTE)
 

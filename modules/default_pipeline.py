@@ -148,18 +148,29 @@ def _sdxl_process_key(
     vae_name=None,
     clip_name=None,
     sdxl_policy=None,
+    loras=None,
 ):
-    return process_transition.build_process_key(
-        family=process_transition.PROCESS_FAMILY_SDXL,
-        process_class=_sdxl_process_class(sdxl_policy),
-        authoritative_identity=(
+    route_family = _sdxl_route_family(sdxl_policy, base_model_name)
+    if route_family == 'gguf':
+        identity = [str(base_model_name or '')]
+    else:
+        identity = [
             str(base_model_name or ''),
             str(vae_name or ''),
             str(clip_name or ''),
-        ),
+        ]
+
+    if loras:
+        for lora in sorted(loras):
+            identity.append(str(lora))
+
+    return process_transition.build_process_key(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        process_class=_sdxl_process_class(sdxl_policy),
+        authoritative_identity=tuple(identity),
         execution_family=getattr(sdxl_policy, 'execution_family', None) if sdxl_policy is not None else None,
         residency_class=getattr(sdxl_policy, 'residency_class', None) if sdxl_policy is not None else None,
-        route_family=_sdxl_route_family(sdxl_policy, base_model_name),
+        route_family=route_family,
     )
 
 
@@ -531,6 +542,7 @@ def refresh_everything(base_model_name, loras,
             vae_name=vae_name,
             clip_name=clip_name,
             sdxl_policy=sdxl_policy,
+            loras=list(loras) + list(base_model_additional_loras),
         ),
     }
 

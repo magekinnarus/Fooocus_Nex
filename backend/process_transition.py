@@ -21,6 +21,8 @@ _TOKEN_ALIASES = {
     "standard sdxl": PROCESS_CLASS_STANDARD_SDXL,
     "sdxl standard": PROCESS_CLASS_STANDARD_SDXL,
     "full_resident": PROCESS_CLASS_STANDARD_SDXL,
+    "unified_streaming": PROCESS_CLASS_STANDARD_SDXL,
+    "unified streaming": PROCESS_CLASS_STANDARD_SDXL,
     "full resident": PROCESS_CLASS_STANDARD_SDXL,
     "full": PROCESS_CLASS_STANDARD_SDXL,
     "gguf staged": PROCESS_CLASS_SDXL_GGUF_STAGED,
@@ -75,6 +77,7 @@ def normalize_process_class(value: Any, *, family: Any = None) -> str:
         if token in {
             PROCESS_CLASS_STANDARD_SDXL,
             "full_resident",
+            "unified_streaming",
             "full",
             "standard",
             "standard_sdxl",

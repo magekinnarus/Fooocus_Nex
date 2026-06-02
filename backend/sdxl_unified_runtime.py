@@ -39,7 +39,7 @@ class UnifiedSDXLRuntimeConfig:
     """Configuration shared by unified SDXL runtime execution modes."""
 
     model_variant: str
-    execution_class: str
+    execution_class: Any
     checkpoint_path: str
     prompt: str
     negative_prompt: str
@@ -74,6 +74,7 @@ class UnifiedSDXLRuntimeConfig:
     contextual_assets: dict[str, Any] = field(default_factory=dict)
     initial_latent: Any | None = None
     denoise_strength: float | None = None
+    runtime_policy: Any | None = None
 
 
 
@@ -123,6 +124,7 @@ class UnifiedSDXLRuntime(
         self.unet: Any = None
         self.clip: Any = None
         self.vae: Any = None
+        self.policy: Any = None
         self.base_model: BaseModelAvailability | None = None
         self.compiled_unet: CompiledUnetArtifact | None = None
         self.conditioning: PromptConditioningArtifact | None = None
@@ -150,21 +152,57 @@ class UnifiedSDXLRuntime(
         vae_path = self._require_optional_vae_path()
         start = time.perf_counter()
         cpu_device = torch.device("cpu")
-        self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
-            checkpoint_path,
-            load_device=cpu_device,
-            offload_device=cpu_device,
-            unet_dtype=torch.float16,
-            clip_load_device=cpu_device,
-            clip_offload_device=cpu_device,
-            vae_offload_device=cpu_device,
-            vae_source=vae_path,
+        from backend.staging_manager import ExecutionClass
+
+        from backend.sdxl_runtime_policy import resolve_sdxl_execution_policy
+        self.policy = self.config.runtime_policy or resolve_sdxl_execution_policy(
+            architecture="sdxl",
+            base_model_name=checkpoint_path,
         )
+
+        exec_class = self._resolved_execution_class()
+
+        is_resident = exec_class in {
+            ExecutionClass.SDXL_RESIDENT_T2,
+            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+        }
+
+        if is_resident:
+            cuda_device = resources.get_torch_device()
+            # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
+            # until process-aware teardown releases them for a real model/process transition.
+            self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
+                checkpoint_path,
+                load_device=cuda_device,
+                offload_device=cuda_device,
+                unet_dtype=torch.float16,
+                clip_load_device=cpu_device,
+                clip_offload_device=cpu_device,
+                vae_load_device=cuda_device,
+                vae_offload_device=cuda_device,
+                vae_source=vae_path,
+            )
+        else:
+            self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
+                checkpoint_path,
+                load_device=cpu_device,
+                offload_device=cpu_device,
+                unet_dtype=torch.float16,
+                clip_load_device=cpu_device,
+                clip_offload_device=cpu_device,
+                vae_load_device=cpu_device,
+                vae_offload_device=cpu_device,
+                vae_source=vae_path,
+            )
 
         if self.unet is not None:
             self.unet.runtime_release_to_meta = False
-        if self.clip is not None and hasattr(self.clip, "clip_layer"):
-            self.clip.clip_layer(self.config.clip_layer)
+        if self.clip is not None:
+            self.clip.runtime_policy = self.policy
+            if hasattr(self.clip, "clip_layer"):
+                self.clip.clip_layer(self.config.clip_layer)
+        if self.vae is not None:
+            self.vae.runtime_policy = self.policy
 
         self._checkpoint_fingerprint = self._fingerprint_source_path(checkpoint_path)
         self.base_model = BaseModelAvailability(
@@ -179,6 +217,19 @@ class UnifiedSDXLRuntime(
         self._cold_model_load_cpu = time.perf_counter() - start
         self._loaded = True
         return self._cold_model_load_cpu
+
+    def _is_vae_resident(self) -> bool:
+        from backend.sdxl_runtime_policy import VAE_POSTURE_GPU_RESIDENT
+        from backend.staging_manager import ExecutionClass
+        policy = getattr(self, "policy", None)
+        if policy is not None:
+            return policy.vae_encode_mode == VAE_POSTURE_GPU_RESIDENT
+
+        exec_class = self._resolved_execution_class()
+        return exec_class in {
+            ExecutionClass.SDXL_RESIDENT_T2,
+            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+        }
 
     def prepare_inputs(self) -> tuple[UnifiedSDXLPreparedInputs, dict[str, float]]:
         if self.prepared_inputs is not None:
@@ -437,7 +488,8 @@ class UnifiedSDXLRuntime(
                 decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=tiled)
                 images = self._compose_decoded_images(decoded_patch)
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            if not self._is_vae_resident():
+                self._detach_component(getattr(self.vae, "patcher", None))
             self._attached_payload = None
             self._transition_execution_state(
                 self.prepared_inputs,
@@ -511,6 +563,29 @@ class UnifiedSDXLRuntime(
 
     def _execution_class_label(self) -> str:
         return str(self.config.execution_class or self.route_label)
+
+    def _resolved_execution_class(self):
+        from backend.staging_manager import ExecutionClass
+
+        exec_class = self.config.execution_class
+        if isinstance(exec_class, str):
+            normalized_exec_class = exec_class.rsplit(".", 1)[-1]
+            try:
+                return ExecutionClass[normalized_exec_class]
+            except KeyError:
+                exec_class = None
+
+        if exec_class is not None:
+            return exec_class
+
+        policy_exec_class = getattr(self.policy, "execution_class", None)
+        if isinstance(policy_exec_class, str):
+            normalized_exec_class = policy_exec_class.rsplit(".", 1)[-1]
+            try:
+                return ExecutionClass[normalized_exec_class]
+            except KeyError:
+                return policy_exec_class
+        return policy_exec_class
 
     def _require_optional_vae_path(self) -> str | None:
         value = str(self.config.vae_path or "").strip()

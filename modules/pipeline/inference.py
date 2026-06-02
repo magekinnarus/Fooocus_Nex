@@ -136,8 +136,9 @@ def _run_unified_sdxl_task(
     )
     config_kwargs = dict(
         model_variant='sdxl',
-        execution_class=str(
-            getattr(task_state, 'sdxl_execution_family', None)
+        execution_class=(
+            getattr(policy, 'execution_class', None)
+            or getattr(task_state, 'sdxl_execution_family', None)
             or getattr(policy, 'execution_family', None)
             or 'standard_sdxl'
         ),
@@ -174,6 +175,7 @@ def _run_unified_sdxl_task(
             if tasks
         },
         contextual_assets=dict(contextual_assets or {}),
+        runtime_policy=policy,
     )
     config_kwargs.update(_build_unified_spatial_kwargs(task_state, image_input_result=image_input_result))
 

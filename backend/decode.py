@@ -91,6 +91,9 @@ def decode_preloaded_vae(vae, latent, tiled=False, tile_size=64):
             dtype = next(vae.first_stage_model.parameters()).dtype
         output_device = "cpu"
         memory_used = _decode_memory_required(latent, dtype)
+
+
+
         free_memory = resources.get_free_memory(device)
         batch_number = int(free_memory / max(1, memory_used))
         batch_number = max(1, batch_number)
@@ -112,6 +115,27 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
     """
     Compatibility wrapper that manages VAE residency before calling decode_preloaded_vae.
     """
+    runtime_policy = getattr(vae, "runtime_policy", None)
+    vae_encode_mode = getattr(runtime_policy, "vae_encode_mode", None)
+    is_transient = (vae_encode_mode == "transient_gpu")
+    is_resident = (vae_encode_mode in {"gpu_resident", "gpu_preferred"})
+
+    patcher = getattr(vae, "patcher", None)
+    configured_device = getattr(patcher, "load_device", torch.device("cpu")) if patcher is not None else torch.device("cpu")
+    if not isinstance(configured_device, torch.device):
+        configured_device = torch.device(configured_device)
+    current_loaded_device = getattr(patcher, "current_loaded_device", lambda: torch.device("cpu"))() if patcher is not None else torch.device("cpu")
+    if not isinstance(current_loaded_device, torch.device):
+        current_loaded_device = torch.device(current_loaded_device)
+
+    gpu_preferred = bool(
+        getattr(runtime_policy, "prefer_gpu_vae_encode", False)
+        or is_transient
+        or is_resident
+        or configured_device.type == "cuda"
+        or current_loaded_device.type == "cuda"
+    )
+
     dtype = next(vae.first_stage_model.parameters()).dtype
     memory_used = _decode_memory_required(latent, dtype)
 
@@ -129,6 +153,16 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
             force_full_load=force_full_load,
         )
         active_device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
+        
+        # Ensure model parameters are on active_device
+        first_stage_model = vae.first_stage_model
+        move_model = getattr(first_stage_model, "to", None)
+        if callable(move_model):
+            if _should_force_fp32_vae_decode(vae):
+                move_model(device=active_device, dtype=torch.float32)
+            else:
+                move_model(device=active_device)
+
         active_free_memory = resources.get_free_memory(active_device)
         use_tiled_decode = tiled or (active_device.type == "cuda" and active_free_memory < memory_used)
         pixel_samples = decode_preloaded_vae(vae, latent, tiled=use_tiled_decode, tile_size=tile_size)
@@ -157,5 +191,11 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
                 logging.warning("VAE tiled decode (32x32) OOM. Falling back to CPU decode.")
                 resources.soft_empty_cache()
                 pixel_samples = _decode_cpu_fallback(vae, latent, tile_size=max(1, tile_size // 4))
+    finally:
+        if gpu_preferred and not is_resident and patcher is not None:
+            try:
+                resources.eject_model(patcher)
+            except Exception:
+                pass
 
     return pixel_samples

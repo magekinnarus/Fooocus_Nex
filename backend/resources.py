@@ -163,9 +163,14 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
     
     if policy is not None:
         from backend import sdxl_runtime_policy
-        
+
+        normalized_residency_class = normalize_sdxl_residency_class(getattr(policy, "residency_class", None))
+
         if role == "unet":
-            if policy.residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
+            if normalized_residency_class in {
+                SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING,
+                SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
+            }:
                 return torch.device("cpu"), "cpu_resident"
             return get_torch_device(), "gpu_resident"
         
@@ -175,7 +180,10 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
             return torch.device("cpu"), "cpu_resident"
             
         if role == "vae":
-            if policy.vae_encode_mode == sdxl_runtime_policy.VAE_ENCODE_GPU_PREFERRED:
+            if policy.vae_encode_mode in {
+                sdxl_runtime_policy.VAE_ENCODE_GPU_PREFERRED,
+                sdxl_runtime_policy.VAE_POSTURE_GPU_RESIDENT,
+            }:
                 return get_torch_device(), "gpu_resident"
             return torch.device("cpu"), "cpu_resident"
             
@@ -204,6 +212,7 @@ def model_reconciliation_signature(model_patcher):
 
 
 SDXL_RESIDENCY_CLASS_FULL = "full_resident"
+SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING = "unified_streaming"
 SDXL_RESIDENCY_CLASS_GGUF_STAGED = "gguf_staged_residency"
 SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING = "gguf_true_streaming"
 
@@ -220,6 +229,7 @@ def normalize_sdxl_residency_class(residency_class=None, *, gguf=False, staged=F
         normalized = str(residency_class).strip().lower()
         if normalized in {
             SDXL_RESIDENCY_CLASS_FULL,
+            SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING,
             SDXL_RESIDENCY_CLASS_GGUF_STAGED,
             SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
         }:

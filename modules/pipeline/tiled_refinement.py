@@ -203,8 +203,9 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
 
         config_kwargs = dict(
             model_variant='sdxl',
-            execution_class=str(
-                getattr(task_state, 'sdxl_execution_family', None)
+            execution_class=(
+                getattr(policy, 'execution_class', None)
+                or getattr(task_state, 'sdxl_execution_family', None)
                 or getattr(policy, 'execution_family', None)
                 or 'standard_sdxl'
             ),
@@ -229,6 +230,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             batch_size=1,
             lora_specs=merged_loras,
             denoise_strength=denoise,
+            runtime_policy=policy,
         )
 
         runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
