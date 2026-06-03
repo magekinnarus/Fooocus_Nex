@@ -111,24 +111,7 @@ def stitch_tiles(tiles: List[TileInfo], full_size: tuple, bucket_w: int, bucket_
     return np.clip(output, 0, 255).astype(np.uint8)
 
 
-def _require_unified_tiled_runtime_owner(task_state):
-    runtime_owner = str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower()
-    if runtime_owner == 'unified':
-        return
 
-    policy = getattr(task_state, 'sdxl_execution_policy', None)
-    if policy is None or not bool(getattr(policy, 'enabled', False)):
-        reason = 'the SDXL execution policy is disabled'
-    else:
-        base_model_name = str(getattr(task_state, 'base_model_name', '') or '').strip().lower()
-        if base_model_name.endswith('.gguf'):
-            reason = 'GGUF SDXL execution is owned by a different runtime'
-        else:
-            reason = f"runtime owner resolved to {runtime_owner or 'legacy/shared'}"
-    raise RuntimeError(
-        'Super-upscale tiled refinement requires the unified SDXL runtime; '
-        f'{reason}. No legacy tiled fallback is available.'
-    )
 
 
 def _resolve_tiled_prompt_blueprint(task_state, prompt_task=None):
@@ -180,8 +163,6 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
     from modules.pipeline.inference import _resolve_unified_checkpoint_path, _resolve_unified_vae_path
     import modules.pipeline.preprocessing as preprocessing
-
-    _require_unified_tiled_runtime_owner(task_state)
 
     H, W, C = upscaled_image.shape
 

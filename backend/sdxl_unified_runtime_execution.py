@@ -351,18 +351,23 @@ class UnifiedSDXLRuntimeExecutionMixin:
         device: torch.device,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         payload = prepared_inputs.payload or {}
-        if "initial_latent" in payload and payload["initial_latent"] is not None:
+        spatial = prepared_inputs.spatial_conditioning
+        spatial_mode = str(getattr(spatial, "spatial_mode", "image") or "image").strip().lower()
+        disable_initial_latent = bool(getattr(self.config, "disable_initial_latent", False))
+
+        if "initial_latent" in payload and payload["initial_latent"] is not None and not (disable_initial_latent and spatial_mode == "inpaint"):
             latent = payload["initial_latent"]
             denoise_mask = payload.get("denoise_mask")
+            if isinstance(latent, dict):
+                denoise_mask = latent.get("noise_mask", denoise_mask)
+                latent = latent.get("samples")
             latent = self._move_nested_tensors_to_device(latent, device)
             denoise_mask = self._move_nested_tensors_to_device(denoise_mask, device)
             return latent, denoise_mask
 
-        spatial = prepared_inputs.spatial_conditioning
         if spatial is None:
             return None, None
 
-        spatial_mode = str(spatial.spatial_mode or "image").strip().lower()
         latent_key = "source_latent"
         denoise_mask_key = None
         if spatial_mode in {"inpaint", "outpaint"}:
@@ -377,6 +382,9 @@ class UnifiedSDXLRuntimeExecutionMixin:
         elif latent is None:
             latent = payload.get("source_latent")
         denoise_mask = payload.get(denoise_mask_key) if denoise_mask_key is not None else None
+
+        if disable_initial_latent and spatial_mode == "inpaint":
+            latent = None
 
         latent = self._move_nested_tensors_to_device(latent, device)
         denoise_mask = self._move_nested_tensors_to_device(denoise_mask, device)

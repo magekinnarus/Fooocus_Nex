@@ -5,8 +5,10 @@ import modules.core as core
 import modules.default_pipeline as pipeline
 import modules.flags as flags
 import modules.config as config
+import modules.model_taxonomy as model_taxonomy
 import backend.resources as resources
 import backend.loader as loader
+from backend import sdxl_runtime_policy
 from modules.util import get_file_from_folder_list
 from modules.pipeline.output import save_and_log, yield_result
 
@@ -45,16 +47,7 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
     return callback
 
 
-def _uses_unified_sdxl_runtime(task_state, *, route_family=None):
-    if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() != 'unified':
-        return False, 'runtime_owner_not_unified'
-    if str(getattr(task_state, 'base_model_name', '') or '').strip().lower().endswith('.gguf'):
-        return False, 'gguf_runtime_owned_elsewhere'
 
-    if route_family not in {None, 'txt2img', 'image_input'}:
-        return False, f'unsupported_route_family:{route_family}'
-
-    return True, 'supported'
 
 
 def _resolve_unified_checkpoint_path(task_state):
@@ -69,6 +62,26 @@ def _resolve_unified_vae_path(task_state):
     if vae_name in {'', flags.default_vae}:
         return None
     return get_file_from_folder_list(vae_name, config.path_vae)
+
+
+def _ensure_supported_unified_runtime_request(task_state):
+    policy = getattr(task_state, 'sdxl_execution_policy', None)
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        raise RuntimeError('Unified SDXL runtime requires an active SDXL execution policy; legacy shared diffusion path is gutted.')
+
+    checkpoint_path = _resolve_unified_checkpoint_path(task_state)
+    resolved_taxonomy = config.resolve_model_taxonomy(checkpoint_path)
+    if sdxl_runtime_policy.is_legacy_sdxl_gguf_selection(
+        architecture=resolved_taxonomy.architecture,
+        base_model_name=checkpoint_path,
+    ):
+        raise RuntimeError(
+            'SDXL GGUF base models are deprecated and no longer supported. '
+            'Select an SDXL checkpoint base model instead.'
+        )
+    if resolved_taxonomy.architecture != model_taxonomy.ARCHITECTURE_SDXL:
+        raise RuntimeError('SD 1.5 execution is no longer supported.')
+    return checkpoint_path
 
 
 def _resolve_unified_sdxl_lora_specs(task_state, *, loras=None, base_model_additional_loras=None):
@@ -101,12 +114,14 @@ def resolve_unified_sdxl_process_key(task_state, *, loras=None, base_model_addit
 
 def _build_unified_spatial_kwargs(task_state, image_input_result=None):
     image_input_result = image_input_result or {}
+    resolved_spatial_context = getattr(task_state, 'inpaint_context', None)
     goals = set(getattr(task_state, 'goals', []) or [])
     if 'outpaint' in goals:
         return {
             'source_pixels': image_input_result.get('outpaint_image'),
             'source_mask': image_input_result.get('outpaint_mask'),
             'spatial_mode': 'outpaint',
+            'resolved_spatial_context': resolved_spatial_context,
             'outpaint_direction': getattr(task_state, 'outpaint_direction', None),
             'outpaint_expansion_size': int(getattr(task_state, 'inpaint_outpaint_expansion_size', 384) or 384),
             'outpaint_pixelate': bool(getattr(task_state, 'inpaint_pixelate_primer', True)),
@@ -116,6 +131,7 @@ def _build_unified_spatial_kwargs(task_state, image_input_result=None):
             'source_pixels': image_input_result.get('inpaint_image'),
             'source_mask': getattr(task_state, 'context_mask', None) or image_input_result.get('inpaint_mask'),
             'spatial_mode': 'inpaint',
+            'resolved_spatial_context': resolved_spatial_context,
         }
     return {}
 
@@ -140,6 +156,7 @@ def _run_unified_sdxl_task(
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
 
     policy = getattr(task_state, 'sdxl_execution_policy', None)
+    checkpoint_path = _ensure_supported_unified_runtime_request(task_state)
     stream_budget = float(getattr(policy, 'stream_budget_mb', 256.0))
 
     merged_loras = _resolve_unified_sdxl_lora_specs(
@@ -174,7 +191,7 @@ def _run_unified_sdxl_task(
         ),
         streamlike_budget_mb=stream_budget,
         quality=quality,
-        checkpoint_path=_resolve_unified_checkpoint_path(task_state),
+        checkpoint_path=checkpoint_path,
         vae_path=_resolve_unified_vae_path(task_state),
         prompt=str(task_dict.get('task_prompt', task_state.prompt) or ''),
         negative_prompt=str(task_dict.get('task_negative_prompt', task_state.negative_prompt) or ''),
@@ -206,6 +223,10 @@ def _run_unified_sdxl_task(
         },
         contextual_assets=dict(contextual_assets or {}),
         runtime_policy=policy,
+        initial_latent=getattr(task_state, 'initial_latent', None),
+        disable_initial_latent=bool(getattr(task_state, 'inpaint_disable_initial_latent', False)),
+        denoise_strength=float(denoising_strength) if denoising_strength is not None else None,
+        original_scheduler_name=str(task_state.scheduler_name),
     )
     config_kwargs.update(_build_unified_spatial_kwargs(task_state, image_input_result=image_input_result))
 
@@ -239,106 +260,29 @@ def process_task(task_state, task_dict, current_task_id, total_count, all_steps,
                  route_family=None, contextual_assets=None,
                  base_model_additional_loras=None, image_input_result=None):
     """
-    Executes a single generation task (one image).
+    Executes a single generation task (one image) using the unified SDXL runtime.
     """
     if task_state.last_stop is not False:
         resources.interrupt_current_processing()
 
-    quality = {
-        "sharpness": task_state.sharpness,
-        "adaptive_cfg": task_state.adaptive_cfg,
-        "adm_scaler_positive": task_state.adm_scaler_positive,
-        "adm_scaler_negative": task_state.adm_scaler_negative,
-        "adm_scaler_end": task_state.adm_scaler_end,
-        "controlnet_softness": task_state.controlnet_softness
-    }
-
     controlnet_paths = controlnet_paths or {}
-    use_unified_runtime, rejection_reason = _uses_unified_sdxl_runtime(
+    _ensure_supported_unified_runtime_request(task_state)
+    imgs = _run_unified_sdxl_task(
         task_state,
-        route_family=route_family,
+        task_dict,
+        current_task_id,
+        total_count,
+        all_steps,
+        preparation_steps,
+        denoising_strength,
+        final_scheduler_name,
+        loras=loras,
+        base_model_additional_loras=base_model_additional_loras,
+        controlnet_paths=controlnet_paths,
+        contextual_assets=contextual_assets,
+        image_input_result=image_input_result,
+        progressbar_callback=progressbar_callback,
     )
-    if use_unified_runtime:
-        imgs = _run_unified_sdxl_task(
-            task_state,
-            task_dict,
-            current_task_id,
-            total_count,
-            all_steps,
-            preparation_steps,
-            denoising_strength,
-            final_scheduler_name,
-            loras=loras,
-            base_model_additional_loras=base_model_additional_loras,
-            controlnet_paths=controlnet_paths,
-            contextual_assets=contextual_assets,
-            image_input_result=image_input_result,
-            progressbar_callback=progressbar_callback,
-        )
-    else:
-        # Legacy shared diffusion fallback for routes the unified runtime does not currently own.
-        import modules.model_taxonomy as model_taxonomy
-        taxonomy = config.resolve_model_taxonomy(task_state.base_model_name)
-        if taxonomy.architecture == model_taxonomy.ARCHITECTURE_SDXL:
-            raise RuntimeError(
-                f"Legacy shared diffusion path is gutted. Standard SDXL execution requires the unified runtime. "
-                f"Model: {task_state.base_model_name}"
-            )
-
-        if str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower() == 'unified':
-            if route_family in {'txt2img', 'image_input'}:
-                raise RuntimeError(
-                    f"Unified SDXL runtime owner selected but failed to execute on standard route: {rejection_reason}"
-                )
-            print(f'[UnifiedRuntime] Falling back to shared diffusion path: {rejection_reason}')
-
-        positive_cond = task_dict['c']
-        negative_cond = task_dict['uc']
-
-        if 'cn' in task_state.goals:
-            structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
-            with resources.memory_phase_scope(
-                resources.MemoryPhase.CONTROL_APPLY,
-                task=task_state,
-                notes={'structural_task_count': sum(len(tasks) for tasks in structural_tasks.values())},
-                end_notes={'completed': True},
-            ):
-                for cn_flag in [flags.cn_canny, flags.cn_cpds, flags.cn_depth, flags.cn_mistoline, flags.cn_mlsd]:
-                    cn_path = controlnet_paths.get(cn_flag)
-                    if cn_path is None:
-                        continue
-
-                    cn_net = pipeline.loaded_ControlNets.get(cn_path)
-                    if cn_net is None:
-                        print(f'[ControlNet] Loaded model missing for {cn_flag}: {cn_path}')
-                        continue
-
-                    loader.patch_controlnet_for_quality(cn_net, quality)
-                    for cn_task in structural_tasks.get(cn_flag, []):
-                        cn_img, cn_stop, cn_weight = cn_task
-                        positive_cond, negative_cond = core.apply_controlnet(
-                            positive_cond, negative_cond,
-                            cn_net, cn_img, cn_weight, 0, cn_stop)
-
-        # For non-SDXL (SD 1.5) models that passed preprocessing, raise an explicit error here
-        # since process_diffusion has been deleted as part of the SDXL gutting pass.
-        raise RuntimeError(
-            f"Legacy shared diffusion path is gutted. SD 1.5 execution is no longer supported. "
-            f"Model: {task_state.base_model_name}"
-        )
-
-        del positive_cond, negative_cond  # Save memory
-
-    if hasattr(task_state, 'inpaint_context') and task_state.inpaint_context is not None:
-        with resources.memory_phase_scope(
-            resources.MemoryPhase.STITCH,
-            task=task_state,
-            notes={'current_task_id': current_task_id},
-            end_notes={'completed': True},
-        ):
-            from modules.pipeline.inpaint import InpaintPipeline
-            inpaint = InpaintPipeline()
-            imgs = [inpaint.stitch(task_state.inpaint_context, x) for x in imgs]
 
     current_progress = int(preparation_steps + (100 - preparation_steps) / float(all_steps) * task_state.steps)
 

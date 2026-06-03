@@ -64,6 +64,7 @@ class UnifiedSDXLRuntimeConfig:
     source_pixels: Any | None = None
     source_mask: Any | None = None
     spatial_mode: str | None = None
+    resolved_spatial_context: Any | None = None
     outpaint_direction: str | None = None
     outpaint_expansion_size: int = 384
     outpaint_pixelate: bool = True
@@ -73,8 +74,10 @@ class UnifiedSDXLRuntimeConfig:
     contextual_tasks: dict[str, tuple[tuple[Any, ...], ...]] = field(default_factory=dict)
     contextual_assets: dict[str, Any] = field(default_factory=dict)
     initial_latent: Any | None = None
+    disable_initial_latent: bool = False
     denoise_strength: float | None = None
     runtime_policy: Any | None = None
+    original_scheduler_name: str | None = None
 
 
 
@@ -197,6 +200,14 @@ class UnifiedSDXLRuntime(
 
         if self.unet is not None:
             self.unet.runtime_release_to_meta = False
+            # Apply scheduler-specific patch to the UNet
+            orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
+            if orig_scheduler in ['lcm', 'tcd']:
+                from modules import core as modules_core
+                self.unet = modules_core.opModelSamplingDiscrete.patch(self.unet, orig_scheduler, False)[0]
+            elif orig_scheduler == 'edm_playground_v2.5':
+                from modules import core as modules_core
+                self.unet = modules_core.opModelSamplingContinuousEDM.patch(self.unet, orig_scheduler, 120.0, 0.002)[0]
         if self.clip is not None:
             self.clip.runtime_policy = self.policy
             if hasattr(self.clip, "clip_layer"):
@@ -810,6 +821,8 @@ class UnifiedSDXLRuntime(
         digest.update(repr(self.config.clip_layer).encode("utf-8"))
         digest.update(repr(self.config.batch_size).encode("utf-8"))
         digest.update(repr(self.config.steps).encode("utf-8"))
+        digest.update(repr(self.config.scheduler).encode("utf-8"))
+        digest.update(repr(self.config.original_scheduler_name).encode("utf-8"))
         digest.update(repr(unet_compile_metrics.get("patch_count", 0)).encode("utf-8"))
         digest.update(repr(unet_compile_metrics.get("host_pinned_bytes", 0)).encode("utf-8"))
         return digest.hexdigest()

@@ -313,12 +313,8 @@ def handler(async_task: AsyncTask):
         profile=active_profile,
         requested_residency_class=getattr(task_state, 'sdxl_residency_class', None) or None,
     )
-    task_state.sdxl_execution_class = getattr(task_state.sdxl_execution_policy, 'execution_class', None)
     task_state.sdxl_execution_family = str(getattr(task_state.sdxl_execution_policy, 'execution_family', '') or '')
     task_state.sdxl_residency_class = str(getattr(task_state.sdxl_execution_policy, 'residency_class', '') or '')
-    task_state.sdxl_clip_residency_mode = str(getattr(task_state.sdxl_execution_policy, 'clip_residency_mode', '') or '')
-    task_state.sdxl_vae_encode_mode = str(getattr(task_state.sdxl_execution_policy, 'vae_encode_mode', '') or '')
-    task_state.sdxl_keep_clip_loaded = bool(getattr(task_state.sdxl_execution_policy, 'keep_clip_loaded', False))
 
     with resources.memory_phase_scope(
         resources.MemoryPhase.ROUTE_SELECT,

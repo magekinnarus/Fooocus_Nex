@@ -95,41 +95,7 @@ def _is_upscale_request(task_state) -> bool:
     return 'upscale' in method
 
 
-def _supports_unified_sdxl_runtime_owner(task_state) -> bool:
-    policy = getattr(task_state, 'sdxl_execution_policy', None)
-    if policy is None or not bool(getattr(policy, 'enabled', False)):
-        return False
 
-    base_model_name = str(getattr(task_state, 'base_model_name', '') or '').strip()
-    if base_model_name == '' or base_model_name.lower().endswith('.gguf'):
-        return False
-
-    import modules.config as config
-    import modules.model_taxonomy as model_taxonomy
-
-    taxonomy = config.resolve_model_taxonomy(base_model_name)
-    if taxonomy.architecture != model_taxonomy.ARCHITECTURE_SDXL:
-        return False
-
-    execution_family = str(
-        getattr(task_state, 'sdxl_execution_family', None)
-        or getattr(policy, 'execution_family', None)
-        or ''
-    ).strip().lower()
-    residency_class = str(
-        getattr(task_state, 'sdxl_residency_class', None)
-        or getattr(policy, 'residency_class', None)
-        or ''
-    ).strip().lower()
-    if execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED:
-        return False
-    if residency_class in {
-        sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED,
-        sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
-    }:
-        return False
-
-    return True
 
 
 
@@ -1043,7 +1009,6 @@ class RemovalStage(PipelineStage):
 
 
 def build_generation_route(task_state) -> PipelineRoute:
-    task_state.sdxl_runtime_owner = 'unified' if _supports_unified_sdxl_runtime_owner(task_state) else ''
     expects_controlnet = _expects_controlnet_extension(task_state)
 
     if task_state.input_image_checkbox and (flags.remove_bg in task_state.goals or flags.remove_obj in task_state.goals):

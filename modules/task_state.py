@@ -112,10 +112,6 @@ class TaskState:
     sdxl_execution_policy: object = None
     sdxl_execution_family: str = ""
     sdxl_residency_class: str = ""
-    sdxl_clip_residency_mode: str = ""
-    sdxl_vae_encode_mode: str = ""
-    sdxl_keep_clip_loaded: bool = False
-    sdxl_runtime_owner: str = ""
     prepared_contextual_cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)
     prepared_structural_cn_tasks: Dict[str, List[Any]] = field(default_factory=dict)
 

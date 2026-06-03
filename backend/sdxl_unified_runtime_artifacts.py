@@ -157,6 +157,8 @@ class UnifiedSDXLRuntimeArtifactMixin:
         spatial_mode = self._resolve_spatial_mode()
         if spatial_mode == "outpaint":
             return self._prepare_outpaint_spatial_conditioning_artifacts(pixels)
+        if spatial_mode == "inpaint":
+            return self._prepare_inpaint_spatial_conditioning_artifacts(pixels)
 
         metrics: dict[str, float] = {}
         image_fingerprint = self._hash_payload(pixels)
@@ -267,6 +269,173 @@ class UnifiedSDXLRuntimeArtifactMixin:
             metrics,
         )
 
+    def _resolve_prepared_spatial_context(
+        self,
+        pixels: torch.Tensor,
+        *,
+        spatial_mode: str,
+    ) -> dict[str, Any] | None:
+        context = getattr(self.config, "resolved_spatial_context", None)
+        if context is None:
+            return None
+
+        required_attrs = ("bb", "bb_image", "bb_mask", "blend_mask", "target_w", "target_h")
+        missing = [name for name in required_attrs if getattr(context, name, None) is None]
+        if missing:
+            raise ValueError(
+                f"Unified SDXL runtime resolved {spatial_mode} context is missing required fields: {', '.join(missing)}."
+            )
+
+        original_pixels = pixels.detach().cpu().contiguous()
+        bb_pixels = self._normalize_source_pixels(getattr(context, "bb_image", None))
+        if bb_pixels is None:
+            raise RuntimeError(f"Unified SDXL runtime resolved {spatial_mode} context is missing BB pixels.")
+        bb_mask = self._normalize_source_mask(getattr(context, "bb_mask", None), bb_pixels)
+        if bb_mask is None:
+            raise RuntimeError(f"Unified SDXL runtime resolved {spatial_mode} context is missing BB mask.")
+        blend_mask = self._normalize_source_mask(getattr(context, "blend_mask", None), original_pixels)
+        bbox = tuple(int(v) for v in getattr(context, "bb"))
+
+        resolved = {
+            "original_pixels": original_pixels,
+            "bb_pixels": bb_pixels,
+            "bb_mask": bb_mask,
+            "blend_mask": blend_mask,
+            "bbox": bbox,
+            "target_width": int(getattr(context, "target_w")),
+            "target_height": int(getattr(context, "target_h")),
+        }
+        if spatial_mode == "outpaint":
+            working_pixels = self._normalize_source_pixels(getattr(context, "original_image", None))
+            if working_pixels is None:
+                working_pixels = original_pixels
+            resolved["working_pixels"] = working_pixels
+            resolved["working_mask"] = self._normalize_source_mask(getattr(context, "original_mask", None), working_pixels)
+        return resolved
+
+    def _prepare_inpaint_spatial_conditioning_artifacts(
+        self,
+        pixels: torch.Tensor,
+    ) -> tuple[SpatialConditioningArtifact, dict[str, Any], dict[str, float]]:
+        if pixels.shape[0] != 1:
+            raise ValueError("Unified SDXL runtime inpaint preparation currently supports batch_size=1 only.")
+        if self.vae is None:
+            raise RuntimeError("Unified SDXL runtime requires a loaded VAE before preparing inpaint artifacts.")
+
+        original_pixels = pixels.detach().cpu().contiguous()
+        base_mask = self._normalize_source_mask(self.config.source_mask, pixels)
+        prepared_context = self._resolve_prepared_spatial_context(pixels, spatial_mode="inpaint")
+        if prepared_context is None:
+            base_mask_2d = (
+                (base_mask[0] * 255.0).to(dtype=torch.uint8).cpu().numpy()
+                if base_mask is not None
+                else None
+            )
+
+            from modules.pipeline.inpaint import InpaintPipeline
+            image_np = (original_pixels[0].clamp(0.0, 1.0).mul(255.0).round().to(dtype=torch.uint8).numpy())
+
+            inpaint = InpaintPipeline()
+            prepare_start = time.perf_counter()
+            context = inpaint.prepare(
+                image=image_np,
+                mask=base_mask_2d,
+                extend_factor=1.2,
+            )
+            prepare_wall = time.perf_counter() - prepare_start
+            bb_pixels = self._normalize_source_pixels(context.bb_image)
+            if bb_pixels is None:
+                raise RuntimeError("Unified SDXL runtime failed to prepare inpaint BB pixels.")
+            bb_mask = self._normalize_source_mask(context.bb_mask, bb_pixels)
+            if bb_mask is None:
+                raise RuntimeError("Unified SDXL runtime failed to prepare inpaint BB mask.")
+            blend_mask = self._normalize_source_mask(context.blend_mask, original_pixels)
+            bbox = tuple(int(v) for v in context.bb)
+            target_width = int(context.target_w)
+            target_height = int(context.target_h)
+        else:
+            prepare_wall = 0.0
+            bb_pixels = prepared_context["bb_pixels"]
+            bb_mask = prepared_context["bb_mask"]
+            blend_mask = prepared_context["blend_mask"]
+            bbox = prepared_context["bbox"]
+            target_width = int(prepared_context["target_width"])
+            target_height = int(prepared_context["target_height"])
+
+        encode_start = time.perf_counter()
+        route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
+        encode_wall = time.perf_counter() - encode_start
+        denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
+
+        image_fingerprint = self._hash_payload(original_pixels)
+        mask_fingerprint = self._hash_payload(bb_mask)
+        source_fingerprint = self._hash_payload(
+            {
+                "checkpoint": self.base_model.fingerprint if self.base_model is not None else self.config.checkpoint_path,
+                "image": image_fingerprint,
+                "base_mask": self._hash_payload(base_mask) if base_mask is not None else None,
+                "bbox": bbox,
+                "target_width": target_width,
+                "target_height": target_height,
+            }
+        )
+        source_latent_fingerprint = self._hash_payload(route_latent)
+        denoise_mask_fingerprint = self._hash_payload(denoise_mask)
+        artifact_fingerprint = self._hash_payload(
+            {
+                "source_fingerprint": source_fingerprint,
+                "mask_fingerprint": mask_fingerprint,
+                "source_latent_fingerprint": source_latent_fingerprint,
+                "denoise_mask_fingerprint": denoise_mask_fingerprint,
+                "blend_mask_fingerprint": self._hash_payload(blend_mask) if blend_mask is not None else None,
+                "bbox": bbox,
+            }
+        )
+        mask_coverage = float(bb_mask.mean().item()) if bb_mask.numel() else 0.0
+        bbox_area_ratio = self._bbox_area_ratio(bbox, original_pixels.shape[1], original_pixels.shape[2])
+        payload = {
+            "source_pixels": original_pixels,
+            "source_mask": base_mask,
+            "source_latent": route_latent,
+            "bb_pixels": bb_pixels,
+            "bb_mask": bb_mask,
+            "bb_latent": route_latent,
+            "bb_denoise_mask": denoise_mask,
+            "bbox": bbox,
+            "blend_mask": blend_mask,
+        }
+        metrics = {
+            "source_vae_encode_cpu": 0.0,
+            "masked_vae_encode_cpu": 0.0,
+            "bb_vae_encode_cpu": float(encode_wall),
+            "spatial_mask_coverage": float(mask_coverage),
+            "spatial_bbox_area_ratio": float(bbox_area_ratio),
+            "inpaint_prepare_cpu": float(prepare_wall),
+        }
+        return (
+            SpatialConditioningArtifact(
+                family="sdxl",
+                variant=self.config.model_variant,
+                spatial_mode="inpaint",
+                source_fingerprint=source_fingerprint,
+                image_fingerprint=image_fingerprint,
+                mask_fingerprint=mask_fingerprint,
+                artifact_fingerprint=artifact_fingerprint,
+                source_latent_fingerprint=source_latent_fingerprint,
+                masked_latent_fingerprint=None,
+                bb_latent_fingerprint=source_latent_fingerprint,
+                denoise_mask_fingerprint=denoise_mask_fingerprint,
+                bbox=bbox,
+                target_width=target_width,
+                target_height=target_height,
+                mask_coverage=float(mask_coverage),
+                bbox_area_ratio=float(bbox_area_ratio),
+                reusable=True,
+            ),
+            payload,
+            metrics,
+        )
+
     def _prepare_outpaint_spatial_conditioning_artifacts(
         self,
         pixels: torch.Tensor,
@@ -278,18 +447,37 @@ class UnifiedSDXLRuntimeArtifactMixin:
 
         original_pixels = pixels.detach().cpu().contiguous()
         base_mask = self._normalize_source_mask(self.config.source_mask, pixels)
-        base_mask_2d = (
-            (base_mask[0] * 255.0).to(dtype=torch.uint8).cpu().numpy()
-            if base_mask is not None
-            else None
-        )
-        context = self._build_outpaint_context(original_pixels[0], base_mask_2d)
-        bb_pixels = self._normalize_source_pixels(context["bb_pixels"])
-        if bb_pixels is None:
-            raise RuntimeError("Unified SDXL runtime failed to prepare outpaint BB pixels.")
-        bb_mask = self._normalize_source_mask(context["bb_mask"], bb_pixels)
-        if bb_mask is None:
-            raise RuntimeError("Unified SDXL runtime failed to prepare outpaint BB mask.")
+        prepared_context = self._resolve_prepared_spatial_context(pixels, spatial_mode="outpaint")
+        if prepared_context is None:
+            base_mask_2d = (
+                (base_mask[0] * 255.0).to(dtype=torch.uint8).cpu().numpy()
+                if base_mask is not None
+                else None
+            )
+            context = self._build_outpaint_context(original_pixels[0], base_mask_2d)
+            bb_pixels = self._normalize_source_pixels(context["bb_pixels"])
+            if bb_pixels is None:
+                raise RuntimeError("Unified SDXL runtime failed to prepare outpaint BB pixels.")
+            bb_mask = self._normalize_source_mask(context["bb_mask"], bb_pixels)
+            if bb_mask is None:
+                raise RuntimeError("Unified SDXL runtime failed to prepare outpaint BB mask.")
+            blend_mask = self._normalize_source_mask(context["blend_mask"], original_pixels)
+            bbox = tuple(int(v) for v in context["bbox"])
+            target_width = int(context["target_width"])
+            target_height = int(context["target_height"])
+            working_pixels = self._normalize_source_pixels(context["working_pixels"])
+            working_mask = self._normalize_source_mask(context["working_mask"], working_pixels)
+            prepare_wall = float(context["prepare_wall"])
+        else:
+            bb_pixels = prepared_context["bb_pixels"]
+            bb_mask = prepared_context["bb_mask"]
+            blend_mask = prepared_context["blend_mask"]
+            bbox = prepared_context["bbox"]
+            target_width = int(prepared_context["target_width"])
+            target_height = int(prepared_context["target_height"])
+            working_pixels = prepared_context["working_pixels"]
+            working_mask = prepared_context["working_mask"]
+            prepare_wall = 0.0
 
         encode_start = time.perf_counter()
         route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
@@ -306,14 +494,13 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 "direction": str(self.config.outpaint_direction or "").strip().lower() or None,
                 "expansion": int(self.config.outpaint_expansion_size),
                 "pixelate": bool(self.config.outpaint_pixelate),
-                "bbox": context["bbox"],
-                "target_width": int(context["target_width"]),
-                "target_height": int(context["target_height"]),
+                "bbox": bbox,
+                "target_width": target_width,
+                "target_height": target_height,
             }
         )
         source_latent_fingerprint = self._hash_payload(route_latent)
         denoise_mask_fingerprint = self._hash_payload(denoise_mask)
-        blend_mask = self._normalize_source_mask(context["blend_mask"], original_pixels)
         artifact_fingerprint = self._hash_payload(
             {
                 "source_fingerprint": source_fingerprint,
@@ -321,13 +508,11 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 "source_latent_fingerprint": source_latent_fingerprint,
                 "denoise_mask_fingerprint": denoise_mask_fingerprint,
                 "blend_mask_fingerprint": self._hash_payload(blend_mask) if blend_mask is not None else None,
-                "bbox": context["bbox"],
+                "bbox": bbox,
             }
         )
-        bbox = tuple(int(v) for v in context["bbox"])
         mask_coverage = float(bb_mask.mean().item()) if bb_mask.numel() else 0.0
         bbox_area_ratio = self._bbox_area_ratio(bbox, original_pixels.shape[1], original_pixels.shape[2])
-        working_pixels = self._normalize_source_pixels(context["working_pixels"])
         payload = {
             "source_pixels": original_pixels,
             "source_mask": base_mask,
@@ -338,9 +523,9 @@ class UnifiedSDXLRuntimeArtifactMixin:
             "bb_denoise_mask": denoise_mask,
             "bbox": bbox,
             "blend_mask": blend_mask,
-            "outpaint_direction": context["direction"],
+            "outpaint_direction": str(self.config.outpaint_direction or "").strip().lower() or None,
             "outpaint_working_pixels": working_pixels,
-            "outpaint_working_mask": self._normalize_source_mask(context["working_mask"], working_pixels),
+            "outpaint_working_mask": working_mask,
         }
         metrics = {
             "source_vae_encode_cpu": 0.0,
@@ -348,7 +533,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
             "bb_vae_encode_cpu": float(encode_wall),
             "spatial_mask_coverage": float(mask_coverage),
             "spatial_bbox_area_ratio": float(bbox_area_ratio),
-            "outpaint_prepare_cpu": float(context["prepare_wall"]),
+            "outpaint_prepare_cpu": float(prepare_wall),
         }
         return (
             SpatialConditioningArtifact(
@@ -364,8 +549,8 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 bb_latent_fingerprint=source_latent_fingerprint,
                 denoise_mask_fingerprint=denoise_mask_fingerprint,
                 bbox=bbox,
-                target_width=int(context["target_width"]),
-                target_height=int(context["target_height"]),
+                target_width=target_width,
+                target_height=target_height,
                 mask_coverage=float(mask_coverage),
                 bbox_area_ratio=float(bbox_area_ratio),
                 reusable=True,

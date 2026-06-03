@@ -108,8 +108,6 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
     Sets up the outpainting worker, patches the UNet, and encodes the initial latent.
     Exclusively using OutpaintPipeline.
     """
-    inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
-
     from modules.pipeline.outpaint import OutpaintPipeline
     outpaint = OutpaintPipeline()
     
@@ -166,25 +164,10 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
     ctx.blend_mask = outpaint._morphological_open(full_mask)
 
     
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.VAE_ENCODE,
-        task=task_state,
-        notes={'route': 'outpaint', 'denoise': float(denoising_strength)},
-        end_notes={'completed': True},
-    ):
-        candidate_vae, _ = pipeline.get_candidate_vae(
-            steps=task_state.steps,
-            denoise=denoising_strength
-        )
-        latent_dict = outpaint.encode(ctx, candidate_vae)
-    
     task_state.inpaint_context = ctx
     task_state.width = ctx.target_w
     task_state.height = ctx.target_h
-    
-    if not inpaint_disable_initial_latent:
-        task_state.initial_latent = latent_dict
-        
+    task_state.initial_latent = None
     task_state.denoising_strength = denoising_strength
     
     final_height, final_width = ctx.original_image.shape[:2]
@@ -198,7 +181,6 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
     Inference always runs from the resolved Full Image, Context Mask, BB Image, and BB Mask set.
     """
     denoising_strength = getattr(task_state, 'inpaint_strength', 1.0)
-    inpaint_disable_initial_latent = getattr(task_state, 'inpaint_disable_initial_latent', False)
 
     raw_input_image = getattr(task_state, 'inpaint_input_image', None)
     raw_context_mask = getattr(task_state, 'inpaint_context_mask_image', None)
@@ -282,25 +264,10 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
             yield_result_callback(task_state, [ctx.bb_image, ctx.bb_mask], 100, do_not_show_finished_images=True)
         raise EarlyReturnException
 
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.VAE_ENCODE,
-        task=task_state,
-        notes={'route': 'inpaint', 'denoise': float(denoising_strength)},
-        end_notes={'completed': True},
-    ):
-        candidate_vae, _ = pipeline.get_candidate_vae(
-            steps=task_state.steps,
-            denoise=denoising_strength
-        )
-
-        latent_dict = inpaint.encode(ctx, candidate_vae)
     task_state.inpaint_context = ctx
     task_state.width = ctx.target_w
     task_state.height = ctx.target_h
-
-    if not inpaint_disable_initial_latent:
-        task_state.initial_latent = latent_dict
-
+    task_state.initial_latent = None
     task_state.denoising_strength = denoising_strength
 
     final_height, final_width = ctx.original_image.shape[:2]
@@ -711,10 +678,7 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
             return [task[0], task[1], task[2], 0.0]
         raise ValueError(f'Unexpected contextual task shape: {task!r}')
 
-    def should_patch_shared_unet():
-        runtime_owner = str(getattr(task_state, 'sdxl_runtime_owner', '') or '').strip().lower()
-        execution_family = str(getattr(task_state, 'sdxl_execution_family', '') or '').strip().lower()
-        return runtime_owner != 'unified' and 'unified' not in execution_family
+
 
     def preprocess_contextual_tasks(cn_type, tasks, resize_to=None):
         valid_tasks = []
@@ -782,11 +746,7 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
         },
         end_notes={'completed': True},
     ):
-        if should_patch_shared_unet() and len(all_contextual_tasks) > 0:
-            pipeline.final_unet = contextual_ip_adapter.patch_model(pipeline.final_unet, all_contextual_tasks)
-
-        if should_patch_shared_unet() and len(pulid_tasks) > 0:
-            pipeline.final_unet = pulid_runtime.patch_model(pipeline.final_unet, pulid_tasks)
+        pass
 
 
 def apply_control_nets(task_state, contextual_assets=None, structural_preprocessor_paths=None):
