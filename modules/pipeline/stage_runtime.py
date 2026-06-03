@@ -96,6 +96,7 @@ class PipelineRouteContext:
     def update_image_input_result(self, payload: Dict[str, Any]) -> None:
         self.image_input_result = dict(payload)
         self.base_model_additional_loras = list(payload.get('base_model_additional_loras', self.base_model_additional_loras))
+        self.task_state.base_model_additional_loras = list(self.base_model_additional_loras)
 
     def set_route_artifact(self, stage_id: str, payload: Any, *, fingerprint: Any | None = None) -> None:
         self.route_artifacts[stage_id] = {

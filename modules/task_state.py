@@ -22,6 +22,7 @@ class TaskState:
     vae_name: str = ""
     clip_model_name: str = ""
     loras: List[Any] = field(default_factory=list)
+    base_model_additional_loras: List[Any] = field(default_factory=list)
     input_image_checkbox: bool = False
     current_tab: str = "uov"
     uov_method: str = "Disabled"

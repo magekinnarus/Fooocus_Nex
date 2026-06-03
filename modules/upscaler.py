@@ -92,12 +92,13 @@ def clear_model_cache():
     resources.soft_empty_cache()
     print("Upscale model cache cleared and memory reclaimed.")
 
-def perform_upscale(img, model_name=None, scale_override=None):
+def perform_upscale(img, model_name=None, scale_override=None, retain_warm=False):
     """
     Upscale an image using the specified model.
     img: numpy array [H, W, C]
     model_name: filename of the model in models/upscale_models/
     scale_override: optional scale to force
+    retain_warm: if True, do not unload non-upscaler models
     """
     global _cached_model, _cached_model_name
     
@@ -167,7 +168,8 @@ def perform_upscale(img, model_name=None, scale_override=None):
 
     # Aggressive memory reclamation after the heavy GAN pass
     model.cpu()
-    resources.unload_all_models()
+    if not retain_warm:
+        resources.unload_all_models()
     gc.collect()
     resources.soft_empty_cache()
 

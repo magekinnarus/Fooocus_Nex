@@ -1,11 +1,10 @@
-﻿import os
+import os
 import math
 import cv2
 import numpy as np
 import fooocus_version
 import modules.config as config
 import modules.meta_parser as meta_parser
-from modules.private_logger import log
 from modules.util import HWC3, resize_image
 
 
@@ -69,6 +68,7 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
     """
     Saves the generated images to disk and logs the generation parameters.
     """
+    from modules.private_logger import log
     img_paths = []
     for x in images:
         d = [

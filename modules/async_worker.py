@@ -165,26 +165,12 @@ def _release_route_runtime_state(task_state):
 
 
 def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | None:
-    policy = getattr(task_state, 'sdxl_execution_policy', None)
-    if policy is None or not bool(getattr(policy, 'enabled', False)):
-        return None
+    from modules.pipeline.inference import resolve_unified_sdxl_process_key
 
-    base_model_name = getattr(task_state, 'base_model_name', None)
-    vae_name = getattr(task_state, 'vae_name', None)
-    clip_name = getattr(task_state, 'clip_model_name', None)
-    if not base_model_name:
-        return None
-
-    loras = getattr(task_state, 'loras', []) or []
-    additional_loras = getattr(task_state, 'base_model_additional_loras', []) or []
-
-    import modules.default_pipeline as default_pipeline
-    return default_pipeline._sdxl_process_key(
-        base_model_name=base_model_name,
-        vae_name=vae_name,
-        clip_name=clip_name,
-        sdxl_policy=policy,
-        loras=list(loras) + list(additional_loras),
+    return resolve_unified_sdxl_process_key(
+        task_state,
+        loras=getattr(task_state, 'loras', []) or [],
+        base_model_additional_loras=getattr(task_state, 'base_model_additional_loras', []) or [],
     )
 
 
@@ -305,18 +291,7 @@ def handler(async_task: AsyncTask):
         raise ValueError(f'Invalid aspect ratio selection: {task_state.aspect_ratios_selection!r}')
     task_state.width, task_state.height = int(dims[0]), int(dims[1])
 
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.ROUTE_SELECT,
-        task=task_state,
-        notes={
-            'current_tab': task_state.current_tab,
-            'input_image_checkbox': bool(task_state.input_image_checkbox),
-        },
-        end_notes={'completed': True},
-    ):
-        route = build_generation_route(task_state)
-
-    print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
+    # Resolve model taxonomy first
     resolved_taxonomy = modules.config.resolve_model_taxonomy(task_state.base_model_name)
     if sdxl_runtime_policy.is_legacy_sdxl_gguf_selection(
         architecture=getattr(resolved_taxonomy, 'architecture', None),
@@ -330,6 +305,7 @@ def handler(async_task: AsyncTask):
         task_state.yields.append(['preview', (0, message, None)])
         raise ValueError(message)
 
+    # Resolve execution policy
     active_profile = resources.active_memory_environment_profile()
     task_state.sdxl_execution_policy = sdxl_runtime_policy.resolve_sdxl_execution_policy(
         architecture=getattr(resolved_taxonomy, 'architecture', None),
@@ -343,6 +319,19 @@ def handler(async_task: AsyncTask):
     task_state.sdxl_clip_residency_mode = str(getattr(task_state.sdxl_execution_policy, 'clip_residency_mode', '') or '')
     task_state.sdxl_vae_encode_mode = str(getattr(task_state.sdxl_execution_policy, 'vae_encode_mode', '') or '')
     task_state.sdxl_keep_clip_loaded = bool(getattr(task_state.sdxl_execution_policy, 'keep_clip_loaded', False))
+
+    with resources.memory_phase_scope(
+        resources.MemoryPhase.ROUTE_SELECT,
+        task=task_state,
+        notes={
+            'current_tab': task_state.current_tab,
+            'input_image_checkbox': bool(task_state.input_image_checkbox),
+        },
+        end_notes={'completed': True},
+    ):
+        route = build_generation_route(task_state)
+
+    print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
 
     requested_process_key = _resolve_requested_process_key(task_state, route)
 

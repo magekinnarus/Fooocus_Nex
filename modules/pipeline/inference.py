@@ -71,6 +71,34 @@ def _resolve_unified_vae_path(task_state):
     return get_file_from_folder_list(vae_name, config.path_vae)
 
 
+def _resolve_unified_sdxl_lora_specs(task_state, *, loras=None, base_model_additional_loras=None):
+    resolved_loras = list(getattr(task_state, 'loras_processed', None) or loras or getattr(task_state, 'loras', []) or [])
+    if base_model_additional_loras is None:
+        base_model_additional_loras = getattr(task_state, 'base_model_additional_loras', []) or []
+    resolved_additional_loras = list(base_model_additional_loras or [])
+    return tuple((str(path), float(weight)) for path, weight in (resolved_loras + resolved_additional_loras))
+
+
+def resolve_unified_sdxl_process_key(task_state, *, loras=None, base_model_additional_loras=None):
+    policy = getattr(task_state, 'sdxl_execution_policy', None)
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        return None
+
+    return pipeline._sdxl_process_key(
+        base_model_name=_resolve_unified_checkpoint_path(task_state),
+        vae_name=_resolve_unified_vae_path(task_state),
+        clip_name=getattr(task_state, 'clip_model_name', None),
+        sdxl_policy=policy,
+        loras=list(
+            _resolve_unified_sdxl_lora_specs(
+                task_state,
+                loras=loras,
+                base_model_additional_loras=base_model_additional_loras,
+            )
+        ),
+    )
+
+
 def _build_unified_spatial_kwargs(task_state, image_input_result=None):
     image_input_result = image_input_result or {}
     goals = set(getattr(task_state, 'goals', []) or [])
@@ -114,9 +142,11 @@ def _run_unified_sdxl_task(
     policy = getattr(task_state, 'sdxl_execution_policy', None)
     stream_budget = float(getattr(policy, 'stream_budget_mb', 256.0))
 
-    resolved_loras = list(getattr(task_state, 'loras_processed', None) or loras or [])
-    resolved_additional_loras = list(base_model_additional_loras or [])
-    merged_loras = tuple((str(path), float(weight)) for path, weight in (resolved_loras + resolved_additional_loras))
+    merged_loras = _resolve_unified_sdxl_lora_specs(
+        task_state,
+        loras=loras,
+        base_model_additional_loras=base_model_additional_loras,
+    )
 
     quality = {
         "sharpness": float(getattr(task_state, 'sharpness', 2.0)),
@@ -182,6 +212,15 @@ def _run_unified_sdxl_task(
     runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
     try:
         prepared_inputs, _ = runtime.prepare_inputs()
+        active_process_key = resolve_unified_sdxl_process_key(
+            task_state,
+            loras=loras,
+            base_model_additional_loras=base_model_additional_loras,
+        )
+        if active_process_key is not None:
+            from backend import process_transition
+
+            process_transition.set_active_process_key(active_process_key)
         denoise_result = runtime.denoise_prepared_inputs(
             prepared_inputs,
             callback=callback,

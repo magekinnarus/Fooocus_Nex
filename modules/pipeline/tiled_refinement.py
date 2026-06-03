@@ -154,6 +154,27 @@ def _resolve_tiled_prompt_blueprint(task_state, prompt_task=None):
     }
 
 
+def should_retain_sdxl_warm_state(task_state) -> bool:
+    from backend import process_transition
+    from modules.pipeline.inference import resolve_unified_sdxl_process_key
+
+    requested_key = resolve_unified_sdxl_process_key(task_state)
+    if requested_key is None:
+        return False
+
+    decision = process_transition.evaluate_process_transition(requested_key)
+    return decision.action == 'reuse'
+
+
+def _register_active_unified_sdxl_process(task_state) -> None:
+    from backend import process_transition
+    from modules.pipeline.inference import resolve_unified_sdxl_process_key
+
+    active_process_key = resolve_unified_sdxl_process_key(task_state)
+    if active_process_key is not None:
+        process_transition.set_active_process_key(active_process_key)
+
+
 def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, progressbar_callback=None, prompt_task=None):
     from backend import resources
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
@@ -170,8 +191,11 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         notes={'image_size': [W, H]},
         end_notes={'completed': True},
     ):
-        # Pre-flight cleanup: Clear everything to maximize tile headroom.
-        resources.cleanup_memory('tiled_refine_preflight', unload_models=True, force_cache=True, trim_host=True, target_phase=resources.MemoryPhase.TILED_REFINE)
+        # Calculate retention flag
+        retain_warm = should_retain_sdxl_warm_state(task_state)
+
+        # Pre-flight cleanup: Clear everything to maximize tile headroom if we shouldn't retain.
+        resources.cleanup_memory('tiled_refine_preflight', unload_models=not retain_warm, force_cache=True, trim_host=True, target_phase=resources.MemoryPhase.TILED_REFINE)
         
         min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
         bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
@@ -186,8 +210,9 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         prompt_blueprint = _resolve_tiled_prompt_blueprint(task_state, prompt_task=prompt_task)
 
         # Merge active LoRAs
-        resolved_loras = list(getattr(task_state, 'loras_processed', None) or getattr(task_state, 'loras', []) or [])
-        merged_loras = tuple((str(path), float(weight)) for path, weight in resolved_loras)
+        from modules.pipeline.inference import _resolve_unified_sdxl_lora_specs
+
+        merged_loras = _resolve_unified_sdxl_lora_specs(task_state)
 
         quality = {
             "sharpness": float(getattr(task_state, 'sharpness', 2.0)),
@@ -234,14 +259,18 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         )
 
         runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
+        refined_tiles = []
         try:
             prepared_inputs, _ = runtime.prepare_inputs()
+            _register_active_unified_sdxl_process(task_state)
             
-            refined_tiles = []
             for i, t in enumerate(tiles):
                 if progressbar_callback:
                     progressbar_callback(task_state, int(task_state.current_progress + (i/len(tiles))*10), f'Refining tile {i+1}/{len(tiles)} ...')
                 
+                # Check for interrupt before starting the tile
+                resources.throw_exception_if_processing_interrupted()
+
                 # VAE encode tile in VAE_ENCODE memory phase scope
                 pixels = core.numpy_to_pytorch(t.tile_image)
                 with resources.memory_phase_scope(
@@ -256,9 +285,14 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
                 # Update prepared inputs with current tile's latent samples
                 prepared_inputs.payload["initial_latent"] = latent_dict["samples"]
                 
+                # Setup tile step callback to catch interrupts mid-denoising
+                def tile_callback(step, temp_latent, x, total_steps, denoised=None):
+                    resources.throw_exception_if_processing_interrupted()
+
                 # Run denoise using unified runtime
                 denoise_result = runtime.denoise_prepared_inputs(
                     prepared_inputs,
+                    callback=tile_callback,
                     disable_pbar=True,
                 )
                 
@@ -270,7 +304,17 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
                 
                 # Post-tile cleanup
                 resources.cleanup_memory('tiled_refine_tile_complete', notes={'tile_index': i}, trim_host=False, target_phase=resources.MemoryPhase.TILED_REFINE)
-                
+        except resources.InterruptProcessingException:
+            # Handle Skip vs Stop semantics explicitly
+            if getattr(task_state, 'last_stop', False) == 'skip':
+                print('[Tiled Refinement] User skipped tiled refinement. Stitching partially completed tiles...')
+                task_state.last_stop = False
+                # Fill the remaining tiles with their original upscaled counterparts
+                for j in range(len(refined_tiles), len(tiles)):
+                    refined_tiles.append(tiles[j])
+            else:
+                # Re-raise the exception for Stop to completely abort
+                raise
         finally:
             runtime.close()
         
@@ -279,7 +323,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             
         result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
         
-        # Final sweep: Leave the GPU clean
-        resources.cleanup_memory('tiled_refine_finalize', unload_models=True, force_cache=True, target_phase=resources.MemoryPhase.FINALIZE)
+        # Final sweep: Leave the GPU clean if not retaining warm state
+        resources.cleanup_memory('tiled_refine_finalize', unload_models=not retain_warm, force_cache=True, target_phase=resources.MemoryPhase.FINALIZE)
         
         return result

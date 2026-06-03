@@ -321,11 +321,15 @@ def apply_upscale(task_state, progressbar_callback=None):
         progressbar_callback(task_state, task_state.current_progress, f'Upscaling image from {str((W, H))} ...')
     
     from backend import resources
+    from modules.pipeline.tiled_refinement import should_retain_sdxl_warm_state
+
+    # Calculate retention flag to check if the next stage (tiled refinement) can reuse active SDXL models
+    retain_warm = should_retain_sdxl_warm_state(task_state)
 
     # Pre-upscale cleanup: central governor path before bringing the GAN model online.
     resources.cleanup_memory(
         'upscale_preflight',
-        unload_models=True,
+        unload_models=not retain_warm,
         force_cache=True,
         trim_host=True,
         target_phase=resources.MemoryPhase.UPSCALE,
@@ -344,13 +348,21 @@ def apply_upscale(task_state, progressbar_callback=None):
     uov_input_image = perform_upscale(
         uov_input_image, 
         model_name=upscale_model_to_use if upscale_model_to_use != "None" else None,
-        scale_override=task_state.upscale_scale_override if task_state.upscale_scale_override > 0 else None
+        scale_override=task_state.upscale_scale_override if task_state.upscale_scale_override > 0 else None,
+        retain_warm=retain_warm
     )
     print(f'Image upscaled via GAN to {str(uov_input_image.shape[:2])}.')
 
     # Post-upscale cleanup: Purge GAN model and route cleanup through the governor.
     clear_model_cache()
-    resources.cleanup_memory('upscale_postflight', force_cache=True, trim_host=False, notes={'uov_method': uov_method}, target_phase=resources.MemoryPhase.FINALIZE)
+    resources.cleanup_memory(
+        'upscale_postflight',
+        unload_models=not retain_warm,
+        force_cache=True,
+        trim_host=False,
+        notes={'uov_method': uov_method},
+        target_phase=resources.MemoryPhase.FINALIZE
+    )
 
     # 2. Handle "Upscale" (Light) or "Super-Upscale" (Stage 1)
     if uov_method == 'upscale':
