@@ -7,7 +7,6 @@ from modules.util import resample_image, set_image_shape_ceil, get_image_shape_c
 from modules.upscaler import perform_upscale
 from modules.core import numpy_to_pytorch
 import modules.core as core
-import modules.default_pipeline as pipeline
 
 import modules.flags as flags
 import modules.blending as blending

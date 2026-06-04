@@ -1,7 +1,6 @@
 import numpy as np
 import modules.config as config
 import modules.core as core
-import modules.default_pipeline as pipeline
 import modules.flags as flags
 import extras.preprocessors as preprocessors
 import backend.ip_adapter as contextual_ip_adapter
@@ -568,8 +567,6 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 
 def load_controlnet_support_models(image_input_result=None):
     image_input_result = image_input_result or {}
-    controlnet_paths = image_input_result.get('controlnet_paths', {}) or {}
-    pipeline.refresh_controlnets(list(controlnet_paths.values()))
 
     contextual_assets = image_input_result.get('contextual_assets') or {}
     for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():

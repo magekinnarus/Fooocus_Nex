@@ -75,6 +75,71 @@ def policy_marks_legacy_sdxl_gguf(policy: Any | None) -> bool:
     return architecture == 'sdxl' and SDXL_GGUF_DEPRECATED_NOTE in notes
 
 
+def _sdxl_process_class(policy) -> str:
+    from backend import process_transition
+
+    if policy is None or not bool(getattr(policy, 'enabled', False)):
+        return process_transition.PROCESS_CLASS_STANDARD_SDXL
+    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
+    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
+    if policy_marks_legacy_sdxl_gguf(policy):
+        return process_transition.PROCESS_CLASS_STANDARD_SDXL
+    if execution_family == EXECUTION_FAMILY_GGUF_STAGED or residency_class == SDXL_RESIDENCY_CLASS_GGUF_STAGED:
+        return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
+    if residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
+        return process_transition.PROCESS_CLASS_SDXL_GGUF_TRUE_STREAMING
+    return process_transition.PROCESS_CLASS_STANDARD_SDXL
+
+
+def _sdxl_route_family(policy, base_model_name=None) -> str:
+    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower() if policy is not None else ''
+    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower() if policy is not None else ''
+    if policy_marks_legacy_sdxl_gguf(policy):
+        return 'sdxl'
+    if (
+        execution_family == EXECUTION_FAMILY_GGUF_STAGED
+        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_STAGED
+        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+    ):
+        return 'gguf'
+    return 'sdxl'
+
+
+def resolve_sdxl_process_key(
+    *,
+    base_model_name,
+    vae_name=None,
+    clip_name=None,
+    sdxl_policy=None,
+    loras=None,
+):
+    from backend import process_transition
+
+    route_family = _sdxl_route_family(sdxl_policy, base_model_name)
+    if route_family == 'gguf':
+        identity = [str(base_model_name or '')]
+    else:
+        identity = [
+            str(base_model_name or ''),
+            str(vae_name or ''),
+            str(clip_name or ''),
+        ]
+
+    if loras:
+        for lora in sorted(loras):
+            identity.append(str(lora))
+
+    return process_transition.build_process_key(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        process_class=_sdxl_process_class(sdxl_policy),
+        authoritative_identity=tuple(identity),
+        execution_family=getattr(sdxl_policy, 'execution_family', None) if sdxl_policy is not None else None,
+        residency_class=getattr(sdxl_policy, 'residency_class', None) if sdxl_policy is not None else None,
+        route_family=route_family,
+    )
+
+
+
 def normalize_residency_class(residency_class: Any | None) -> str:
     normalized = str(residency_class or "").strip().lower()
     if normalized in {

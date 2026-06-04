@@ -2,7 +2,6 @@ import time
 import torch
 import numpy as np
 import modules.core as core
-import modules.default_pipeline as pipeline
 import modules.flags as flags
 import modules.config as config
 import modules.model_taxonomy as model_taxonomy
@@ -97,7 +96,7 @@ def resolve_unified_sdxl_process_key(task_state, *, loras=None, base_model_addit
     if policy is None or not bool(getattr(policy, 'enabled', False)):
         return None
 
-    return pipeline._sdxl_process_key(
+    return sdxl_runtime_policy.resolve_sdxl_process_key(
         base_model_name=_resolve_unified_checkpoint_path(task_state),
         vae_name=_resolve_unified_vae_path(task_state),
         clip_name=getattr(task_state, 'clip_model_name', None),

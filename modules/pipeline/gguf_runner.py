@@ -1,4 +1,9 @@
 from __future__ import annotations
+"""
+Nex Compatibility-Only / Tooling-Only / Legacy-Origin Module.
+This module supports legacy GGUF running and is not used in modern/authoritative production generation routes.
+"""
+
 
 import gc
 import hashlib
@@ -147,7 +152,8 @@ def reset_gguf_warm_state(*, release_engine: bool = False) -> None:
 
 class GGUFPipelineRunner:
     """
-    Dedicated production runner for the low-VRAM SDXL GGUF txt2img path.
+    Retained legacy GGUF runner used by regression tests and tooling.
+    Modern authoritative production routes do not dispatch through this runner.
     """
 
     def run(self, route: PipelineRoute, context: PipelineRouteContext) -> PipelineRouteContext:

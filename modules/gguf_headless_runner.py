@@ -1,4 +1,10 @@
 from __future__ import annotations
+"""
+Nex Compatibility-Only / Tooling-Only / Legacy-Origin Module.
+This module supports legacy headless GGUF running and execution measurements,
+and is not used in modern/authoritative production generation routes.
+"""
+
 
 import gc
 import json

@@ -143,12 +143,10 @@ def _save_step1_result(context: PipelineRouteContext, payload, description: str)
 
 
 def _record_prepared_route_artifact(context: PipelineRouteContext, stage_name: str, payload, **extra):
-    from modules import default_pipeline as pipeline
-
     fingerprint = conditioning.build_sdxl_prepared_payload_fingerprint(
         stage_name,
         residency_class=context.residency_class,
-        model_identity=getattr(pipeline.model_base, 'filename', None),
+        model_identity=getattr(context.task_state, 'base_model_name', None),
         route_family_reconciliation_signature=context.route_family,
         prepared_artifact_signature=payload,
         execution_family=context.execution_family,
@@ -314,14 +312,16 @@ class ControlNetSupportLoadStage(PipelineStage):
     def describe_resources(self, context: PipelineRouteContext):
         return _describe_route_resources(
             PipelineResourceRequirement(
-                resource_id='controlnet_models',
-                description='Structural ControlNet models refreshed for the current route.',
-                owner='modules.default_pipeline',
+                resource_id='structural_controlnet_paths',
+                description='Resolved structural ControlNet asset paths retained for later unified-runtime loading.',
+                resource_type='artifact',
+                owner='modules.pipeline.image_input',
                 tags=('controlnet', 'structural'),
+                optional=True,
             ),
             PipelineResourceRequirement(
                 resource_id='contextual_support_models',
-                description='Contextual adapter support assets such as CLIP vision and insightface.',
+                description='Contextual adapter support assets such as CLIP vision and insightface loaded for active guidance.',
                 owner='backend.ip_adapter',
                 tags=('controlnet', 'contextual'),
                 optional=True,
@@ -362,7 +362,7 @@ class InpaintPreparationStage(PipelineStage):
             PipelineResourceRequirement(
                 resource_id='candidate_vae',
                 description='VAE selected for inpaint latent encoding.',
-                owner='modules.default_pipeline',
+                owner='backend.sdxl_unified_runtime',
                 tags=('vae',),
             ),
         )
@@ -418,7 +418,7 @@ class OutpaintPreparationStage(PipelineStage):
             PipelineResourceRequirement(
                 resource_id='candidate_vae',
                 description='VAE selected for outpaint latent encoding.',
-                owner='modules.default_pipeline',
+                owner='backend.sdxl_unified_runtime',
                 tags=('vae',),
             ),
         )
@@ -464,7 +464,7 @@ class PromptEncodingStage(PipelineStage):
             PipelineResourceRequirement(
                 resource_id='base_model',
                 description=f'Base model {task_state.base_model_name!r} prepared for prompt encoding.',
-                owner='modules.default_pipeline',
+                owner='backend.sdxl_unified_runtime',
                 tags=('checkpoint', 'clip', 'vae'),
             ),
             PipelineResourceRequirement(
@@ -615,7 +615,7 @@ class DiffusionTaskStage(PipelineStage):
             PipelineResourceRequirement(
                 resource_id='diffusion_models',
                 description='UNet, VAE, and optional ControlNet state used during iterative task execution.',
-                owner='modules.default_pipeline',
+                owner='backend.sdxl_unified_runtime',
                 tags=('unet', 'vae', 'diffusion'),
             ),
         )

@@ -1,15 +1,21 @@
 import math
 import random
 from collections import OrderedDict
+from types import SimpleNamespace
 import backend.resources as resources
 import modules.config as config
 import modules.constants as constants
 import modules.core as core
-import modules.default_pipeline as pipeline
 from backend import conditioning
 import modules.util as util
 from modules.sdxl_styles import apply_style, get_random_style, apply_arrays, random_style_name
 from modules.util import safe_str, remove_empty_str, parse_lora_references_from_prompt
+
+# Retained compatibility shim for legacy tests patching preprocessing.pipeline.
+pipeline = SimpleNamespace(
+    refresh_everything=None,
+    clip_encode=None,
+)
 
 
 _PROMPT_TASK_CACHE: OrderedDict[str, dict] = OrderedDict()
@@ -25,12 +31,25 @@ def _resolve_residency_class(task_state, residency_class=None):
     return resources.normalize_sdxl_residency_class(getattr(task_state, 'sdxl_residency_class', None))
 
 
+def _clone_cond(conds):
+    import torch
+    results = []
+    for c, p in conds:
+        p = p["pooled_output"]
+        if isinstance(c, torch.Tensor):
+            c = c.clone()
+        if isinstance(p, torch.Tensor):
+            p = p.clone()
+        results.append([c, {"pooled_output": p}])
+    return results
+
+
 def _clone_prompt_task(task):
     cloned = dict(task)
     if cloned.get('c') is not None:
-        cloned['c'] = pipeline.clone_cond(cloned['c'])
+        cloned['c'] = _clone_cond(cloned['c'])
     if cloned.get('uc') is not None:
-        cloned['uc'] = pipeline.clone_cond(cloned['uc'])
+        cloned['uc'] = _clone_cond(cloned['uc'])
     for key in ('positive', 'negative', 'styles'):
         if isinstance(cloned.get(key), list):
             cloned[key] = list(cloned[key])

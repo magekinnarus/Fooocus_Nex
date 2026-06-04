@@ -1,3 +1,8 @@
+"""
+Nex Retained Compatibility Remainder / Legacy Support Module.
+This module is kept solely for backwards compatibility and to support legacy tests/tooling.
+It is no longer the production owner of the pipeline execution processes.
+"""
 import modules.core as core
 import torch
 import modules.config
@@ -115,31 +120,11 @@ def _policy_signature(policy) -> tuple:
 
 
 def _sdxl_process_class(policy) -> str:
-    if policy is None or not bool(getattr(policy, 'enabled', False)):
-        return process_transition.PROCESS_CLASS_STANDARD_SDXL
-    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
-    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
-    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
-        return process_transition.PROCESS_CLASS_STANDARD_SDXL
-    if execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED:
-        return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
-    if residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
-        return process_transition.PROCESS_CLASS_SDXL_GGUF_TRUE_STREAMING
-    return process_transition.PROCESS_CLASS_STANDARD_SDXL
+    return sdxl_runtime_policy._sdxl_process_class(policy)
 
 
 def _sdxl_route_family(policy, base_model_name=None) -> str:
-    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower() if policy is not None else ''
-    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower() if policy is not None else ''
-    if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
-        return 'sdxl'
-    if (
-        execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
-        or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_STAGED
-        or residency_class == sdxl_runtime_policy.SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-    ):
-        return 'gguf'
-    return 'sdxl'
+    return sdxl_runtime_policy._sdxl_route_family(policy, base_model_name)
 
 
 def _sdxl_process_key(
@@ -150,27 +135,12 @@ def _sdxl_process_key(
     sdxl_policy=None,
     loras=None,
 ):
-    route_family = _sdxl_route_family(sdxl_policy, base_model_name)
-    if route_family == 'gguf':
-        identity = [str(base_model_name or '')]
-    else:
-        identity = [
-            str(base_model_name or ''),
-            str(vae_name or ''),
-            str(clip_name or ''),
-        ]
-
-    if loras:
-        for lora in sorted(loras):
-            identity.append(str(lora))
-
-    return process_transition.build_process_key(
-        family=process_transition.PROCESS_FAMILY_SDXL,
-        process_class=_sdxl_process_class(sdxl_policy),
-        authoritative_identity=tuple(identity),
-        execution_family=getattr(sdxl_policy, 'execution_family', None) if sdxl_policy is not None else None,
-        residency_class=getattr(sdxl_policy, 'residency_class', None) if sdxl_policy is not None else None,
-        route_family=route_family,
+    return sdxl_runtime_policy.resolve_sdxl_process_key(
+        base_model_name=base_model_name,
+        vae_name=vae_name,
+        clip_name=clip_name,
+        sdxl_policy=sdxl_policy,
+        loras=loras,
     )
 
 

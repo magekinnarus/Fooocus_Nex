@@ -225,15 +225,30 @@ def _release_process_boundary(current_key, requested_key):
         return None
 
     if current_key.family == process_transition.PROCESS_FAMILY_SDXL:
+        import backend.resources as resources
         import modules.default_pipeline as default_pipeline
+
+        current_model_name = getattr(current_key, 'authoritative_identity', (None,))[0] if getattr(current_key, 'authoritative_identity', None) else None
+        next_model_name = getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None
+
+        resources.prepare_for_checkpoint_switch(
+            current_model=current_model_name,
+            next_model=next_model_name,
+            release_callback=None,
+            notes={
+                'reason': 'route_transition',
+                'current_process_key': process_transition.describe_process_key(current_key),
+                'next_process_key': process_transition.describe_process_key(requested_key),
+            },
+        )
 
         return default_pipeline.release_sdxl_runtime_state(
             current_process_key=current_key,
             next_process_key=requested_key,
-            current_model_name=getattr(current_key, 'authoritative_identity', (None,))[0] if getattr(current_key, 'authoritative_identity', None) else None,
-            next_model_name=getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None,
+            current_model_name=current_model_name,
+            next_model_name=next_model_name,
             reason='route_transition',
-            hard_reset=True,
+            hard_reset=False,
         )
 
     if current_key.family == process_transition.PROCESS_FAMILY_FLUX_FILL:
