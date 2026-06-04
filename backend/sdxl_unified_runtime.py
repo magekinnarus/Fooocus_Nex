@@ -199,7 +199,7 @@ class UnifiedSDXLRuntime(
             )
 
         if self.unet is not None:
-            self.unet.runtime_release_to_meta = False
+            self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
             # Apply scheduler-specific patch to the UNet
             orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
             if orig_scheduler in ['lcm', 'tcd']:

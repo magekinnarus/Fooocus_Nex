@@ -27,12 +27,11 @@ class ResidencyMode(enum.Enum):
 
 
 class HardwareTier(enum.Enum):
-    T1_VERY_LOW = "T1_VERY_LOW"
-    T2_LOW = "T2_LOW"
-    T3_LOW_NORMAL = "T3_LOW_NORMAL"
-    T4_NORMAL = "T4_NORMAL"
-    T5_HIGH_NORMAL = "T5_HIGH_NORMAL"
-    T6_HIGH = "T6_HIGH"
+    LOW_VRAM = "LOW_VRAM"
+    MID_VRAM = "MID_VRAM"
+    NORMAL_VRAM = "NORMAL_VRAM"
+    COLAB_FREE = "COLAB_FREE"
+    HIGH_VRAM = "HIGH_VRAM"
 
 
 class ExecutionClass(enum.Enum):
@@ -617,34 +616,32 @@ class ExecutionClassSolver:
         self.registry = registry or ModelUniverseRegistry()
 
     @staticmethod
-    def hardware_tier_for_vram(vram_total_mb: float) -> HardwareTier:
-        if vram_total_mb <= 4096.0:
-            return HardwareTier.T1_VERY_LOW
+    def hardware_tier_for_vram(vram_total_mb: float, total_ram_mb: float = 16384.0) -> HardwareTier:
         if vram_total_mb <= 6144.0:
-            return HardwareTier.T2_LOW
-        if vram_total_mb <= 10240.0:
-            return HardwareTier.T3_LOW_NORMAL
+            return HardwareTier.LOW_VRAM
+        if vram_total_mb <= 8192.0:
+            return HardwareTier.MID_VRAM
         if vram_total_mb <= 12288.0:
-            return HardwareTier.T4_NORMAL
-        if vram_total_mb <= 20480.0:
-            return HardwareTier.T5_HIGH_NORMAL
-        return HardwareTier.T6_HIGH
+            return HardwareTier.NORMAL_VRAM
+        if total_ram_mb < 16384.0:
+            return HardwareTier.COLAB_FREE
+        return HardwareTier.HIGH_VRAM
 
-    def resolve_execution_class(self, family: str, vram_total_mb: float) -> tuple[ExecutionClass, HardwareTier]:
+    def resolve_execution_class(self, family: str, vram_total_mb: float, total_ram_mb: float = 16384.0) -> tuple[ExecutionClass, HardwareTier]:
         family = family.lower()
-        tier = self.hardware_tier_for_vram(vram_total_mb)
+        tier = self.hardware_tier_for_vram(vram_total_mb, total_ram_mb)
         if family == "sdxl":
             if vram_total_mb < 8192.0:
                 return ExecutionClass.SDXL_STREAMING_T1, tier
-            if tier == HardwareTier.T3_LOW_NORMAL:
+            if tier in (HardwareTier.MID_VRAM, HardwareTier.NORMAL_VRAM, HardwareTier.COLAB_FREE):
                 return ExecutionClass.SDXL_RESIDENT_T2, tier
             return ExecutionClass.SDXL_GPU_GREEDY_T3PLUS, tier
         if family == "flux":
-            if tier in {HardwareTier.T1_VERY_LOW, HardwareTier.T2_LOW, HardwareTier.T3_LOW_NORMAL}:
+            if tier in (HardwareTier.LOW_VRAM, HardwareTier.MID_VRAM):
                 return ExecutionClass.FLUX_STREAMING_T3, tier
-            if tier == HardwareTier.T4_NORMAL:
+            if tier == HardwareTier.NORMAL_VRAM:
                 return ExecutionClass.FLUX_RESIDENT_T4, tier
-            if tier == HardwareTier.T5_HIGH_NORMAL:
+            if tier == HardwareTier.COLAB_FREE:
                 return ExecutionClass.FLUX_RESIDENT_T5, tier
             return ExecutionClass.FLUX_RESIDENT_T6, tier
         raise ValueError(f"Unsupported family for execution-class resolution: {family!r}")
@@ -671,7 +668,7 @@ class ExecutionClassSolver:
         lora_count: int = 0,
     ) -> ResolvedRequest:
         family, requested_variant = self.registry.parse_task_id(task_id)
-        execution_class, hardware_tier = self.resolve_execution_class(family, vram_total_mb)
+        execution_class, hardware_tier = self.resolve_execution_class(family, vram_total_mb, total_ram_mb)
         resolved_variant = self.registry.canonical_variant_for_request(family, requested_variant, execution_class)
         profile = self.registry.profile_for_variant(resolved_variant)
         t5_mode = None
@@ -1575,8 +1572,8 @@ class PlacementSolver:
     planner = PlacementPlanner(registry, solver)
 
     @staticmethod
-    def get_hardware_tier(vram_mb: float) -> HardwareTier:
-        return PlacementSolver.solver.hardware_tier_for_vram(vram_mb)
+    def get_hardware_tier(vram_mb: float, ram_mb: float = 16384.0) -> HardwareTier:
+        return PlacementSolver.solver.hardware_tier_for_vram(vram_mb, ram_mb)
 
     @staticmethod
     def solve(

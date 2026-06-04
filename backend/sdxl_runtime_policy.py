@@ -31,16 +31,129 @@ SDXL_GGUF_DEPRECATED_NOTE = "sdxl_gguf_deprecated"
 class SDXLExecutionPolicy:
     enabled: bool
     architecture: str | None = None
-    execution_class: Any | None = None
+    runtime_family: str | None = None
+    execution_mode: str | None = None
+    hardware_tier: str | None = None
+    allow_cpu_shadow: bool = False
+    prefer_clip_gpu: bool = False
+    prefer_gpu_vae_encode: bool = False
+    stream_budget_mb: float = 256.0
+    notes: tuple[str, ...] = field(default_factory=tuple)
+
+    # Legacy compatibility fields
+    execution_class: Any = None
     execution_family: str | None = None
     residency_class: str | None = None
     clip_residency_mode: str | None = None
     vae_encode_mode: str | None = None
-    keep_clip_loaded: bool = False
-    prefer_clip_gpu: bool = False
-    prefer_gpu_vae_encode: bool = False
-    notes: tuple[str, ...] = field(default_factory=tuple)
-    stream_budget_mb: float = 256.0
+    keep_clip_loaded: bool | None = None
+
+    def __post_init__(self) -> None:
+        # Since the dataclass is frozen, we use object.__setattr__ to initialize/override fields.
+        runtime_family = self.runtime_family
+        execution_mode = self.execution_mode
+        prefer_clip_gpu = self.prefer_clip_gpu
+        prefer_gpu_vae_encode = self.prefer_gpu_vae_encode
+
+        # Infer from residency_class
+        if self.residency_class is not None:
+            if self.residency_class == "gguf_true_streaming":
+                if runtime_family is None:
+                    runtime_family = "gguf_sdxl"
+                if execution_mode is None:
+                    execution_mode = "streaming"
+            elif self.residency_class == "gguf_staged_residency":
+                if runtime_family is None:
+                    runtime_family = "gguf_sdxl"
+                if execution_mode is None:
+                    execution_mode = "resident"
+            elif self.residency_class == "unified_streaming":
+                if runtime_family is None:
+                    runtime_family = "unified_sdxl"
+                if execution_mode is None:
+                    execution_mode = "streaming"
+            elif self.residency_class == "full_resident":
+                if runtime_family is None:
+                    runtime_family = "unified_sdxl"
+                if execution_mode is None:
+                    execution_mode = "resident"
+                object.__setattr__(self, "allow_cpu_shadow", True)
+
+        # Infer from execution_family
+        if self.execution_family is not None and runtime_family is None:
+            if self.execution_family == "sdxl_gguf_staged":
+                runtime_family = "gguf_sdxl"
+            else:
+                runtime_family = "unified_sdxl"
+
+        # Infer from clip_residency_mode or keep_clip_loaded
+        if self.clip_residency_mode is not None:
+            if self.clip_residency_mode == "gpu_resident":
+                prefer_clip_gpu = True
+        elif self.keep_clip_loaded is not None:
+            if self.keep_clip_loaded:
+                prefer_clip_gpu = True
+
+        # Infer from vae_encode_mode
+        if self.vae_encode_mode is not None:
+            if self.vae_encode_mode in ("transient_gpu", "gpu_resident"):
+                prefer_gpu_vae_encode = True
+
+        # Default values if still None
+        if runtime_family is None:
+            runtime_family = "unified_sdxl"
+        if execution_mode is None:
+            execution_mode = "resident"
+
+        object.__setattr__(self, "runtime_family", runtime_family)
+        object.__setattr__(self, "execution_mode", execution_mode)
+        object.__setattr__(self, "prefer_clip_gpu", prefer_clip_gpu)
+        object.__setattr__(self, "prefer_gpu_vae_encode", prefer_gpu_vae_encode)
+
+        # Compute legacy properties if they are None
+        # 1. execution_family
+        if self.execution_family is None:
+            val = "sdxl_gguf_staged" if runtime_family == "gguf_sdxl" else "standard_sdxl"
+            object.__setattr__(self, "execution_family", val)
+
+        # 2. residency_class
+        if self.residency_class is None:
+            if runtime_family == "gguf_sdxl":
+                val = "gguf_true_streaming" if execution_mode == "streaming" else "gguf_staged_residency"
+            else:
+                val = "unified_streaming" if execution_mode == "streaming" else "full_resident"
+            object.__setattr__(self, "residency_class", val)
+
+        # 3. clip_residency_mode
+        if self.clip_residency_mode is None:
+            val = "gpu_resident" if prefer_clip_gpu else "cpu_only"
+            object.__setattr__(self, "clip_residency_mode", val)
+
+        # 4. vae_encode_mode
+        if self.vae_encode_mode is None:
+            if prefer_gpu_vae_encode:
+                val = "transient_gpu" if execution_mode == "streaming" else "gpu_resident"
+            else:
+                val = "cpu_default"
+            object.__setattr__(self, "vae_encode_mode", val)
+
+        # 5. keep_clip_loaded
+        if self.keep_clip_loaded is None:
+            object.__setattr__(self, "keep_clip_loaded", prefer_clip_gpu)
+
+        # 6. execution_class
+        if self.execution_class is None:
+            from backend.staging_manager import ExecutionClass
+            if runtime_family == "gguf_sdxl":
+                val = ExecutionClass.SDXL_STREAMING_T1 if execution_mode == "streaming" else ExecutionClass.SDXL_RESIDENT_T2
+            elif execution_mode == "streaming":
+                val = ExecutionClass.SDXL_STREAMING_T1
+            else:
+                if self.hardware_tier in ("LOW_VRAM", "MID_VRAM", "NORMAL_VRAM", "COLAB_FREE"):
+                    val = ExecutionClass.SDXL_RESIDENT_T2
+                else:
+                    val = ExecutionClass.SDXL_GPU_GREEDY_T3PLUS
+            object.__setattr__(self, "execution_class", val)
 
     def cache_domain(self) -> tuple[str | None, str | None, str | None]:
         return self.execution_family, self.residency_class, self.clip_residency_mode
@@ -80,6 +193,15 @@ def _sdxl_process_class(policy) -> str:
 
     if policy is None or not bool(getattr(policy, 'enabled', False)):
         return process_transition.PROCESS_CLASS_STANDARD_SDXL
+    
+    runtime_family = getattr(policy, 'runtime_family', None)
+    execution_mode = getattr(policy, 'execution_mode', None)
+
+    if runtime_family == 'gguf_sdxl':
+        if execution_mode == 'streaming':
+            return process_transition.PROCESS_CLASS_SDXL_GGUF_TRUE_STREAMING
+        return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
+
     execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
     residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
     if policy_marks_legacy_sdxl_gguf(policy):
@@ -88,19 +210,25 @@ def _sdxl_process_class(policy) -> str:
         return process_transition.PROCESS_CLASS_SDXL_GGUF_STAGED
     if residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING:
         return process_transition.PROCESS_CLASS_SDXL_GGUF_TRUE_STREAMING
+        
     return process_transition.PROCESS_CLASS_STANDARD_SDXL
 
 
 def _sdxl_route_family(policy, base_model_name=None) -> str:
-    execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower() if policy is not None else ''
-    residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower() if policy is not None else ''
     if policy_marks_legacy_sdxl_gguf(policy):
         return 'sdxl'
-    if (
-        execution_family == EXECUTION_FAMILY_GGUF_STAGED
-        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_STAGED
-        or residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-    ):
+    if policy is not None:
+        if getattr(policy, 'runtime_family', None) == 'gguf_sdxl':
+            return 'gguf'
+        execution_family = str(getattr(policy, 'execution_family', None) or '').strip().lower()
+        residency_class = str(getattr(policy, 'residency_class', None) or '').strip().lower()
+        if (
+            execution_family == EXECUTION_FAMILY_GGUF_STAGED
+            or residency_class == SDXL_RESIDENCY_CLASS_GGUF_STAGED
+            or residency_class == SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
+        ):
+            return 'gguf'
+    if is_gguf_checkpoint_name(base_model_name):
         return 'gguf'
     return 'sdxl'
 
@@ -185,27 +313,19 @@ def resolve_sdxl_execution_policy(
         ResidencyMode.CPU_RESIDENT,
         ResidencyMode.DISK_PAGED,
     }
-    residency_class = SDXL_RESIDENCY_CLASS_FULL
-    if allow_gguf_runtime_family:
-        residency_class = (
-            SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING
-            if unet_streaming
-            else SDXL_RESIDENCY_CLASS_GGUF_STAGED
-        )
-    elif normalized_architecture == "sdxl" and unet_streaming:
-        residency_class = SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING
 
-    clip_residency_mode = CLIP_RESIDENCY_CPU_ONLY
-    if plan.clip.mode == ResidencyMode.GPU_RESIDENT:
-        clip_residency_mode = CLIP_RESIDENCY_GPU_RESIDENT
-
-    vae_encode_mode = VAE_ENCODE_CPU_DEFAULT
-    if plan.vae.residency_mode == ResidencyMode.GPU_RESIDENT.value:
-        vae_encode_mode = VAE_POSTURE_GPU_RESIDENT
-    elif plan.vae.residency_mode == ResidencyMode.TRANSIENT_GPU.value:
-        vae_encode_mode = VAE_POSTURE_TRANSIENT_GPU
-    elif plan.vae.mode == ResidencyMode.GPU_RESIDENT:
-        vae_encode_mode = VAE_POSTURE_GPU_RESIDENT
+    allow_cpu_shadow = False
+    if not allow_gguf_runtime_family and not unet_streaming:
+        if profile is not None:
+            ram_total_mb = getattr(profile, "total_ram_mb", 16384.0)
+        else:
+            try:
+                import psutil
+                ram_total_mb = float(psutil.virtual_memory().total / (1024**2))
+            except Exception:
+                ram_total_mb = 16384.0
+        if ram_total_mb >= 24576.0:
+            allow_cpu_shadow = True
 
     notes = [plan.tier.name, plan.execution_class.name, plan.unet.mode.name]
     if is_legacy_sdxl_gguf:
@@ -216,14 +336,12 @@ def resolve_sdxl_execution_policy(
     return SDXLExecutionPolicy(
         enabled=True,
         architecture=normalized_architecture,
-        execution_class=plan.execution_class,
-        execution_family=EXECUTION_FAMILY_GGUF_STAGED if allow_gguf_runtime_family else EXECUTION_FAMILY_STANDARD,
-        residency_class=residency_class,
-        clip_residency_mode=clip_residency_mode,
-        vae_encode_mode=vae_encode_mode,
-        keep_clip_loaded=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
-        prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
+        runtime_family="gguf_sdxl" if allow_gguf_runtime_family else "unified_sdxl",
+        execution_mode="streaming" if unet_streaming else "resident",
+        hardware_tier=plan.tier.name,
+        allow_cpu_shadow=allow_cpu_shadow,
+        prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT or plan.tier.name == "COLAB_FREE"),
         prefer_gpu_vae_encode=(plan.vae.mode == ResidencyMode.GPU_RESIDENT),
-        notes=tuple(notes),
         stream_budget_mb=stream_budget_mb,
+        notes=tuple(notes),
     )

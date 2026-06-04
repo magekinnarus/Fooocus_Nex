@@ -162,28 +162,40 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
     mode = "offloaded"
     
     if policy is not None:
-        from backend import sdxl_runtime_policy
-
-        normalized_residency_class = normalize_sdxl_residency_class(getattr(policy, "residency_class", None))
-
         if role == "unet":
-            if normalized_residency_class in {
-                SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING,
-                SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
-            }:
+            execution_mode = getattr(policy, "execution_mode", None)
+            if execution_mode is not None:
+                is_streaming = (execution_mode == "streaming")
+            else:
+                normalized_residency_class = normalize_sdxl_residency_class(getattr(policy, "residency_class", None))
+                is_streaming = normalized_residency_class in {
+                    SDXL_RESIDENCY_CLASS_UNIFIED_STREAMING,
+                    SDXL_RESIDENCY_CLASS_GGUF_TRUE_STREAMING,
+                }
+            if is_streaming:
                 return torch.device("cpu"), "cpu_resident"
             return get_torch_device(), "gpu_resident"
         
         if role == "clip":
-            if policy.clip_residency_mode == sdxl_runtime_policy.CLIP_RESIDENCY_GPU_RESIDENT:
+            prefer_clip_gpu = getattr(policy, "prefer_clip_gpu", False)
+            if not prefer_clip_gpu:
+                from backend import sdxl_runtime_policy
+                clip_res_mode = getattr(policy, "clip_residency_mode", None)
+                prefer_clip_gpu = (clip_res_mode == sdxl_runtime_policy.CLIP_RESIDENCY_GPU_RESIDENT)
+            if prefer_clip_gpu:
                 return get_torch_device(), "gpu_resident"
             return torch.device("cpu"), "cpu_resident"
             
         if role == "vae":
-            if policy.vae_encode_mode in {
-                sdxl_runtime_policy.VAE_ENCODE_GPU_PREFERRED,
-                sdxl_runtime_policy.VAE_POSTURE_GPU_RESIDENT,
-            }:
+            prefer_gpu_vae = getattr(policy, "prefer_gpu_vae_encode", False)
+            if not prefer_gpu_vae:
+                from backend import sdxl_runtime_policy
+                vae_enc_mode = getattr(policy, "vae_encode_mode", None)
+                prefer_gpu_vae = vae_enc_mode in {
+                    sdxl_runtime_policy.VAE_ENCODE_GPU_PREFERRED,
+                    sdxl_runtime_policy.VAE_POSTURE_GPU_RESIDENT,
+                }
+            if prefer_gpu_vae:
                 return get_torch_device(), "gpu_resident"
             return torch.device("cpu"), "cpu_resident"
             

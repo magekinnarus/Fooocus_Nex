@@ -39,6 +39,24 @@ def test_build_generation_route_maps_inpaint_family():
     ]
 
 
+def test_build_generation_route_maps_flux_fill_inpaint_family():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='inpaint',
+        inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        inpaint_route='flux',
+    )
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'flux_inpaint'
+    assert route.family == 'flux_fill'
+    assert describe_route(route) == [
+        'image_input_prepare',
+        'flux_inpaint',
+    ]
+
+
 def test_build_generation_route_maps_controlnet_extensions_explicitly():
     task_state = TaskState(
         input_image_checkbox=True,

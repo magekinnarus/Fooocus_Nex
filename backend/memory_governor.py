@@ -106,17 +106,34 @@ def _move_resource_to_evictable(resource_id: str, pinned: list[str], warm: list[
         evictable.append(resource_id)
 
 
-def _task_uses_legacy_sdxl_gguf_fallback(task) -> bool:
+def _task_uses_dedicated_gguf_runtime(task) -> bool:
     if task is None:
         return False
 
     try:
-        execution_family = str(getattr(task, 'sdxl_execution_family', '') or '').strip().lower()
-        residency_class = str(getattr(task, 'sdxl_residency_class', '') or '').strip().lower()
         policy = getattr(task, 'sdxl_execution_policy', None)
+        runtime_family = str(
+            getattr(policy, 'runtime_family', None)
+            or getattr(task, 'sdxl_runtime_family', None)
+            or ''
+        ).strip().lower()
 
         if sdxl_runtime_policy.policy_marks_legacy_sdxl_gguf(policy):
             return False
+
+        if runtime_family == "gguf_sdxl":
+            return True
+
+        execution_family = str(
+            getattr(task, 'sdxl_execution_family', None)
+            or getattr(policy, 'execution_family', None)
+            or ''
+        ).strip().lower()
+        residency_class = str(
+            getattr(task, 'sdxl_residency_class', None)
+            or getattr(policy, 'residency_class', None)
+            or ''
+        ).strip().lower()
 
         return (
             execution_family == sdxl_runtime_policy.EXECUTION_FAMILY_GGUF_STAGED
@@ -425,9 +442,9 @@ class MemoryGovernor:
         profile_name = self.profile_name()
         notes['profile'] = profile_name
 
-        # This governor only decides phase-local warmth and eviction for legacy/shared mechanisms.
+        # This governor only decides phase-local warmth and eviction for compatibility surfaces.
         # It must not re-plan model family, runtime posture, or Flux fallback policy.
-        uses_dedicated_gguf_route = _task_uses_legacy_sdxl_gguf_fallback(task)
+        uses_dedicated_gguf_route = _task_uses_dedicated_gguf_runtime(task)
         plan_table = GGUF_RESIDENCY_PLANS if uses_dedicated_gguf_route else BASE_RESIDENCY_PLANS
         base_plan = plan_table.get(phase_name, BASE_RESIDENCY_PLANS[MemoryPhase.IDLE.value])
         pinned = list(base_plan['pinned'])
