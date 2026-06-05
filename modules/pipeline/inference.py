@@ -18,7 +18,7 @@ def _is_debug_console_logging_enabled() -> bool:
     return logging.getLogger().isEnabledFor(logging.DEBUG)
 
 
-def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None):
+def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None, disable_pbar=True):
     """
     Returns a callback function for the diffusion sampler to report progress.
     """
@@ -50,7 +50,7 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
             else:
                 cadence = max(5, int(total_steps) // 10 or 1)
                 should_emit_console_log = (completed_steps % cadence) == 0
-        if should_emit_console_log:
+        if disable_pbar and should_emit_console_log:
             print(
                 f'[Fooocus] {status_text} '
                 f'last={step_wall:.2f}s/it avg={average_step_wall:.2f}s/it eta={eta_wall:.1f}s'
@@ -418,12 +418,13 @@ def _run_unified_sdxl_task(
             preparation_steps,
             all_steps,
             preview_transform=preview_transform,
+            disable_pbar=False,
         )
 
         denoise_result = runtime.denoise_prepared_inputs(
             prepared_inputs,
             callback=callback,
-            disable_pbar=True,
+            disable_pbar=False,
         )
         decoded_images, _, _ = runtime.decode_latent(denoise_result.samples, tiled=bool(getattr(task_state, 'tiled', False)))
         return core.pytorch_to_numpy(decoded_images)
