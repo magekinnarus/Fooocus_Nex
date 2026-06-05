@@ -100,6 +100,15 @@ class NexModelPatcher:
         n.runtime_reload = self.runtime_reload
         n.runtime_release_to_meta = self.runtime_release_to_meta
         return n
+
+    def isolated_clone(self):
+        """Clone the patcher while deep-copying the underlying model shell."""
+        n = self.clone()
+        n.model = copy.deepcopy(self.model)
+        n.backup = {}
+        n.object_patches_backup = {}
+        n.current_device = self.current_device
+        return n
         
     def is_clone(self, other):
         if hasattr(other, 'model') and self.model is other.model:
@@ -289,7 +298,7 @@ class NexModelPatcher:
     def _reload_runtime_weights(self, device_to):
         if not self.can_runtime_release():
             return
-        device_to = device_to or self.load_device
+        device_to = device_to or self.offload_device or self.load_device
         self.runtime_reload(self.model, device_to)
         self.model.device = device_to
 
@@ -430,7 +439,8 @@ class NexModelPatcher:
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
         with self.use_ejected():
             if self.can_runtime_release() and self._current_device_is_meta():
-                self._reload_runtime_weights(device_to or self.load_device)
+                reload_device = self.offload_device if self.offload_device is not None else (device_to or self.load_device)
+                self._reload_runtime_weights(reload_device)
             mem_counter = 0
             patch_counter = 0
             lowvram_counter = 0

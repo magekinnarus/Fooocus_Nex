@@ -834,7 +834,17 @@ def free_memory(memory_required, device, keep_loaded=[]):
     unloaded_models = []
 
     free_mem = get_free_memory(device)
-    logging.info(f"[Nex-Memory] Requesting {memory_required / (1024**2):.1f} MB. Free: {free_mem / (1024**2):.1f} MB")
+    if memory_required >= 1e29:
+        logging.info(
+            "[Nex-Memory] Requesting full reclaim. Free: %.1f MB",
+            free_mem / (1024**2),
+        )
+    else:
+        logging.info(
+            "[Nex-Memory] Requesting %.1f MB. Free: %.1f MB",
+            memory_required / (1024**2),
+            free_mem / (1024**2),
+        )
 
     for i in range(len(current_loaded_models) - 1, -1, -1):
         shift_model = current_loaded_models[i]
