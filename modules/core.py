@@ -550,7 +550,7 @@ def get_previewer(model):
     global VAE_approx_models
 
     from modules.config import path_vae_approx
-    from backend.preview import decode_latent_preview, resolve_taesd_previewer
+    from backend.preview import decode_preview_payload, resolve_taesd_previewer
 
     latent_format = model.model.latent_format
     load_device = model.load_device
@@ -561,7 +561,7 @@ def get_previewer(model):
         @torch.no_grad()
         @torch.inference_mode()
         def preview_function(x0, step, total_steps):
-            return decode_latent_preview(taesd_previewer, latent_format, x0)
+            return decode_preview_payload(taesd_previewer, latent_format, x0)
 
         return preview_function
 

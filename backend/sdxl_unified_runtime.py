@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -105,6 +107,46 @@ class UnifiedSDXLDenoiseResult:
     metrics: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass
+class SharedSDXLBaseComponents:
+    """Warm shared base shell cloned into per-request runtime instances."""
+
+    unet: Any
+    clip: Any
+    vae: Any
+    checkpoint_fingerprint: str | None = None
+
+
+_SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str | None, str], SharedSDXLBaseComponents] = OrderedDict()
+_SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT = 1
+
+
+def _detach_cached_component(component: Any) -> None:
+    if component is None:
+        return
+    patcher = getattr(component, "patcher", component)
+    detach = getattr(patcher, "detach", None)
+    if callable(detach):
+        try:
+            detach()
+        except Exception:
+            logging.debug("Failed to detach cached SDXL component during cache cleanup.", exc_info=True)
+
+
+def _release_shared_sdxl_base_components(entry: SharedSDXLBaseComponents) -> None:
+    _detach_cached_component(entry.unet)
+    _detach_cached_component(entry.clip)
+    _detach_cached_component(entry.vae)
+
+
+def clear_unified_sdxl_runtime_component_cache() -> None:
+    while _SHARED_SDXL_BASE_COMPONENT_CACHE:
+        _, entry = _SHARED_SDXL_BASE_COMPONENT_CACHE.popitem(last=False)
+        _release_shared_sdxl_base_components(entry)
+    gc.collect()
+    resources.soft_empty_cache(force=True)
+
+
 class UnifiedSDXLRuntime(
     UnifiedSDXLRuntimeArtifactMixin,
     UnifiedSDXLRuntimeExecutionMixin,
@@ -138,6 +180,7 @@ class UnifiedSDXLRuntime(
         self.prepared_inputs: UnifiedSDXLPreparedInputs | None = None
         self._loaded = False
         self._cold_model_load_cpu = 0.0
+        self._base_component_cache_hit = False
         self._prepare_metrics: dict[str, float] = {}
         self._resolved_lora_specs: tuple[tuple[str, float], ...] = self._normalize_lora_specs(
             self.config.lora_specs
@@ -169,34 +212,54 @@ class UnifiedSDXLRuntime(
             ExecutionClass.SDXL_RESIDENT_T2,
             ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
         }
+        cache_key = self._base_component_cache_key(
+            checkpoint_path=checkpoint_path,
+            vae_path=vae_path,
+            is_resident=is_resident,
+        )
+        shared_base = _SHARED_SDXL_BASE_COMPONENT_CACHE.get(cache_key)
+        if shared_base is not None:
+            _SHARED_SDXL_BASE_COMPONENT_CACHE.move_to_end(cache_key)
+        self._base_component_cache_hit = shared_base is not None
 
-        if is_resident:
-            cuda_device = resources.get_torch_device()
-            # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
-            # until process-aware teardown releases them for a real model/process transition.
-            self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
-                checkpoint_path,
-                load_device=cuda_device,
-                offload_device=cuda_device,
-                unet_dtype=torch.float16,
-                clip_load_device=cpu_device,
-                clip_offload_device=cpu_device,
-                vae_load_device=cuda_device,
-                vae_offload_device=cuda_device,
-                vae_source=vae_path,
+        if shared_base is None:
+            if is_resident:
+                cuda_device = resources.get_torch_device()
+                # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
+                # until process-aware teardown releases them for a real model/process transition.
+                loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
+                    checkpoint_path,
+                    load_device=cuda_device,
+                    offload_device=cuda_device,
+                    unet_dtype=torch.float16,
+                    clip_load_device=cpu_device,
+                    clip_offload_device=cpu_device,
+                    vae_load_device=cuda_device,
+                    vae_offload_device=cuda_device,
+                    vae_source=vae_path,
+                )
+            else:
+                loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
+                    checkpoint_path,
+                    load_device=cpu_device,
+                    offload_device=cpu_device,
+                    unet_dtype=torch.float16,
+                    clip_load_device=cpu_device,
+                    clip_offload_device=cpu_device,
+                    vae_load_device=cpu_device,
+                    vae_offload_device=cpu_device,
+                    vae_source=vae_path,
+                )
+
+            shared_base = SharedSDXLBaseComponents(
+                unet=loaded_unet,
+                clip=loaded_clip,
+                vae=loaded_vae,
+                checkpoint_fingerprint=self._fingerprint_source_path(checkpoint_path),
             )
-        else:
-            self.unet, self.clip, self.vae = loader.load_sdxl_checkpoint(
-                checkpoint_path,
-                load_device=cpu_device,
-                offload_device=cpu_device,
-                unet_dtype=torch.float16,
-                clip_load_device=cpu_device,
-                clip_offload_device=cpu_device,
-                vae_load_device=cpu_device,
-                vae_offload_device=cpu_device,
-                vae_source=vae_path,
-            )
+            self._remember_shared_base_components(cache_key, shared_base)
+
+        self.unet, self.clip, self.vae = self._clone_shared_base_components(shared_base)
 
         if self.unet is not None:
             self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
@@ -215,7 +278,7 @@ class UnifiedSDXLRuntime(
         if self.vae is not None:
             self.vae.runtime_policy = self.policy
 
-        self._checkpoint_fingerprint = self._fingerprint_source_path(checkpoint_path)
+        self._checkpoint_fingerprint = shared_base.checkpoint_fingerprint or self._fingerprint_source_path(checkpoint_path)
         self.base_model = BaseModelAvailability(
             family="sdxl",
             variant=self.config.model_variant,
@@ -225,7 +288,14 @@ class UnifiedSDXLRuntime(
             reusable=True,
         )
         self._clip_identity = self._build_clip_identity()
-        self._cold_model_load_cpu = time.perf_counter() - start
+        self._cold_model_load_cpu = 0.0 if self._base_component_cache_hit else (time.perf_counter() - start)
+        cache_fingerprint = (self._checkpoint_fingerprint or checkpoint_path)[:12]
+        logging.info(
+            "[Nex-BaseModelCache] %s route=%s fingerprint=%s",
+            "hit" if self._base_component_cache_hit else "miss",
+            self.route_label,
+            cache_fingerprint,
+        )
         self._loaded = True
         return self._cold_model_load_cpu
 
@@ -252,31 +322,6 @@ class UnifiedSDXLRuntime(
 
         lora_metrics = self._materialize_lora_stack()
 
-        encode_start = time.perf_counter()
-        encoded_prompt_pair = conditioning.encode_prompt_pair_sdxl(
-            self.clip,
-            self.config.prompt,
-            self.config.negative_prompt,
-            positive_texts=self.config.positive_texts or (self.config.prompt,),
-            negative_texts=self.config.negative_texts or (self.config.negative_prompt,),
-            positive_top_k=self.config.positive_top_k,
-            negative_top_k=self.config.negative_top_k,
-            use_explicit_residency=True,
-        )
-        conditioning_encode_wall = time.perf_counter() - encode_start
-
-        adm_start = time.perf_counter()
-        adm_pair = conditioning.build_sdxl_adm_pair(
-            encoded_prompt_pair,
-            self.config.width,
-            self.config.height,
-            target_width=self.config.width,
-            target_height=self.config.height,
-            adm_scale_positive=float((self.config.quality or {}).get("adm_scaler_positive", 1.5)),
-            adm_scale_negative=float((self.config.quality or {}).get("adm_scaler_negative", 0.8)),
-        )
-        adm_build_wall = time.perf_counter() - adm_start
-
         prompt_stage = conditioning.build_sdxl_text_conditioning_fingerprint(
             prompt=self.config.prompt,
             negative_prompt=self.config.negative_prompt,
@@ -296,6 +341,47 @@ class UnifiedSDXLRuntime(
             clip_residency_mode="cpu",
         )
         prompt_fingerprint = prompt_stage.digest()
+
+        encode_start = time.perf_counter()
+        encoded_prompt_pair = conditioning.load_prompt_conditioning_from_cache(prompt_stage)
+        prompt_cache_hit = encoded_prompt_pair is not None
+        if prompt_cache_hit:
+            logging.info(
+                "[Nex-PromptCache] hit route=%s fingerprint=%s",
+                self.route_label,
+                prompt_fingerprint[:12],
+            )
+        else:
+            encoded_prompt_pair = conditioning.encode_prompt_pair_sdxl(
+                self.clip,
+                self.config.prompt,
+                self.config.negative_prompt,
+                positive_texts=self.config.positive_texts or (self.config.prompt,),
+                negative_texts=self.config.negative_texts or (self.config.negative_prompt,),
+                positive_top_k=self.config.positive_top_k,
+                negative_top_k=self.config.negative_top_k,
+                use_explicit_residency=True,
+            )
+            conditioning.remember_prompt_conditioning_cache(prompt_stage, encoded_prompt_pair)
+            logging.info(
+                "[Nex-PromptCache] miss route=%s fingerprint=%s",
+                self.route_label,
+                prompt_fingerprint[:12],
+            )
+        conditioning_encode_wall = time.perf_counter() - encode_start
+
+        adm_start = time.perf_counter()
+        adm_pair = conditioning.build_sdxl_adm_pair(
+            encoded_prompt_pair,
+            self.config.width,
+            self.config.height,
+            target_width=self.config.width,
+            target_height=self.config.height,
+            adm_scale_positive=float((self.config.quality or {}).get("adm_scaler_positive", 1.5)),
+            adm_scale_negative=float((self.config.quality or {}).get("adm_scaler_negative", 0.8)),
+        )
+        adm_build_wall = time.perf_counter() - adm_start
+
         conditioning_fingerprint = self._hash_payload(
             {
                 "positive": encoded_prompt_pair["positive"],
@@ -381,8 +467,10 @@ class UnifiedSDXLRuntime(
             },
             metrics={
                 "base_model_load_cpu": float(self._cold_model_load_cpu),
+                "base_model_cache_hit": 1.0 if self._base_component_cache_hit else 0.0,
                 "conditioning_encode_cpu": float(conditioning_encode_wall),
                 "conditioning_adm_cpu": float(adm_build_wall),
+                "conditioning_cache_hit": 1.0 if prompt_cache_hit else 0.0,
                 "compiled_unet_cpu": float(compiled_unet_wall),
                 "lora_spec_count": float(lora_metrics["spec_count"]),
                 "clip_patch_count": float(lora_metrics["clip_patch_count"]),
@@ -531,6 +619,7 @@ class UnifiedSDXLRuntime(
         self.vae = None
         self._unload_controlnets()
         self._loaded = False
+        self._base_component_cache_hit = False
         self._prepare_metrics = {}
         self._checkpoint_fingerprint = None
         gc.collect()
@@ -651,6 +740,45 @@ class UnifiedSDXLRuntime(
 
     def _park_compiled_unet_before_decode(self) -> None:
         self._detach_component(self.unet)
+
+    def _base_component_cache_key(
+        self,
+        *,
+        checkpoint_path: str,
+        vae_path: str | None,
+        is_resident: bool,
+    ) -> tuple[str, str | None, str]:
+        residency_label = "resident" if is_resident else "cpu"
+        return (checkpoint_path, vae_path, residency_label)
+
+    def _clone_component_for_runtime(self, component: Any) -> Any:
+        if component is None:
+            return None
+        clone = getattr(component, "clone", None)
+        if callable(clone):
+            return clone()
+        return component
+
+    def _clone_shared_base_components(
+        self,
+        shared_base: SharedSDXLBaseComponents,
+    ) -> tuple[Any, Any, Any]:
+        return (
+            self._clone_component_for_runtime(shared_base.unet),
+            self._clone_component_for_runtime(shared_base.clip),
+            self._clone_component_for_runtime(shared_base.vae),
+        )
+
+    def _remember_shared_base_components(
+        self,
+        cache_key: tuple[str, str | None, str],
+        shared_base: SharedSDXLBaseComponents,
+    ) -> None:
+        _SHARED_SDXL_BASE_COMPONENT_CACHE[cache_key] = shared_base
+        _SHARED_SDXL_BASE_COMPONENT_CACHE.move_to_end(cache_key)
+        while len(_SHARED_SDXL_BASE_COMPONENT_CACHE) > _SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT:
+            _, evicted = _SHARED_SDXL_BASE_COMPONENT_CACHE.popitem(last=False)
+            _release_shared_sdxl_base_components(evicted)
 
     def _normalize_lora_specs(self, lora_specs: Any) -> tuple[tuple[str, float], ...]:
         normalized: list[tuple[str, float]] = []

@@ -193,7 +193,12 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         # Merge active LoRAs
         from modules.pipeline.inference import _resolve_unified_sdxl_lora_specs
 
-        merged_loras = _resolve_unified_sdxl_lora_specs(task_state)
+        checkpoint_path = _resolve_unified_checkpoint_path(task_state)
+        merged_loras = _resolve_unified_sdxl_lora_specs(
+            task_state,
+            checkpoint_path=checkpoint_path,
+            strict=True,
+        )
 
         quality = {
             "sharpness": float(getattr(task_state, 'sharpness', 2.0)),
@@ -217,7 +222,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             ),
             streamlike_budget_mb=stream_budget,
             quality=quality,
-            checkpoint_path=_resolve_unified_checkpoint_path(task_state),
+            checkpoint_path=checkpoint_path,
             vae_path=_resolve_unified_vae_path(task_state),
             prompt=prompt_blueprint['prompt'],
             negative_prompt=prompt_blueprint['negative_prompt'],

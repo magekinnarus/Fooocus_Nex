@@ -1,4 +1,5 @@
 import time
+import logging
 import torch
 from ldm_patched.ldm.modules.diffusionmodules.openaimodel import UNetModel, Timestep
 from ldm_patched.ldm.modules.encoders.noise_aug_modules import CLIPEmbeddingNoiseAugmentation
@@ -97,8 +98,8 @@ class BaseModel(torch.nn.Module):
         if self.adm_channels is None:
             self.adm_channels = 0
         self.inpaint_model = False
-        print("model_type", model_type.name)
-        print("UNet ADM Dimension", self.adm_channels)
+        logging.debug("model_type %s", model_type.name)
+        logging.debug("UNet ADM Dimension %s", self.adm_channels)
 
     def apply_model(self, x, t, c_concat=None, c_crossattn=None, control=None, transformer_options={}, **kwargs):
         prep_start = time.perf_counter()

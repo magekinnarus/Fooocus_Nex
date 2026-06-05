@@ -447,6 +447,12 @@ def release_sdxl_runtime_state(
 
     def _release_cached_sdxl_state():
         global final_unet, final_clip, final_vae
+        try:
+            from backend import sdxl_unified_runtime
+
+            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
+        except Exception:
+            pass
 
         clear_all_caches()
         final_unet = None

@@ -194,7 +194,12 @@ class NexTokenizer:
              if os.path.isdir(local_tokenizer_path):
                  tokenizer_path = local_tokenizer_path
              
-        self.tokenizer = tokenizer_class.from_pretrained(tokenizer_path or "openai/clip-vit-large-patch14") # Default if None
+        self.tokenizer = tokenizer_class.from_pretrained(
+            tokenizer_path or "openai/clip-vit-large-patch14",
+            clean_up_tokenization_spaces=False,
+        ) # Default if None
+        if hasattr(self.tokenizer, "clean_up_tokenization_spaces"):
+            self.tokenizer.clean_up_tokenization_spaces = False
         self.max_length = max_length
         
         empty = self.tokenizer('')["input_ids"]

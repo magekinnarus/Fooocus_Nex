@@ -304,6 +304,16 @@ class VAE:
             offload_device=offload_device
         )
 
+    def clone(self):
+        n = VAE(
+            self.first_stage_model,
+            self.patcher.load_device,
+            self.patcher.offload_device,
+            latent_format=self.latent_format,
+        )
+        n.patcher = self.patcher.clone()
+        return n
+
     def decode(self, samples, tiled=False, tile_size=64):
         from . import decode
         return decode.decode_latent(self, samples, tiled=tiled, tile_size=tile_size)

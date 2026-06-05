@@ -23,7 +23,8 @@ class TAESDPreviewerImpl(LatentPreviewer):
         self.taesd = taesd
 
     def decode_latent_to_preview(self, x0):
-        x_sample = self.taesd.decode(x0[:1])[0].detach()
+        target_device = next(self.taesd.parameters()).device
+        x_sample = self.taesd.decode(x0[:1].to(device=target_device))[0].detach()
         x_sample = torch.clamp((x_sample + 1.0) / 2.0, min=0.0, max=1.0)
         x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
         x_sample = x_sample.astype(np.uint8)
@@ -96,6 +97,23 @@ def resolve_taesd_previewer(device, latent_format, vae_approx_path=None):
         return None
 
 
+def resolve_best_available_previewer(device, latent_format, vae_approx_path=None):
+    if latent_format is None:
+        return None
+
+    previewer = None
+    if device is not None:
+        previewer = resolve_taesd_previewer(device, latent_format, vae_approx_path=vae_approx_path)
+
+    if previewer is None and getattr(latent_format, "latent_rgb_factors", None) is not None:
+        try:
+            previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
+        except Exception:
+            previewer = None
+
+    return previewer
+
+
 def decode_latent_preview(previewer, latent_format, x0):
     if previewer is None:
         return None
@@ -108,3 +126,13 @@ def decode_latent_preview(previewer, latent_format, x0):
         return None
 
     return _latent_preview_image_to_numpy(preview_image)
+
+
+def decode_preview_payload(previewer, latent_format, preview_payload):
+    if previewer is None:
+        return None
+
+    # Match ComfyUI's sampler previews: TAESD/latent2rgb previewers decode the
+    # denoised sampler latent directly rather than the VAE-rescaled latent.
+    preview_latent = preview_payload.detach() if hasattr(preview_payload, "detach") else preview_payload
+    return decode_latent_preview(previewer, latent_format, preview_latent)

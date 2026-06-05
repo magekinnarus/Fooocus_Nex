@@ -1,4 +1,6 @@
+import os
 import time
+import logging
 import torch
 import numpy as np
 import modules.core as core
@@ -12,11 +14,20 @@ from modules.util import get_file_from_folder_list
 from modules.pipeline.output import save_and_log, yield_result
 
 
+def _is_debug_console_logging_enabled() -> bool:
+    return logging.getLogger().isEnabledFor(logging.DEBUG)
+
+
 def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None):
     """
     Returns a callback function for the diffusion sampler to report progress.
     """
+    sampling_started_at = time.perf_counter()
+    last_step_at = sampling_started_at
+    debug_mode = _is_debug_console_logging_enabled()
+
     def callback(step, x0, x, total_steps, y):
+        nonlocal last_step_at
         resources.throw_exception_if_processing_interrupted()
         if step == 0:
             task_state.callback_steps = 0
@@ -24,6 +35,26 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
 
         progress_val = int(preparation_steps + task_state.callback_steps)
         status_text = f'Sampling step {step + 1}/{total_steps}, image {current_task_id + 1}/{total_count} ...'
+        now = time.perf_counter()
+        step_wall = now - last_step_at
+        elapsed_wall = now - sampling_started_at
+        completed_steps = max(step + 1, 1)
+        average_step_wall = elapsed_wall / float(completed_steps)
+        remaining_steps = max(int(total_steps) - completed_steps, 0)
+        eta_wall = average_step_wall * float(remaining_steps)
+        last_step_at = now
+        should_emit_console_log = debug_mode
+        if not should_emit_console_log:
+            if completed_steps == 1 or completed_steps == int(total_steps):
+                should_emit_console_log = True
+            else:
+                cadence = max(5, int(total_steps) // 10 or 1)
+                should_emit_console_log = (completed_steps % cadence) == 0
+        if should_emit_console_log:
+            print(
+                f'[Fooocus] {status_text} '
+                f'last={step_wall:.2f}s/it avg={average_step_wall:.2f}s/it eta={eta_wall:.1f}s'
+            )
 
         if preview_transform is not None and y is not None:
             y = preview_transform(y)
@@ -46,7 +77,63 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
     return callback
 
 
+def _build_sdxl_preview_transform(task_state, runtime):
+    previewer_holder = {"previewer": None, "latent_format": None, "resolved": False, "device": None}
 
+    def decode_preview(preview_payload):
+        try:
+            import torch
+            from backend.preview import decode_preview_payload, resolve_best_available_previewer
+        except Exception:
+            return None
+
+        if not isinstance(preview_payload, torch.Tensor):
+            return preview_payload if isinstance(preview_payload, np.ndarray) else None
+
+        previewer = previewer_holder["previewer"]
+        latent_format = previewer_holder["latent_format"]
+        
+        preview_device = preview_payload.device
+        if not previewer_holder["resolved"] or previewer_holder["device"] != str(preview_device):
+            previewer_holder["resolved"] = True
+            unet = getattr(runtime, "unet", None)
+            vae = getattr(runtime, "vae", None)
+            
+            load_device = getattr(unet, "load_device", None) if unet else None
+            patcher_model = getattr(unet, "model", None) if unet else None
+            latent_format = getattr(patcher_model, "latent_format", None) if patcher_model else None
+            if latent_format is None:
+                latent_format = getattr(getattr(patcher_model, "model", None), "latent_format", None)
+            
+            if latent_format is None and vae is not None:
+                latent_format = getattr(vae, "latent_format", None)
+            if load_device is None and vae is not None:
+                load_device = getattr(getattr(vae, "patcher", None), "load_device", None)
+
+            previewer_holder["latent_format"] = latent_format
+            if latent_format is not None:
+                try:
+                    from modules.config import path_vae_approx
+                except Exception:
+                    path_vae_approx = None
+                previewer = resolve_best_available_previewer(
+                    preview_device or load_device,
+                    latent_format,
+                    vae_approx_path=path_vae_approx,
+                )
+            previewer_holder["previewer"] = previewer
+            latent_format = previewer_holder["latent_format"]
+            previewer_holder["device"] = str(preview_device or load_device)
+
+        if previewer is None:
+            return None
+
+        try:
+            return decode_preview_payload(previewer, latent_format, preview_payload)
+        except Exception:
+            return None
+
+    return decode_preview
 
 
 def _resolve_unified_checkpoint_path(task_state):
@@ -83,12 +170,94 @@ def _ensure_supported_unified_runtime_request(task_state):
     return checkpoint_path
 
 
-def _resolve_unified_sdxl_lora_specs(task_state, *, loras=None, base_model_additional_loras=None):
+def _normalize_pathish(value) -> str:
+    return os.path.normcase(os.path.abspath(os.path.realpath(str(value))))
+
+
+def _is_selected_base_model_candidate(task_state, candidate: str, *, checkpoint_path: str | None = None) -> bool:
+    base_model_name = str(getattr(task_state, 'base_model_name', '') or '').strip()
+    if not candidate:
+        return False
+    if candidate == base_model_name:
+        return True
+
+    if checkpoint_path is None and base_model_name:
+        try:
+            checkpoint_path = _resolve_unified_checkpoint_path(task_state)
+        except Exception:
+            checkpoint_path = None
+
+    if not checkpoint_path:
+        return False
+
+    if _normalize_pathish(candidate) == _normalize_pathish(checkpoint_path):
+        return True
+
+    resolved_checkpoint_candidate = get_file_from_folder_list(candidate, config.paths_checkpoints)
+    return (
+        os.path.exists(resolved_checkpoint_candidate)
+        and _normalize_pathish(resolved_checkpoint_candidate) == _normalize_pathish(checkpoint_path)
+    )
+
+
+def _resolve_single_unified_lora_spec(
+    task_state,
+    raw_path,
+    weight,
+    *,
+    checkpoint_path: str | None = None,
+    strict: bool = False,
+):
+    candidate = str(raw_path or '').strip()
+    if candidate in {'', 'None'}:
+        return None
+
+    if _is_selected_base_model_candidate(task_state, candidate, checkpoint_path=checkpoint_path):
+        logging.warning(
+            '[Nex-LoraResolve] Skipping LoRA candidate %r because it matches the selected base model.',
+            candidate,
+        )
+        return None
+
+    if os.path.exists(candidate):
+        return str(candidate), float(weight)
+
+    resolved = get_file_from_folder_list(candidate, config.paths_lora_lookup)
+    if resolved and os.path.exists(resolved):
+        return str(resolved), float(weight)
+
+    if strict:
+        raise FileNotFoundError(
+            f'Could not resolve LoRA file {candidate!r} in configured LoRA lookup paths.'
+        )
+
+    return str(candidate), float(weight)
+
+
+def _resolve_unified_sdxl_lora_specs(
+    task_state,
+    *,
+    loras=None,
+    base_model_additional_loras=None,
+    checkpoint_path: str | None = None,
+    strict: bool = False,
+):
     resolved_loras = list(getattr(task_state, 'loras_processed', None) or loras or getattr(task_state, 'loras', []) or [])
     if base_model_additional_loras is None:
         base_model_additional_loras = getattr(task_state, 'base_model_additional_loras', []) or []
     resolved_additional_loras = list(base_model_additional_loras or [])
-    return tuple((str(path), float(weight)) for path, weight in (resolved_loras + resolved_additional_loras))
+    merged_specs = []
+    for path, weight in (resolved_loras + resolved_additional_loras):
+        resolved_spec = _resolve_single_unified_lora_spec(
+            task_state,
+            path,
+            weight,
+            checkpoint_path=checkpoint_path,
+            strict=strict,
+        )
+        if resolved_spec is not None:
+            merged_specs.append(resolved_spec)
+    return tuple(merged_specs)
 
 
 def resolve_unified_sdxl_process_key(task_state, *, loras=None, base_model_additional_loras=None):
@@ -106,6 +275,7 @@ def resolve_unified_sdxl_process_key(task_state, *, loras=None, base_model_addit
                 task_state,
                 loras=loras,
                 base_model_additional_loras=base_model_additional_loras,
+                strict=False,
             )
         ),
     )
@@ -162,6 +332,8 @@ def _run_unified_sdxl_task(
         task_state,
         loras=loras,
         base_model_additional_loras=base_model_additional_loras,
+        checkpoint_path=checkpoint_path,
+        strict=True,
     )
 
     quality = {
@@ -172,14 +344,6 @@ def _run_unified_sdxl_task(
         "adm_scaler_end": float(getattr(task_state, 'adm_scaler_end', 0.3)),
         "controlnet_softness": float(getattr(task_state, 'controlnet_softness', 0.25)),
     }
-    callback = get_sampling_callback(
-        task_state,
-        progressbar_callback,
-        current_task_id,
-        total_count,
-        preparation_steps,
-        all_steps,
-    )
     config_kwargs = dict(
         model_variant='sdxl',
         execution_class=(
@@ -241,6 +405,21 @@ def _run_unified_sdxl_task(
             from backend import process_transition
 
             process_transition.set_active_process_key(active_process_key)
+
+        preview_transform = None
+        if not getattr(task_state, 'disable_preview', False):
+            preview_transform = _build_sdxl_preview_transform(task_state, runtime)
+
+        callback = get_sampling_callback(
+            task_state,
+            progressbar_callback,
+            current_task_id,
+            total_count,
+            preparation_steps,
+            all_steps,
+            preview_transform=preview_transform,
+        )
+
         denoise_result = runtime.denoise_prepared_inputs(
             prepared_inputs,
             callback=callback,

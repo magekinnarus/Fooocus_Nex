@@ -2,6 +2,7 @@ import os
 import ssl
 import sys
 import time
+import logging
 
 # Aliasing __main__ as launch to prevent double loading
 if __name__ == "__main__":
@@ -45,6 +46,47 @@ def _log_startup_phase(label, start_time):
     print(f'[Startup] {label} completed in {time.perf_counter() - start_time:.2f}s')
 
 
+class _ConsoleNoiseFilter(logging.Filter):
+    _SUPPRESSED_ROOT_DEBUG_SNIPPETS = (
+        'lowvram: loaded module regularly',
+        'Model doesn\'t have a device attribute.',
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if record.levelno >= logging.INFO:
+            return True
+        return not any(snippet in message for snippet in self._SUPPRESSED_ROOT_DEBUG_SNIPPETS)
+
+
+def _configure_external_logger_levels(debug_mode: bool) -> None:
+    quiet_level = logging.WARNING if debug_mode else logging.ERROR
+    for logger_name in (
+        "PIL",
+        "httpcore",
+        "httpx",
+        "urllib3",
+        "asyncio",
+        "matplotlib",
+        "matplotlib.font_manager",
+        "huggingface_hub",
+        "filelock",
+    ):
+        logging.getLogger(logger_name).setLevel(quiet_level)
+
+
+def _configure_console_logging(debug_mode: bool) -> None:
+    level = logging.DEBUG if debug_mode else logging.WARNING
+    fmt = '[%(levelname)s][%(name)s] %(message)s' if debug_mode else '[%(levelname)s] %(message)s'
+    logging.basicConfig(level=level, format=fmt, force=True)
+    _configure_external_logger_levels(debug_mode)
+    if debug_mode:
+        noise_filter = _ConsoleNoiseFilter()
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(noise_filter)
+        print('[Startup] Console logging set to DEBUG (--debug-mode, Nex-filtered).')
+
+
 if __name__ == "__main__":
     startup_start = time.perf_counter()
     print('[System ARGV] ' + str(sys.argv))
@@ -52,6 +94,7 @@ if __name__ == "__main__":
     prepare_environment()
     build_launcher()
     args = ini_args()
+    _configure_console_logging(bool(getattr(args, "debug_mode", False)))
 
     if args.gpu_device_id is not None:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_device_id)

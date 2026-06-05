@@ -182,12 +182,12 @@ def _should_force_flux_host_cleanup() -> bool:
 
 
 def _build_flux_preview_transform(active_session):
-    previewer_holder = {"previewer": None, "latent_format": None, "resolved": False}
+    previewer_holder = {"previewer": None, "latent_format": None, "resolved": False, "device": None}
 
     def decode_preview(preview_payload):
         try:
             import torch
-            from backend.preview import Latent2RGBPreviewer, decode_latent_preview, resolve_taesd_previewer
+            from backend.preview import decode_preview_payload, resolve_best_available_previewer
         except Exception:
             return None
 
@@ -196,7 +196,8 @@ def _build_flux_preview_transform(active_session):
 
         previewer = previewer_holder["previewer"]
         latent_format = previewer_holder["latent_format"]
-        if not previewer_holder["resolved"]:
+        preview_device = preview_payload.device
+        if not previewer_holder["resolved"] or previewer_holder["device"] != str(preview_device):
             previewer_holder["resolved"] = True
             unet_patcher = getattr(active_session, "unet_patcher", None)
             vae = getattr(active_session, "vae", None)
@@ -212,29 +213,24 @@ def _build_flux_preview_transform(active_session):
 
             previewer_holder["latent_format"] = latent_format
             if latent_format is not None:
-                if getattr(latent_format, "latent_rgb_factors", None) is not None:
-                    try:
-                        previewer = Latent2RGBPreviewer(latent_format.latent_rgb_factors)
-                    except Exception:
-                        previewer = None
-                if previewer is None and load_device is not None:
-                    try:
-                        from modules.config import path_vae_approx
-                    except Exception:
-                        path_vae_approx = None
-                    previewer = resolve_taesd_previewer(load_device, latent_format, vae_approx_path=path_vae_approx)
+                try:
+                    from modules.config import path_vae_approx
+                except Exception:
+                    path_vae_approx = None
+                previewer = resolve_best_available_previewer(
+                    preview_device or load_device,
+                    latent_format,
+                    vae_approx_path=path_vae_approx,
+                )
             previewer_holder["previewer"] = previewer
             latent_format = previewer_holder["latent_format"]
+            previewer_holder["device"] = str(preview_device or load_device)
 
         if previewer is None:
             return None
 
         try:
-            preview_input = preview_payload
-            process_out = getattr(latent_format, "process_out", None)
-            if callable(process_out):
-                preview_input = process_out(preview_input)
-            preview_array = decode_latent_preview(previewer, latent_format, preview_input)
+            preview_array = decode_preview_payload(previewer, latent_format, preview_payload)
         except Exception:
             return None
 

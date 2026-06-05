@@ -1,11 +1,16 @@
 import math
 from dataclasses import asdict, dataclass
+from collections import OrderedDict
 from typing import Any, Dict, Sequence, Tuple
 
 import hashlib
 import torch
 
 from backend import lora_artifacts, resources
+
+
+_PROMPT_CONDITIONING_CACHE: OrderedDict[str, Dict[str, Dict[str, torch.Tensor]]] = OrderedDict()
+_PROMPT_CONDITIONING_CACHE_LIMIT = 32
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,49 @@ def _freeze_stage_value(value: Any) -> Any:
             hashlib.sha256(contiguous.numpy().tobytes()).hexdigest(),
         )
     return value
+
+
+def _clone_prompt_conditioning_payload(value: Any, *, device: str | torch.device = "cpu") -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device=device).clone()
+    if isinstance(value, dict):
+        return {key: _clone_prompt_conditioning_payload(item, device=device) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_prompt_conditioning_payload(item, device=device) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_prompt_conditioning_payload(item, device=device) for item in value)
+    return value
+
+
+def load_prompt_conditioning_from_cache(fingerprint: StageFingerprint | None) -> Dict[str, Dict[str, torch.Tensor]] | None:
+    if fingerprint is None:
+        return None
+
+    cache_key = fingerprint.digest()
+    cached = _PROMPT_CONDITIONING_CACHE.get(cache_key)
+    if cached is None:
+        return None
+
+    _PROMPT_CONDITIONING_CACHE.move_to_end(cache_key)
+    return _clone_prompt_conditioning_payload(cached, device="cpu")
+
+
+def remember_prompt_conditioning_cache(
+    fingerprint: StageFingerprint | None,
+    payload: Dict[str, Dict[str, torch.Tensor]] | None,
+) -> None:
+    if fingerprint is None or payload is None:
+        return
+
+    cache_key = fingerprint.digest()
+    _PROMPT_CONDITIONING_CACHE[cache_key] = _clone_prompt_conditioning_payload(payload, device="cpu")
+    _PROMPT_CONDITIONING_CACHE.move_to_end(cache_key)
+    while len(_PROMPT_CONDITIONING_CACHE) > _PROMPT_CONDITIONING_CACHE_LIMIT:
+        _PROMPT_CONDITIONING_CACHE.popitem(last=False)
+
+
+def clear_prompt_conditioning_cache() -> None:
+    _PROMPT_CONDITIONING_CACHE.clear()
 
 
 def encode_tokens_sdxl(clip: Any, tokens: Any, *, use_explicit_residency: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
