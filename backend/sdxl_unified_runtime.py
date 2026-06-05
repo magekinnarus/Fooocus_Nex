@@ -159,6 +159,12 @@ def _release_shared_sdxl_compiled_unet(entry: SharedSDXLCompiledUnetComponents) 
 
 
 def clear_unified_sdxl_runtime_component_cache() -> None:
+    try:
+        from backend import sdxl_streaming_runtime
+
+        sdxl_streaming_runtime.clear_streaming_cache()
+    except Exception:
+        logging.debug("Failed to clear streaming SDXL runtime cache during unified cache reset.", exc_info=True)
     while _SHARED_SDXL_BASE_COMPONENT_CACHE:
         _, entry = _SHARED_SDXL_BASE_COMPONENT_CACHE.popitem(last=False)
         _release_shared_sdxl_base_components(entry)
@@ -221,7 +227,6 @@ class UnifiedSDXLRuntime(
         vae_path = self._require_optional_vae_path()
         start = time.perf_counter()
         cpu_device = torch.device("cpu")
-        from backend.staging_manager import ExecutionClass
 
         from backend.sdxl_runtime_policy import resolve_sdxl_execution_policy
         self.policy = self.config.runtime_policy or resolve_sdxl_execution_policy(
@@ -229,12 +234,7 @@ class UnifiedSDXLRuntime(
             base_model_name=checkpoint_path,
         )
 
-        exec_class = self._resolved_execution_class()
-
-        is_resident = exec_class in {
-            ExecutionClass.SDXL_RESIDENT_T2,
-            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-        }
+        is_resident = True
         cache_key = self._base_component_cache_key(
             checkpoint_path=checkpoint_path,
             vae_path=vae_path,
@@ -246,33 +246,20 @@ class UnifiedSDXLRuntime(
         self._base_component_cache_hit = shared_base is not None
 
         if shared_base is None:
-            if is_resident:
-                cuda_device = resources.get_torch_device()
-                # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
-                # until process-aware teardown releases them for a real model/process transition.
-                loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
-                    checkpoint_path,
-                    load_device=cuda_device,
-                    offload_device=cuda_device,
-                    unet_dtype=torch.float16,
-                    clip_load_device=cpu_device,
-                    clip_offload_device=cpu_device,
-                    vae_load_device=cuda_device,
-                    vae_offload_device=cuda_device,
-                    vae_source=vae_path,
-                )
-            else:
-                loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
-                    checkpoint_path,
-                    load_device=cpu_device,
-                    offload_device=cpu_device,
-                    unet_dtype=torch.float16,
-                    clip_load_device=cpu_device,
-                    clip_offload_device=cpu_device,
-                    vae_load_device=cpu_device,
-                    vae_offload_device=cpu_device,
-                    vae_source=vae_path,
-                )
+            cuda_device = resources.get_torch_device()
+            # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
+            # until process-aware teardown releases them for a real model/process transition.
+            loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
+                checkpoint_path,
+                load_device=cuda_device,
+                offload_device=cuda_device,
+                unet_dtype=torch.float16,
+                clip_load_device=cpu_device,
+                clip_offload_device=cpu_device,
+                vae_load_device=cuda_device,
+                vae_offload_device=cuda_device,
+                vae_source=vae_path,
+            )
 
             shared_base = SharedSDXLBaseComponents(
                 unet=loaded_unet,
@@ -286,10 +273,7 @@ class UnifiedSDXLRuntime(
         self._compiled_unet_cache_hit = False
 
         if self.unet is not None:
-            if is_resident:
-                self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
-            else:
-                self.unet.runtime_release_to_meta = False
+            self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
             # Apply scheduler-specific patch to the UNet
             orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
             if orig_scheduler in ['lcm', 'tcd']:
@@ -327,17 +311,7 @@ class UnifiedSDXLRuntime(
         return self._cold_model_load_cpu
 
     def _is_vae_resident(self) -> bool:
-        from backend.sdxl_runtime_policy import VAE_POSTURE_GPU_RESIDENT
-        from backend.staging_manager import ExecutionClass
-        policy = getattr(self, "policy", None)
-        if policy is not None:
-            return policy.vae_encode_mode == VAE_POSTURE_GPU_RESIDENT
-
-        exec_class = self._resolved_execution_class()
-        return exec_class in {
-            ExecutionClass.SDXL_RESIDENT_T2,
-            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-        }
+        return True
 
     def prepare_inputs(self) -> tuple[UnifiedSDXLPreparedInputs, dict[str, float]]:
         if self.prepared_inputs is not None:
@@ -633,7 +607,7 @@ class UnifiedSDXLRuntime(
         return images, vae_attach, vae_decode
 
     def close(self) -> None:
-        self._park_compiled_unet_before_decode()
+        self._detach_component(self.unet)
         self._detach_component(getattr(self.vae, "patcher", None))
         self._detach_component(getattr(self.clip, "patcher", None))
         self._attached_payload = None
@@ -771,178 +745,14 @@ class UnifiedSDXLRuntime(
                 pass
 
     def _park_compiled_unet_before_decode(self) -> None:
-        if self._park_streaming_compiled_unet_shell():
-            return
-        self._detach_component(self.unet)
-
-    def _uses_streaming_unet_shells(self) -> bool:
-        from backend.staging_manager import ExecutionClass
-
-        exec_class = self._resolved_execution_class()
-        return exec_class not in {
-            ExecutionClass.SDXL_RESIDENT_T2,
-            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-        }
-
-    def _streaming_compiled_unet_cache_key(self) -> tuple[str, str, str, tuple[str, ...], bool]:
-        source_fingerprint = self._checkpoint_fingerprint or self._require_checkpoint_path()
-        scheduler_identity = str(self.config.original_scheduler_name or self.config.scheduler or "")
-        return (
-            str(source_fingerprint),
-            self._execution_class_label(),
-            scheduler_identity,
-            self._lora_signature(),
-            bool(self.config.pin_base_unet_without_lora),
-        )
-
-    def _streaming_compiled_unet_cache_fingerprint(
-        self,
-        cache_key: tuple[str, str, str, tuple[str, ...], bool],
-    ) -> str:
-        return self._hash_payload(cache_key)
-
-    def _remember_shared_compiled_unet(
-        self,
-        cache_key: tuple[str, str, str, tuple[str, ...], bool],
-        entry: SharedSDXLCompiledUnetComponents,
-    ) -> None:
-        _SHARED_SDXL_COMPILED_UNET_CACHE[cache_key] = entry
-        _SHARED_SDXL_COMPILED_UNET_CACHE.move_to_end(cache_key)
-        while len(_SHARED_SDXL_COMPILED_UNET_CACHE) > _SHARED_SDXL_COMPILED_UNET_CACHE_LIMIT:
-            _, evicted = _SHARED_SDXL_COMPILED_UNET_CACHE.popitem(last=False)
-            _release_shared_sdxl_compiled_unet(evicted)
-
-    def _build_streaming_compiled_unet_entry(
-        self,
-        cache_key: tuple[str, str, str, tuple[str, ...], bool],
-    ) -> SharedSDXLCompiledUnetComponents:
-        source_unet = getattr(self.unet, "isolated_clone", None)
-        if callable(source_unet):
-            compiled_unet = source_unet()
-        else:
-            compiled_unet = self._clone_component_for_runtime(self.unet)
-
-        if compiled_unet is None:
-            raise RuntimeError("Compiled UNet cache requested without a source UNet shell.")
-
-        compiled_unet.runtime_release_to_meta = False
-        if self._resolved_lora_specs:
-            self._apply_lora_specs_to_patcher(
-                compiled_unet,
-                compiled_unet.model,
-                target_family="unet",
-            )
-        compile_metrics = self._compile_patcher(
-            compiled_unet,
-            pin_model_host=self._should_pin_unet_host_for_compile(),
-        )
-        artifact_fingerprint = self._build_compiled_unet_fingerprint(
-            unet_compile_metrics=compile_metrics,
-        )
-        return SharedSDXLCompiledUnetComponents(
-            unet=compiled_unet,
-            compile_metrics=dict(compile_metrics),
-            artifact_fingerprint=artifact_fingerprint,
-            cache_fingerprint=self._streaming_compiled_unet_cache_fingerprint(cache_key),
-        )
-
-    def _current_streaming_unet_signature(self) -> Any:
-        model = getattr(self.unet, "model", None)
-        return getattr(model, "_nex_streaming_unet_signature", None) if model is not None else None
-
-    def _current_streaming_unet_compile_metrics(self) -> dict[str, Any] | None:
-        model = getattr(self.unet, "model", None)
-        metrics = getattr(model, "_nex_streaming_unet_compile_metrics", None) if model is not None else None
-        return dict(metrics) if isinstance(metrics, dict) else None
-
-    def _remember_streaming_unet_signature(
-        self,
-        signature: tuple[str, str, str, tuple[str, ...], bool] | None,
-        compile_metrics: dict[str, Any] | None = None,
-    ) -> None:
-        model = getattr(self.unet, "model", None)
-        if model is None:
-            return
-        setattr(model, "_nex_streaming_unet_signature", signature)
-        if compile_metrics is None:
-            if hasattr(model, "_nex_streaming_unet_compile_metrics"):
-                delattr(model, "_nex_streaming_unet_compile_metrics")
-            return
-        setattr(model, "_nex_streaming_unet_compile_metrics", dict(compile_metrics))
-
-    def _restore_clean_streaming_unet_shell(self) -> bool:
-        runtime_reload = getattr(self.unet, "runtime_reload", None)
-        if not callable(runtime_reload):
-            return False
-        target_device = getattr(self.unet, "offload_device", None) or torch.device("cpu")
-        runtime_reload(self.unet.model, target_device)
-        self.unet.model.device = target_device
-        self._remember_streaming_unet_signature(None)
-        return True
+        # Resident SDXL keeps the authoritative UNet shell attached through
+        # decode. Request-finalization or process teardown handles cleanup.
+        return
 
     def _should_pin_unet_host_for_compile(self) -> bool:
         if not self._resolved_lora_specs:
             return bool(self.config.pin_base_unet_without_lora)
-        # Streaming SDXL already has a clean CPU source of truth. Pinning the
-        # compiled LoRA shell forces a second near-full host copy during
-        # materialization, which is too expensive for the 32 GB baseline.
-        if self._uses_streaming_unet_shells():
-            return False
         return True
-
-    def _park_streaming_compiled_unet_shell(self) -> bool:
-        if self.unet is None or not self._uses_streaming_unet_shells() or not self._resolved_lora_specs:
-            return False
-        if self._current_streaming_unet_signature() is None:
-            return False
-
-        offload_device = getattr(self.unet, "offload_device", None) or torch.device("cpu")
-        current_device_getter = getattr(self.unet, "current_loaded_device", None)
-        if callable(current_device_getter):
-            current_device = current_device_getter()
-        else:
-            current_device = getattr(getattr(self.unet, "model", None), "device", None)
-
-        if current_device is None:
-            current_device = offload_device
-        if not isinstance(current_device, torch.device):
-            current_device = torch.device(current_device)
-
-        if current_device == offload_device:
-            model = getattr(self.unet, "model", None)
-            if model is not None:
-                model.device = offload_device
-            if hasattr(self.unet, "current_device"):
-                self.unet.current_device = offload_device
-            return True
-
-        partial_unload = getattr(self.unet, "partially_unload", None)
-        if not callable(partial_unload):
-            return False
-
-        memory_to_free = 0
-        loaded_size = getattr(self.unet, "loaded_size", None)
-        if callable(loaded_size):
-            try:
-                memory_to_free = int(loaded_size())
-            except Exception:
-                memory_to_free = 0
-        if memory_to_free <= 0:
-            memory_to_free = int(getattr(getattr(self.unet, "model", None), "model_loaded_weight_memory", 0) or 0)
-        if memory_to_free <= 0:
-            memory_to_free = max(1, int(self.unet.model_size()))
-
-        try:
-            partial_unload(offload_device, memory_to_free=memory_to_free)
-            model = getattr(self.unet, "model", None)
-            if model is not None:
-                model.device = offload_device
-            if hasattr(self.unet, "current_device"):
-                self.unet.current_device = offload_device
-            return True
-        except Exception:
-            logging.debug("Failed to park compiled streaming UNet shell without unpatching.", exc_info=True)
-            return False
 
     def _base_component_cache_key(
         self,
@@ -1046,20 +856,14 @@ class UnifiedSDXLRuntime(
         clip_host_pinned_bytes = 0
         unet_host_pinned_bytes = 0
         self._compiled_unet_cache_hit = False
-        streaming_signature = self._streaming_compiled_unet_cache_key() if self._uses_streaming_unet_shells() else None
-        current_streaming_signature = self._current_streaming_unet_signature() if streaming_signature is not None else None
 
         if not self._resolved_lora_specs:
-            if streaming_signature is not None and current_streaming_signature is not None:
-                self._restore_clean_streaming_unet_shell()
             unet_compile_start = time.perf_counter()
             unet_compile = self._compile_patcher(
                 self.unet,
                 pin_model_host=self._should_pin_unet_host_for_compile(),
             )
             unet_compile_wall = time.perf_counter() - unet_compile_start
-            if streaming_signature is not None:
-                self._remember_streaming_unet_signature(None)
             unet_patch_count = int(unet_compile.get("patch_count", 0))
             unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
             return {
@@ -1089,48 +893,14 @@ class UnifiedSDXLRuntime(
             clip_compile_metrics = clip_compile
             clip_host_pinned_bytes = int(clip_compile.get("host_pinned_bytes", 0))
 
-        if self._uses_streaming_unet_shells():
-            cache_fingerprint = self._streaming_compiled_unet_cache_fingerprint(streaming_signature)
-            self._compiled_unet_cache_hit = current_streaming_signature == streaming_signature
-            logging.info(
-                "[Nex-CompiledUnetCache] %s route=%s fingerprint=%s",
-                "hit" if self._compiled_unet_cache_hit else "miss",
-                self.route_label,
-                cache_fingerprint[:12],
-            )
-            if self._compiled_unet_cache_hit:
-                unet_compile = self._current_streaming_unet_compile_metrics() or {
-                    "status": "compiled",
-                    "patch_count": 0,
-                    "materialized_patch_keys": 0,
-                    "host_pinned_bytes": 0,
-                }
-                unet_compile_wall = 0.0
-            else:
-                if current_streaming_signature is not None:
-                    self._restore_clean_streaming_unet_shell()
-                unet_compile_start = time.perf_counter()
-                self._apply_lora_specs_to_patcher(
-                    self.unet,
-                    self.unet.model,
-                    target_family="unet",
-                )
-                unet_compile = self._compile_patcher(
-                    self.unet,
-                    pin_model_host=self._should_pin_unet_host_for_compile(),
-                )
-                unet_compile_wall = time.perf_counter() - unet_compile_start
-                self._remember_streaming_unet_signature(streaming_signature, unet_compile)
-            self.unet.runtime_release_to_meta = False
-        else:
-            self._apply_lora_specs_to_patcher(
-                self.unet,
-                self.unet.model,
-                target_family="unet",
-            )
-            unet_compile_start = time.perf_counter()
-            unet_compile = self._compile_patcher(self.unet)
-            unet_compile_wall = time.perf_counter() - unet_compile_start
+        self._apply_lora_specs_to_patcher(
+            self.unet,
+            self.unet.model,
+            target_family="unet",
+        )
+        unet_compile_start = time.perf_counter()
+        unet_compile = self._compile_patcher(self.unet)
+        unet_compile_wall = time.perf_counter() - unet_compile_start
         unet_patch_count = int(unet_compile.get("patch_count", 0))
         unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
 
@@ -1142,7 +912,7 @@ class UnifiedSDXLRuntime(
             "unet_host_pinned_bytes": float(unet_host_pinned_bytes),
             "clip_compile_wall": float(clip_compile_wall),
             "unet_compile_wall": float(unet_compile_wall),
-            "compiled_unet_cache_hit": 1.0 if self._compiled_unet_cache_hit else 0.0,
+            "compiled_unet_cache_hit": 0.0,
             "clip_compile_metrics": clip_compile_metrics,
             "unet_compile_metrics": unet_compile,
         }

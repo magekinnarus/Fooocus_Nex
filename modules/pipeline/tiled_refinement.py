@@ -161,6 +161,8 @@ def _register_active_unified_sdxl_process(task_state) -> None:
 def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, progressbar_callback=None, prompt_task=None):
     from backend import resources
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
+    from backend.sdxl_streaming_runtime import SDXLStreamingRuntime
+    from backend.staging_manager import ExecutionClass
     from modules.pipeline.inference import _resolve_unified_checkpoint_path, _resolve_unified_vae_path
     import modules.pipeline.preprocessing as preprocessing
 
@@ -244,7 +246,23 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             runtime_policy=policy,
         )
 
-        runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
+        exec_class = config_kwargs.get("execution_class")
+        if isinstance(exec_class, str):
+            normalized = exec_class.rsplit(".", 1)[-1]
+            try:
+                exec_class = ExecutionClass[normalized]
+            except KeyError:
+                pass
+
+        is_resident = exec_class in {
+            ExecutionClass.SDXL_RESIDENT_T2,
+            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+        }
+
+        if is_resident:
+            runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
+        else:
+            runtime = SDXLStreamingRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))
         refined_tiles = []
         try:
             prepared_inputs, _ = runtime.prepare_inputs()

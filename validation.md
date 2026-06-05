@@ -39,7 +39,7 @@ rg -n "sdxl_runtime_owner|process_diffusion|runtime_family|execution_mode|gguf_s
 Compile sanity on the authoritative runtime surfaces:
 
 ```powershell
-.\venv\Scripts\python.exe -m py_compile backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py
+.\venv\Scripts\python.exe -m py_compile backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py
 ```
 
 ## Regression Matrix
@@ -47,7 +47,7 @@ Compile sanity on the authoritative runtime surfaces:
 ### 1. Unified SDXL Runtime And Image-Input Handoff
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_sdxl_unified_runtime.py tests/test_unified_runtime_handoff.py tests/test_gguf_runtime_handoff.py tests/test_async_worker_process_transition.py tests/test_default_pipeline_process_reset.py -q
+.\venv\Scripts\python.exe -m pytest tests/test_sdxl_unified_runtime.py tests/test_unified_runtime_handoff.py tests/test_gguf_runtime_handoff.py tests/test_async_worker_process_transition.py tests/test_default_pipeline_process_reset.py tests/test_super_upscale_residency.py -q
 ```
 
 Covers:
@@ -57,6 +57,7 @@ Covers:
 - authoritative runtime handoff
 - GGUF compatibility/quarantine expectations
 - process-transition and cleanup behavior
+- tiled-refinement runtime dispatch and interrupt semantics
 
 ### 2. Authoritative Pipeline Consolidation And GGUF Seam
 
