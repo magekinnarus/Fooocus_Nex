@@ -5,6 +5,7 @@ gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
 import random
 import os
 import json
+import html
 import time
 import numpy as np
 import shared
@@ -1003,18 +1004,16 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     )
 
     generate_button.click(
-        lambda disable_preview_value: (
-            gr.update(visible=True, interactive=True),
-            gr.update(visible=True, interactive=True),
-            gr.update(visible=False, interactive=False),
-            gr.update(visible=True, interactive=True),
-            gr.update(visible=True, columns=1),
-            True,
+        fn=lambda disable_preview_value: (
+            [],
+            None,
+            None,
+            gr.update(value=[]),
             gr.update(visible=not disable_preview_value),
             gr.update(visible=disable_preview_value)
         ),
         inputs=[disable_preview],
-        outputs=[stop_button, skip_button, generate_button, reset_button, gallery, state_is_generating, preview_column, gallery_column],
+        outputs=[session_gallery_images, last_preview_image, active_task_id, gallery, preview_column, gallery_column],
         js="""
         () => {
             ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
@@ -1028,19 +1027,32 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         """
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
-        .then(fn=get_task, inputs=ctrls, outputs=currentTask) \
-        .then(fn=lambda t, use_img, tab, rbg, robj: (
-            t.state.goals.append('remove_bg') if use_img and tab == 'remove' and rbg else None,
-            t.state.goals.append('remove_obj') if use_img and tab == 'remove' and robj else None,
-            t
-        )[-1], inputs=[currentTask, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=currentTask) \
-        .then(fn=generate_clicked, inputs=[currentTask, image_number, disable_preview],
-              outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]) \
-        .then(lambda: (gr.update(visible=True, interactive=True), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), gr.update(visible=False, interactive=False), False),
-              outputs=[generate_button, stop_button, skip_button, reset_button, state_is_generating]) \
-        .then(fn=update_history_link, outputs=history_link) \
-        .then(fn=lambda: None, js='playNotification').then(fn=lambda: None, js='refresh_grid_delayed')
+        .then(fn=get_tasks, inputs=ctrls, outputs=current_tasks_state) \
+        .then(fn=enqueue_tasks, inputs=[current_tasks_state, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=[currentTask, progress_html]) \
+        .then(fn=update_history_link, outputs=history_link)
 
+    timer.tick(
+        fn=poll_active_task_status,
+        inputs=[session_gallery_images, last_preview_image, active_task_id, disable_preview],
+        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html, progress_html, progress_window, gallery, queue_tab, session_gallery_images, last_preview_image, active_task_id, preview_column, gallery_column],
+        show_progress='hidden',
+        queue=False
+    )
+
+    running_skip_button.click(
+        fn=skip_active_clicked,
+        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html],
+        queue=False,
+        show_progress='hidden'
+    )
+
+    queue_action_btn.click(
+        fn=handle_queue_action,
+        inputs=[queue_action_id, queue_action_type, currentTask],
+        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html],
+        queue=False,
+        show_progress='hidden'
+    )
 
     def handle_reconnect_click(task):
         worker.request_interrupt('stop', task)
@@ -1052,7 +1064,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
             worker.AsyncTask(args=[]),
             False,
             gr.update(visible=True, interactive=True),
-            gr.update(visible=False),
+            gr.update(visible=True),
             gr.update(visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
@@ -1072,8 +1084,334 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     stop_button.click(stop_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False, js='(x)=>{cancelGenerateForever(); return x;}')
     skip_button.click(skip_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False)
 
+    def clear_all_clicked(task):
+        worker.request_interrupt('stop', task)
+        while len(worker.async_tasks) > 0:
+            t = worker.async_tasks.pop(0)
+            t.yields.append(['finish', []])
+        return worker.AsyncTask(args=[])
+
+    clear_all_button.click(
+        fn=clear_all_clicked,
+        inputs=[currentTask],
+        outputs=[currentTask],
+        queue=False,
+        show_progress=False,
+        js='(x)=>{cancelGenerateForever(); return x;}'
+    )
+
     example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
     metadata_input_image_path.change(trigger_metadata_preview, inputs=metadata_input_image_path, outputs=metadata_json, queue=False, show_progress=True)
     outpaint_mask_expansion_button.click(expand_mask, inputs=[outpaint_selections, outpaint_mask_image], outputs=[outpaint_mask_image], queue=False, show_progress=False)
+
+
+def get_tasks(*args):
+    global ctrls_keys
+    named_args = dict(zip(ctrls_keys, args))
+    named_args.pop('_currentTask', None)
+    
+    validation_message = validate_outpaint_generate_request(named_args)
+    if validation_message:
+        invalid_task = worker.AsyncTask(args={})
+        invalid_task.is_valid = False
+        invalid_task.validation_message = validation_message
+        return [invalid_task]
+
+    # The queue is now the only repetition model: one Generate click creates
+    # one image task, and the next image should be queued with the next click.
+    task_args = dict(named_args)
+    task_args['image_number'] = 1
+    task_args['generate_image_grid'] = False
+
+    task = worker.AsyncTask(args=task_args)
+    return [task]
+
+
+def enqueue_tasks(tasks, use_img, tab, rbg, robj):
+    import modules.async_worker as worker
+    if not isinstance(tasks, list):
+        tasks = [tasks]
+        
+    first_task = tasks[0] if tasks else None
+    if first_task and not first_task.is_valid:
+        message = getattr(first_task, 'validation_message', 'The current request is not ready yet.')
+        import modules.html
+        return first_task, gr.update(visible=True, value=modules.html.make_progress_html(0, message))
+        
+    for task in tasks:
+        if use_img and tab == 'remove':
+            if rbg:
+                task.state.goals.append('remove_bg')
+            if robj:
+                task.state.goals.append('remove_obj')
+        worker.async_tasks.append(task)
+        
+    import modules.html
+    return first_task, gr.update(visible=True, value=modules.html.make_progress_html(1, 'Waiting for task to start ...'))
+
+
+def _append_new_gallery_items(task, gallery_items, product):
+    if not isinstance(product, list):
+        product = [product]
+
+    delivered_count = max(0, int(getattr(task, 'ui_delivered_result_count', 0) or 0))
+    if delivered_count < len(product):
+        gallery_items.extend(product[delivered_count:])
+    task.ui_delivered_result_count = max(delivered_count, len(product))
+
+
+def _queue_prompt_preview(task):
+    prompt_preview = getattr(task.state, 'prompt', '')[:40]
+    if len(getattr(task.state, 'prompt', '')) > 40:
+        prompt_preview += '...'
+    if not prompt_preview.strip():
+        prompt_preview = "Image generation"
+    return prompt_preview
+
+
+def get_running_task_html(active_task=None):
+    if active_task is None:
+        import modules.async_worker as worker
+
+        active_task = worker.get_active_task()
+
+    if not active_task:
+        return '<p class="empty-queue-msg">No task running.</p>'
+
+    prompt_preview = _queue_prompt_preview(active_task)
+    model_name = html.escape(str(getattr(active_task.state, 'base_model_name', '') or ''))
+    seed_text = html.escape(str(getattr(active_task.state, 'seed', '') or ''))
+    return f"""
+    <div class="nex-running-card">
+        <div class="nex-running-card__header">
+            <span class="badge active-badge">Running</span>
+            <span class="task-id">ID: {active_task.task_id}</span>
+        </div>
+        <p class="task-prompt"><strong>Prompt:</strong> "{html.escape(prompt_preview)}"</p>
+        <p class="task-meta">Model: {model_name} | Seed: {seed_text}</p>
+    </div>
+    """
+
+
+def get_pending_queue_html(pending_tasks=None, active_task=None):
+    if pending_tasks is None:
+        import modules.async_worker as worker
+
+        pending_tasks = worker.async_tasks
+        if active_task is None:
+            active_task = worker.get_active_task()
+
+    if not pending_tasks:
+        return '<p class="empty-queue-msg">No queued tasks.</p>'
+
+    pending_html = '<div class="nex-queue-list">'
+    for idx, task in enumerate(pending_tasks):
+        prompt_preview = _queue_prompt_preview(task)
+        pending_html += f"""
+        <div class="nex-queue-item pending-task">
+            <div class="nex-queue-item-header pending-header">
+                <div class="nex-queue-item-summary">
+                    <span class="badge pending-badge">Queued #{idx+1}</span>
+                    <span class="task-id">ID: {task.task_id}</span>
+                </div>
+                <button onclick="triggerQueueAction('{task.task_id}', 'cancel')" class="queue-btn btn-cancel pending-inline-action">Cancel</button>
+            </div>
+            <div class="task-details">
+                <p class="task-prompt">"{html.escape(prompt_preview)}"</p>
+                <p class="task-meta">Model: {html.escape(str(getattr(task.state, 'base_model_name', '') or ''))} | Seed: {html.escape(str(getattr(task.state, 'seed', '') or ''))}</p>
+            </div>
+        </div>
+        """
+    pending_html += '</div>'
+    return pending_html
+
+
+def get_running_status_html(active_task=None):
+    if active_task is None:
+        import modules.async_worker as worker
+
+        active_task = worker.get_active_task()
+
+    if not active_task:
+        return '<p class="nex-running-status empty">Idle.</p>'
+
+    status_text = str(getattr(active_task.state, 'current_status_text', '') or '').strip()
+    if not status_text:
+        status_text = 'Waiting for task to start ...'
+    return f'<p class="nex-running-status">{html.escape(status_text)}</p>'
+
+
+def get_running_panel_updates(active_task=None):
+    if active_task is None:
+        import modules.async_worker as worker
+
+        active_task = worker.get_active_task()
+
+    task_html = get_running_task_html(active_task)
+    progress_value = max(0, min(int(getattr(getattr(active_task, 'state', None), 'current_progress', 0) or 0), 100)) if active_task else 0
+    status_html = get_running_status_html(active_task)
+    skip_update = gr.update(interactive=bool(active_task))
+    return task_html, progress_value, status_html, skip_update
+
+
+_last_rendered_running_task_html = None
+_last_rendered_running_progress_value = None
+_last_rendered_running_status_html = None
+_last_rendered_running_skip_interactive = None
+_last_rendered_pending_queue_html = None
+_last_rendered_queue_len = -1
+
+
+def poll_active_task_status(session_gallery, last_preview, active_id, disable_preview_val):
+    global _last_rendered_running_task_html, _last_rendered_running_progress_value
+    global _last_rendered_running_status_html, _last_rendered_running_skip_interactive
+    global _last_rendered_pending_queue_html, _last_rendered_queue_len
+    import modules.async_worker as worker
+    import numpy as np
+    import gradio as gr
+    
+    active_task = worker.get_active_task()
+    pending = worker.async_tasks
+    
+    # Calculate queue length for tab label update
+    queue_len = len(pending)
+    if active_task:
+        queue_len += 1
+
+    running_task_html, running_progress_value, running_status_html, running_skip_button_update = get_running_panel_updates(active_task)
+    pending_queue_html = get_pending_queue_html(pending, active_task=active_task)
+
+    if running_task_html != _last_rendered_running_task_html:
+        _last_rendered_running_task_html = running_task_html
+        running_task_update = running_task_html
+    else:
+        running_task_update = gr.skip()
+
+    if running_progress_value != _last_rendered_running_progress_value:
+        _last_rendered_running_progress_value = running_progress_value
+        running_progress_update = gr.update(value=running_progress_value)
+    else:
+        running_progress_update = gr.skip()
+
+    if running_status_html != _last_rendered_running_status_html:
+        _last_rendered_running_status_html = running_status_html
+        running_status_update = running_status_html
+    else:
+        running_status_update = gr.skip()
+
+    running_skip_interactive = bool(active_task)
+    if running_skip_interactive != _last_rendered_running_skip_interactive:
+        _last_rendered_running_skip_interactive = running_skip_interactive
+        running_skip_update = running_skip_button_update
+    else:
+        running_skip_update = gr.skip()
+
+    if pending_queue_html != _last_rendered_pending_queue_html:
+        _last_rendered_pending_queue_html = pending_queue_html
+        pending_queue_update = pending_queue_html
+    else:
+        pending_queue_update = gr.skip()
+        
+    if queue_len != _last_rendered_queue_len:
+        _last_rendered_queue_len = queue_len
+        if queue_len > 0:
+            queue_tab_update = gr.update(label=f"Queue ({queue_len})")
+        else:
+            queue_tab_update = gr.update(label="Queue")
+    else:
+        queue_tab_update = gr.skip()
+        
+    progress_update = gr.skip()
+    preview_update = gr.skip()
+    gallery_update = gr.skip()
+    preview_column_update = gr.skip()
+    gallery_column_update = gr.skip()
+    
+    new_active_id = active_id
+    new_gallery = list(session_gallery)
+    new_preview = last_preview
+    
+    if active_task:
+        new_active_id = active_task.task_id
+        latest_preview_img = None
+        latest_progress_pct = 0
+        latest_progress_msg = ""
+        task_started = active_id != active_task.task_id
+        
+        if task_started:
+            if not disable_preview_val:
+                preview_column_update = gr.update(visible=True)
+                gallery_column_update = gr.update(visible=False)
+            else:
+                preview_column_update = gr.update(visible=False)
+                gallery_column_update = gr.update(visible=True)
+        
+        while len(active_task.yields) > 0:
+            flag, product = active_task.yields.pop(0)
+            if flag == 'preview':
+                pct, msg, img = product
+                latest_progress_pct = pct
+                latest_progress_msg = msg
+                if img is not None:
+                    latest_preview_img = img
+            elif flag == 'results':
+                _append_new_gallery_items(active_task, new_gallery, product)
+            elif flag == 'finish':
+                _append_new_gallery_items(active_task, new_gallery, product)
+                
+        if latest_preview_img is not None:
+            new_preview = latest_preview_img
+            preview_update = gr.update(visible=True, value=latest_preview_img)
+            
+        if latest_progress_pct > 0 or latest_progress_msg:
+            import modules.html
+            progress_update = gr.update(visible=True, value=modules.html.make_progress_html(latest_progress_pct, latest_progress_msg))
+            
+        if new_gallery != list(session_gallery):
+            cols = max(1, int(np.ceil(np.sqrt(len(new_gallery))))) if len(new_gallery) > 0 else 1
+            gallery_update = gr.update(value=new_gallery, columns=cols)
+            
+    else:
+        # Check if active task just finished
+        if active_id is not None:
+            new_active_id = None
+            progress_update = gr.update(visible=False)
+            preview_update = gr.update(visible=False, value=None)
+            # Restore standard layout when done
+            preview_column_update = gr.update(visible=False)
+            gallery_column_update = gr.update(visible=True)
+            
+    return running_task_update, running_progress_update, running_status_update, running_skip_update, pending_queue_update, progress_update, preview_update, gallery_update, queue_tab_update, new_gallery, new_preview, new_active_id, preview_column_update, gallery_column_update
+
+
+def skip_active_clicked():
+    import modules.async_worker as worker
+
+    active_task = worker.get_active_task()
+    if active_task is not None:
+        worker.request_interrupt('skip', active_task)
+    task_html, progress_value, status_html, skip_update = get_running_panel_updates(active_task)
+    return task_html, gr.update(value=progress_value), status_html, skip_update, get_pending_queue_html(active_task=active_task)
+
+
+def handle_queue_action(task_id, action_type, current_task):
+    import modules.async_worker as worker
+    active_task = worker.get_active_task()
+    if action_type == 'stop':
+        if active_task is not None and getattr(active_task, 'task_id', None) == task_id:
+            worker.request_interrupt('stop', active_task)
+        else:
+            worker.cancel_task(task_id)
+        while len(worker.async_tasks) > 0:
+            task = worker.async_tasks.pop(0)
+            task.yields.append(['finish', []])
+    elif action_type == 'skip':
+        if active_task is not None and getattr(active_task, 'task_id', None) == task_id:
+            worker.request_interrupt('skip', active_task)
+    elif action_type == 'cancel':
+        worker.cancel_task(task_id)
+
+    task_html, progress_value, status_html, skip_update = get_running_panel_updates()
+    return task_html, gr.update(value=progress_value), status_html, skip_update, get_pending_queue_html()
 
 

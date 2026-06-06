@@ -40,11 +40,13 @@ def build_settings_tab():
         )
 
     results['image_number'] = gr.Slider(
-        label='Image Number',
+        label='Images Per Click',
         minimum=1,
-        maximum=modules.config.default_max_image_number,
+        maximum=1,
         step=1,
-        value=modules.config.default_image_number
+        value=1,
+        interactive=False,
+        info='Each Generate click queues one image. Click Generate again to queue another task.'
     )
 
     results['steps'] = gr.Slider(

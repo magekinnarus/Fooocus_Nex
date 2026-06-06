@@ -45,9 +45,10 @@ def get_image_number(key: str, fallback: str | None, source_dict: dict, results:
     try:
         h = source_dict.get(key, source_dict.get(fallback, default))
         assert h is not None
-        h = int(h)
-        h = min(h, modules.config.default_max_image_number)
-        results.append(h)
+        int(h)
+        # Queueing is now the repetition mechanism, so the UI always loads a
+        # single image per Generate click regardless of stored metadata.
+        results.append(1)
     except:
         results.append(1)
 

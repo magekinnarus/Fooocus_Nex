@@ -34,7 +34,9 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
         task_state.callback_steps += (100 - preparation_steps) / float(all_steps)
 
         progress_val = int(preparation_steps + task_state.callback_steps)
+        task_state.current_progress = progress_val
         status_text = f'Sampling step {step + 1}/{total_steps}, image {current_task_id + 1}/{total_count} ...'
+        task_state.current_status_text = status_text
         now = time.perf_counter()
         step_wall = now - last_step_at
         elapsed_wall = now - sampling_started_at

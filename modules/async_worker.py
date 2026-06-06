@@ -20,6 +20,11 @@ class AsyncTask:
     callback_steps: float = 0.0
 
     def __init__(self, args):
+        import uuid
+        self.task_id = str(uuid.uuid4())[:8]
+        self.enqueue_time = time.time()
+        self.ui_delivered_result_count = 0
+
         from modules.flags import MetadataScheme
         from modules.util import get_enabled_loras
         from modules.config import default_max_lora_number
@@ -61,7 +66,7 @@ class AsyncTask:
             lora_data.append((enabled, name, weight))
         s.loras = get_enabled_loras(lora_data)
 
-        if not args_manager.args.disable_metadata:
+        if not getattr(args_manager.args, 'disable_metadata', False):
             s.save_metadata_to_images = args.get('save_metadata_to_images', False)
             scheme_val = args.get('metadata_scheme', 'fooocus_nex')
             try:
@@ -127,6 +132,20 @@ def get_active_task():
     with _active_task_mutex:
         return _active_task
 
+def cancel_task(task_id: str) -> bool:
+    global async_tasks
+    with _active_task_mutex:
+        active = _active_task
+        if active and getattr(active, 'task_id', None) == task_id:
+            request_interrupt('stop', active)
+            return True
+        for i, task in enumerate(async_tasks):
+            if getattr(task, 'task_id', None) == task_id:
+                async_tasks.pop(i)
+                task.yields.append(['finish', []])
+                return True
+    return False
+
 
 def request_interrupt(action, task=None):
     # Flux stop/skip interrupts are intentionally non-destructive.
@@ -142,6 +161,8 @@ def request_interrupt(action, task=None):
 
 def progressbar(task_state, number, text):
     resources.throw_exception_if_processing_interrupted()
+    task_state.current_progress = int(number)
+    task_state.current_status_text = str(text or '')
     print(f'[Fooocus] {text}')
     task_state.yields.append(['preview', (number, text, None)])
 
@@ -408,5 +429,6 @@ def worker():
                 set_active_task(None)
                 resources.cleanup_memory('task_finalize', force_cache=True, notes={'completed': True}, target_phase=resources.MemoryPhase.FINALIZE)
                 resources.end_memory_phase('task', notes={'completed': True})
+
 
 threading.Thread(target=worker, daemon=True).start()

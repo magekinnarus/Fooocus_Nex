@@ -58,13 +58,17 @@ shared.gradio_root = gr.Blocks(title=title, head=javascript_html() + css_html())
 
 with shared.gradio_root:
     currentTask = gr.State(worker.AsyncTask(args=[]))
+    current_tasks_state = gr.State([])
+    session_gallery_images = gr.State([])
+    last_preview_image = gr.State(None)
+    active_task_id = gr.State(None)
     inpaint_engine_state = gr.State('empty')
     outpaint_engine_state = gr.State('empty')
     remove_mask_state = gr.State(None)
     with gr.Row():
         with gr.Column(scale=2):
             with gr.Tabs(selected='preview_workspace'):
-                with gr.Tab(label='Preview', id='preview_workspace'):
+                with gr.Tab(label='Preview', id='preview_workspace', elem_id='preview_workspace'):
                     with gr.Row():
                         with gr.Column(scale=5, min_width=420, visible=False) as preview_column:
                             progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
@@ -99,7 +103,6 @@ with shared.gradio_root:
                     load_parameter_button = gr.Button(value="Load Parameters", elem_classes='type_row', elem_id='load_parameter_button', visible=False)
                     skip_button = gr.Button(value="Skip", elem_classes='type_row_half', elem_id='skip_button', visible=False)
                     stop_button = gr.Button(value="Stop", elem_classes='type_row_half', elem_id='stop_button', visible=False)
-                    reset_button = gr.Button(value="Reconnect", elem_classes='type_row', elem_id='reset_button', visible=False)
 
 
 
@@ -461,6 +464,32 @@ with shared.gradio_root:
                 gr.HTML('<button id="staging-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">\U0001F5C2\uFE0F Open Staging Palette</button>')
                 gr.HTML('<button id="monitor-panel-launcher" class="lg secondary gradio-button" style="width:100%; margin-bottom:12px; font-weight:bold;">\U0001F4CA Monitor Dashboard</button>')
             
+            with gr.Tab(label='Queue', elem_id='nex-queue-tab-wrapper') as queue_tab:
+                gr.HTML(
+                    """
+<div id="nex-queue-panel" class="nex-queue-panel">
+  <div class="nex-queue-header">
+    <h3>Task Queue</h3>
+  </div>
+</div>
+                    """
+                )
+                gr.HTML('<div class="nex-queue-section-title">Running Task</div>')
+                with gr.Group(elem_id='nex-running-panel'):
+                    with gr.Row(elem_id='nex-running-top-row'):
+                        running_task_html = gr.HTML(value='<p class="empty-queue-msg">No task running.</p>', elem_id='nex-running-task')
+                        running_skip_button = gr.Button(value="Skip", elem_id='running_skip_button', interactive=False)
+                    running_status_html = gr.HTML(value='<p class="nex-running-status empty">Idle.</p>', elem_id='nex-running-status')
+                    running_progress = gr.Slider(label='Task Progress', minimum=0, maximum=100, step=1, value=0, interactive=False, elem_id='nex-running-progress')
+                gr.HTML('<div class="nex-queue-section-title">Queued Tasks</div>')
+                queue_pending_html = gr.HTML(value='<p class="empty-queue-msg">Queue is empty.</p>', elem_id='nex-queue-pending-container')
+                with gr.Row():
+                    reset_button = gr.Button(value="Reconnect", elem_id='reset_button', visible=True)
+                    clear_all_button = gr.Button(value="Clear All Tasks", elem_id='clear_all_button', visible=True)
+                queue_action_id = gr.Textbox(value='', visible='hidden', elem_id='queue_action_id')
+                queue_action_type = gr.Textbox(value='', visible='hidden', elem_id='queue_action_type')
+                queue_action_btn = gr.Button(visible='hidden', elem_id='queue_action_btn')
+            
             with gr.Tab(label='Settings'):
                 settings_panel_result = settings_panel.build_settings_tab()
                 if not args_manager.args.disable_preset_selection:
@@ -654,6 +683,7 @@ with shared.gradio_root:
             'style_selections_accordion': style_selections_accordion,
             'state_is_generating': state_is_generating,
             'reset_button': reset_button,
+            'clear_all_button': clear_all_button,
             'stop_button': stop_button,
             'skip_button': skip_button,
             'progress_html': progress_html,
@@ -715,11 +745,27 @@ with shared.gradio_root:
             'remove_tab': remove_tab,
             'remove_bg_enabled': remove_bg_enabled,
             'remove_obj_enabled': remove_obj_enabled,
-            'remove_mask_state': remove_mask_state
+            'remove_mask_state': remove_mask_state,
+            'queue_tab': queue_tab,
+            'running_task_html': running_task_html,
+            'running_status_html': running_status_html,
+            'running_progress': running_progress,
+            'running_skip_button': running_skip_button,
+            'queue_pending_html': queue_pending_html,
+            'queue_action_id': queue_action_id,
+            'queue_action_type': queue_action_type,
+            'queue_action_btn': queue_action_btn,
+            'current_tasks_state': current_tasks_state,
+            'session_gallery_images': session_gallery_images,
+            'last_preview_image': last_preview_image,
+            'active_task_id': active_task_id,
         }
 
         if not args_manager.args.disable_preset_selection:
             ui_elements['preset_selection'] = preset_selection
+
+        timer = gr.Timer(value=0.5, active=True)
+        ui_elements['timer'] = timer
 
         ui_logic.register_all_events(ctrls_dict, currentTask, ui_elements)
 

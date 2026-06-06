@@ -98,6 +98,8 @@ class TaskState:
     results: List[Any] = field(default_factory=list)
     last_stop: Union[bool, str] = False
     processing: bool = False
+    current_progress: int = 0
+    current_status_text: str = ""
     goals: List[str] = field(default_factory=list)
     initial_latent: Optional[Dict[str, Any]] = None
     denoising_strength: float = 1.0
