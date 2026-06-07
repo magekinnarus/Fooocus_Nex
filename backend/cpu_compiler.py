@@ -160,7 +160,7 @@ class CpuArtifactCompiler:
         cpu_count = os.cpu_count() or 4
         # Keep default parallelism conservative: PyTorch matmul already uses
         # its own CPU worker pool, so broad fan-out tends to amplify RAM spikes.
-        return max(1, min(task_count, 4, max(1, cpu_count // 4)))
+        return max(1, min(task_count, 4, max(1, cpu_count // 2)))
 
     @staticmethod
     def _resolve_torch_threads_per_worker(torch_threads_per_worker: Optional[int]) -> int:
@@ -191,7 +191,8 @@ class CpuArtifactCompiler:
                     torch.set_num_interop_threads(1)
                 except Exception:
                     pass
-                submitter(index)()
+                with torch.inference_mode():
+                    submitter(index)()
             try:
                 torch.set_num_threads(original_threads)
                 torch.set_num_interop_threads(original_interop)
@@ -208,9 +209,15 @@ class CpuArtifactCompiler:
             original_threads = None
             original_interop = None
 
+        def _inference_wrap(fn):
+            def wrapped():
+                with torch.inference_mode():
+                    return fn()
+            return wrapped
+
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-                futures = [executor.submit(submitter(index)) for index in range(task_count)]
+                futures = [executor.submit(_inference_wrap(submitter(index))) for index in range(task_count)]
                 for future in concurrent.futures.as_completed(futures):
                     future.result()
         finally:

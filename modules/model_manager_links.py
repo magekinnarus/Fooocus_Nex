@@ -313,6 +313,12 @@ class ModelManagerLinks:
                         continue
                     if normalized_absolute_path in linked_paths:
                         continue
+                    
+                    # Ignore any file that is located inside a 'flux' subdirectory (internal assets)
+                    path_segments = [s.strip().lower() for s in normalized_relative_path.split('/')]
+                    if 'flux' in path_segments:
+                        continue
+
                     existing_record = self._manager._find_catalog_record(normalized_relative_path, root_keys=[root_key])
                     if existing_record is not None and not self._manager._is_auto_generated_unregistered_record(existing_record):
                         continue

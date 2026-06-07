@@ -298,9 +298,12 @@ def _build_unified_spatial_kwargs(task_state, image_input_result=None):
             'outpaint_pixelate': bool(getattr(task_state, 'inpaint_pixelate_primer', True)),
         }
     if 'inpaint' in goals:
+        source_mask = getattr(task_state, 'context_mask', None)
+        if source_mask is None:
+            source_mask = image_input_result.get('inpaint_mask')
         return {
             'source_pixels': image_input_result.get('inpaint_image'),
-            'source_mask': getattr(task_state, 'context_mask', None) or image_input_result.get('inpaint_mask'),
+            'source_mask': source_mask,
             'spatial_mode': 'inpaint',
             'resolved_spatial_context': resolved_spatial_context,
         }
