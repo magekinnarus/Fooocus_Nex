@@ -13,6 +13,7 @@ import modules.config
 import fooocus_version
 import modules.html
 import modules.async_worker as worker
+import modules.runtime_surface_state as runtime_surface_state
 import modules.constants as constants
 import modules.flags as flags
 import modules.gradio_hijack as grh
@@ -38,6 +39,122 @@ from modules.private_logger import get_current_html_path
 from modules.ui_gradio_extensions import javascript_html, css_html
 from modules.auth import auth_enabled, check_auth
 from modules.util import is_json
+CompletedTaskRecord = runtime_surface_state.CompletedTaskRecord
+completed_tasks_history = runtime_surface_state.completed_tasks_history
+_last_rendered_completed_queue_html = None
+_last_seen_active_task = None
+_last_rendered_progress_state = None
+
+def get_completed_queue_html():
+    if not completed_tasks_history:
+        return '<p class="empty-queue-msg">No completed tasks.</p>'
+
+    completed_html = '<div class="nex-queue-list">'
+    for task in reversed(completed_tasks_history):
+        prompt_preview = str(task.prompt)[:40]
+        if len(str(task.prompt)) > 40:
+            prompt_preview += '...'
+        if not prompt_preview.strip():
+            prompt_preview = "Image generation"
+            
+        model_name = html.escape(str(task.model_name or ''))
+        seed = html.escape(str(task.seed or ''))
+        
+        thumbs_html = '<div class="task-thumbnails" style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">'
+        for img_path in task.images:
+            file_url = html.escape(runtime_surface_state.build_file_url(str(img_path)))
+            thumbs_html += f"""
+            <div class="task-thumbnail-wrapper" style="width: 64px; height: 64px; flex-shrink: 0; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+                <a href="{file_url}" target="_blank" title="Click to view full image">
+                    <img src="{file_url}" style="width: 100%; height: 100%; object-fit: cover;" />
+                </a>
+            </div>
+            """
+        thumbs_html += '</div>'
+
+        import json
+        escaped_images_json = html.escape(json.dumps(task.images))
+
+        completed_html += f"""
+        <div class="nex-queue-item completed-task">
+            <div class="nex-queue-item-header completed-header">
+                <div class="nex-queue-item-summary">
+                    <span class="badge completed-badge">Completed</span>
+                    <span class="task-id">ID: {task.task_id}</span>
+                </div>
+            </div>
+            <div class="task-details">
+                <p class="task-prompt">"{html.escape(prompt_preview)}"</p>
+                <p class="task-meta">Model: {model_name} | Seed: {seed}</p>
+                {thumbs_html}
+                <div class="task-actions" style="display: flex; gap: 8px; margin-top: 8px;">
+                    <button onclick='stageAllImages({escaped_images_json}, this)' class="queue-btn btn-stage" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 6px; background: rgba(167, 139, 250, 0.12); color: #c084fc; border: 1px solid rgba(167, 139, 250, 0.25); cursor: pointer;">Stage</button>
+                </div>
+            </div>
+        </div>
+        """
+    completed_html += '</div>'
+    return completed_html
+
+
+def _record_completed_task(task, images):
+    if not images:
+        return False
+
+    task_id = getattr(task, 'task_id', None)
+    if task_id is None or any(record.task_id == task_id for record in completed_tasks_history):
+        return False
+
+    record = CompletedTaskRecord(
+        task_id=task_id,
+        prompt=getattr(getattr(task, 'state', None), 'prompt', ''),
+        model_name=getattr(getattr(task, 'state', None), 'base_model_name', ''),
+        seed=getattr(getattr(task, 'state', None), 'seed', ''),
+        images=list(images),
+    )
+    completed_tasks_history.append(record)
+    if len(completed_tasks_history) > 50:
+        completed_tasks_history.pop(0)
+    return True
+
+
+def _drain_task_ui_events(task, gallery_items):
+    latest_preview_img = None
+    latest_progress_pct = None
+    latest_progress_msg = None
+    finished_images = None
+
+    while len(task.yields) > 0:
+        flag, product = task.yields.pop(0)
+        if flag == 'preview':
+            pct, msg, img = product
+            latest_progress_pct = pct
+            latest_progress_msg = msg
+            if img is not None:
+                latest_preview_img = img
+        elif flag == 'results':
+            _append_new_gallery_items(task, gallery_items, product)
+        elif flag == 'finish':
+            _append_new_gallery_items(task, gallery_items, product)
+            finished_images = list(product) if isinstance(product, list) else [product]
+            _record_completed_task(task, finished_images)
+
+    return latest_preview_img, latest_progress_pct, latest_progress_msg, finished_images
+
+
+def _get_progress_html_update(*, visible, number=0, text=''):
+    global _last_rendered_progress_state
+    import gradio as gr
+
+    next_state = (bool(visible), int(number) if visible else None, str(text or '') if visible else '')
+    if next_state == _last_rendered_progress_state:
+        return gr.skip()
+
+    _last_rendered_progress_state = next_state
+    if not visible:
+        return gr.update(visible=False)
+
+    return gr.update(visible=True, value=modules.html.make_progress_html(next_state[1], next_state[2]))
 
 def validate_outpaint_generate_request(named_args):
     mixed_outpaint = (
@@ -1004,15 +1121,15 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     )
 
     generate_button.click(
-        fn=lambda disable_preview_value: (
-            [],
-            None,
-            None,
-            gr.update(value=[]),
-            gr.update(visible=not disable_preview_value),
-            gr.update(visible=disable_preview_value)
+        fn=lambda session_gallery, last_preview, active_id: (
+            session_gallery,
+            last_preview,
+            active_id,
+            gr.skip(),
+            gr.update(visible=True),
+            gr.update(visible=False)
         ),
-        inputs=[disable_preview],
+        inputs=[session_gallery_images, last_preview_image, active_task_id],
         outputs=[session_gallery_images, last_preview_image, active_task_id, gallery, preview_column, gallery_column],
         js="""
         () => {
@@ -1028,30 +1145,15 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
         .then(fn=get_tasks, inputs=ctrls, outputs=current_tasks_state) \
-        .then(fn=enqueue_tasks, inputs=[current_tasks_state, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=[currentTask, progress_html]) \
+        .then(fn=enqueue_tasks, inputs=[current_tasks_state, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=[currentTask]) \
         .then(fn=update_history_link, outputs=history_link)
 
     timer.tick(
-        fn=poll_active_task_status,
-        inputs=[session_gallery_images, last_preview_image, active_task_id, disable_preview],
-        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html, progress_html, progress_window, gallery, queue_tab, session_gallery_images, last_preview_image, active_task_id, preview_column, gallery_column],
+        fn=poll_preview_surface,
+        inputs=[last_preview_image, active_task_id],
+        outputs=[progress_window, last_preview_image, active_task_id],
         show_progress='hidden',
         queue=False
-    )
-
-    running_skip_button.click(
-        fn=skip_active_clicked,
-        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html],
-        queue=False,
-        show_progress='hidden'
-    )
-
-    queue_action_btn.click(
-        fn=handle_queue_action,
-        inputs=[queue_action_id, queue_action_type, currentTask],
-        outputs=[running_task_html, running_progress, running_status_html, running_skip_button, queue_pending_html],
-        queue=False,
-        show_progress='hidden'
     )
 
     def handle_reconnect_click(task):
@@ -1059,6 +1161,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         
         results = getattr(task, 'results', []) if task else []
         cols = max(1, int(np.ceil(np.sqrt(len(results))))) if len(results) > 0 else 2
+        res_val = results[0] if len(results) > 0 else None
         
         return [
             worker.AsyncTask(args=[]),
@@ -1068,37 +1171,14 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
             gr.update(visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
-            gr.update(visible=True, value=None),
+            gr.update(visible=True, value=res_val),
             gr.update(visible=True, value=results, columns=cols),
-            gr.update(visible=False),
-            gr.update(visible=True)
+            gr.update(visible=True),
+            gr.update(visible=False)
         ]
-
-    reset_button.click(handle_reconnect_click,
-                       inputs=[currentTask],
-                       outputs=[currentTask, state_is_generating, generate_button,
-                                reset_button, stop_button, skip_button,
-                                progress_html, progress_window, gallery, preview_column, gallery_column],
-                       queue=False)
 
     stop_button.click(stop_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False, js='(x)=>{cancelGenerateForever(); return x;}')
     skip_button.click(skip_clicked, inputs=currentTask, outputs=currentTask, queue=False, show_progress=False)
-
-    def clear_all_clicked(task):
-        worker.request_interrupt('stop', task)
-        while len(worker.async_tasks) > 0:
-            t = worker.async_tasks.pop(0)
-            t.yields.append(['finish', []])
-        return worker.AsyncTask(args=[])
-
-    clear_all_button.click(
-        fn=clear_all_clicked,
-        inputs=[currentTask],
-        outputs=[currentTask],
-        queue=False,
-        show_progress=False,
-        js='(x)=>{cancelGenerateForever(); return x;}'
-    )
 
     example_inpaint_prompts.click(lambda x: x[0], inputs=example_inpaint_prompts, outputs=inpaint_additional_prompt, show_progress=False, queue=False)
     metadata_input_image_path.change(trigger_metadata_preview, inputs=metadata_input_image_path, outputs=metadata_json, queue=False, show_progress=True)
@@ -1135,8 +1215,8 @@ def enqueue_tasks(tasks, use_img, tab, rbg, robj):
     first_task = tasks[0] if tasks else None
     if first_task and not first_task.is_valid:
         message = getattr(first_task, 'validation_message', 'The current request is not ready yet.')
-        import modules.html
-        return first_task, gr.update(visible=True, value=modules.html.make_progress_html(0, message))
+        runtime_surface_state.set_progress_state(visible=True, number=0, text=message)
+        return first_task
         
     for task in tasks:
         if use_img and tab == 'remove':
@@ -1145,9 +1225,29 @@ def enqueue_tasks(tasks, use_img, tab, rbg, robj):
             if robj:
                 task.state.goals.append('remove_obj')
         worker.async_tasks.append(task)
-        
-    import modules.html
-    return first_task, gr.update(visible=True, value=modules.html.make_progress_html(1, 'Waiting for task to start ...'))
+    if worker.get_active_task() is None:
+        runtime_surface_state.set_progress_state(visible=True, number=1, text='Waiting for task to start ...')
+    return first_task
+
+
+_last_rendered_preview_revision = -1
+
+
+def poll_preview_surface(last_preview, active_id):
+    global _last_rendered_preview_revision
+    runtime_surface_state.drain_worker_state()
+    preview_value, preview_revision = runtime_surface_state.get_preview_state()
+
+    preview_update = gr.skip()
+    new_preview = last_preview
+    if preview_revision != _last_rendered_preview_revision:
+        _last_rendered_preview_revision = preview_revision
+        new_preview = preview_value
+        preview_update = gr.update(visible=True, value=preview_value)
+
+    active_task = worker.get_active_task()
+    new_active_id = getattr(active_task, 'task_id', None)
+    return preview_update, new_preview, new_active_id
 
 
 def _append_new_gallery_items(task, gallery_items, product):
@@ -1263,9 +1363,11 @@ _last_rendered_queue_len = -1
 
 
 def poll_active_task_status(session_gallery, last_preview, active_id, disable_preview_val):
+    global _last_seen_active_task
     global _last_rendered_running_task_html, _last_rendered_running_progress_value
     global _last_rendered_running_status_html, _last_rendered_running_skip_interactive
     global _last_rendered_pending_queue_html, _last_rendered_queue_len
+    global _last_rendered_completed_queue_html
     import modules.async_worker as worker
     import numpy as np
     import gradio as gr
@@ -1330,42 +1432,48 @@ def poll_active_task_status(session_gallery, last_preview, active_id, disable_pr
     new_active_id = active_id
     new_gallery = list(session_gallery)
     new_preview = last_preview
+    previous_task = None
+
+    if (
+        active_id is not None
+        and _last_seen_active_task is not None
+        and getattr(_last_seen_active_task, 'task_id', None) == active_id
+        and (active_task is None or getattr(active_task, 'task_id', None) != active_id)
+    ):
+        previous_task = _last_seen_active_task
+
+    if previous_task is not None:
+        _, _, _, previous_finished_images = _drain_task_ui_events(previous_task, new_gallery)
+        if previous_finished_images:
+            new_preview = previous_finished_images[0]
+            preview_update = gr.update(visible=True, value=previous_finished_images[0])
     
     if active_task:
         new_active_id = active_task.task_id
-        latest_preview_img = None
-        latest_progress_pct = 0
-        latest_progress_msg = ""
+        latest_preview_img, latest_progress_pct, latest_progress_msg, finished_images = (None, None, None, None)
         task_started = active_id != active_task.task_id
         
         if task_started:
-            if not disable_preview_val:
-                preview_column_update = gr.update(visible=True)
-                gallery_column_update = gr.update(visible=False)
-            else:
-                preview_column_update = gr.update(visible=False)
-                gallery_column_update = gr.update(visible=True)
-        
-        while len(active_task.yields) > 0:
-            flag, product = active_task.yields.pop(0)
-            if flag == 'preview':
-                pct, msg, img = product
-                latest_progress_pct = pct
-                latest_progress_msg = msg
-                if img is not None:
-                    latest_preview_img = img
-            elif flag == 'results':
-                _append_new_gallery_items(active_task, new_gallery, product)
-            elif flag == 'finish':
-                _append_new_gallery_items(active_task, new_gallery, product)
+            preview_column_update = gr.update(visible=True)
+            gallery_column_update = gr.update(visible=False)
+            progress_update = _get_progress_html_update(visible=True, number=1, text='Waiting for task to start ...')
+
+        latest_preview_img, latest_progress_pct, latest_progress_msg, finished_images = _drain_task_ui_events(active_task, new_gallery)
                 
+        if finished_images:
+            new_preview = finished_images[0]
+            preview_update = gr.update(visible=True, value=finished_images[0])
+
         if latest_preview_img is not None:
             new_preview = latest_preview_img
             preview_update = gr.update(visible=True, value=latest_preview_img)
             
-        if latest_progress_pct > 0 or latest_progress_msg:
-            import modules.html
-            progress_update = gr.update(visible=True, value=modules.html.make_progress_html(latest_progress_pct, latest_progress_msg))
+        if latest_progress_msg is not None:
+            progress_update = _get_progress_html_update(
+                visible=True,
+                number=latest_progress_pct or 0,
+                text=latest_progress_msg,
+            )
             
         if new_gallery != list(session_gallery):
             cols = max(1, int(np.ceil(np.sqrt(len(new_gallery))))) if len(new_gallery) > 0 else 1
@@ -1375,13 +1483,24 @@ def poll_active_task_status(session_gallery, last_preview, active_id, disable_pr
         # Check if active task just finished
         if active_id is not None:
             new_active_id = None
-            progress_update = gr.update(visible=False)
-            preview_update = gr.update(visible=False, value=None)
+            progress_update = _get_progress_html_update(visible=False)
             # Restore standard layout when done
-            preview_column_update = gr.update(visible=False)
-            gallery_column_update = gr.update(visible=True)
+            preview_column_update = gr.update(visible=True)
+            gallery_column_update = gr.update(visible=False)
+
+    if active_task is not None:
+        _last_seen_active_task = active_task
+    elif active_id is None or previous_task is not None:
+        _last_seen_active_task = None
+
+    completed_queue_html = get_completed_queue_html()
+    if completed_queue_html != _last_rendered_completed_queue_html:
+        _last_rendered_completed_queue_html = completed_queue_html
+        completed_queue_update = completed_queue_html
+    else:
+        completed_queue_update = gr.skip()
             
-    return running_task_update, running_progress_update, running_status_update, running_skip_update, pending_queue_update, progress_update, preview_update, gallery_update, queue_tab_update, new_gallery, new_preview, new_active_id, preview_column_update, gallery_column_update
+    return running_task_update, running_progress_update, running_status_update, running_skip_update, pending_queue_update, progress_update, preview_update, gallery_update, queue_tab_update, new_gallery, new_preview, new_active_id, preview_column_update, gallery_column_update, completed_queue_update
 
 
 def skip_active_clicked():

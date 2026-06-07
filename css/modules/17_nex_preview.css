@@ -1,109 +1,28 @@
 /* Preview workspace custom styling */
 #preview_workspace {
     position: relative !important;
-    display: flex !important;
-    flex-direction: column !important;
-    min-height: 800px;
+    min-height: 768px;
 }
 
 #preview_workspace > .row {
-    display: flex !important;
-    flex-direction: row !important;
     gap: 16px !important;
     position: relative !important;
     width: 100% !important;
     height: 768px !important;
 }
 
-/* Keep the native gallery content reachable; only suppress duplicate thumbnail trays. */
-#final_gallery .thumbnails {
-    display: none !important;
-}
-
-/* Glassmorphic horizontal thumbnail strip overlay */
-#nex-preview-thumbnails {
-    position: absolute !important;
-    bottom: 24px !important;
-    left: 50% !important;
-    transform: translateX(-50%) translateY(0) !important;
-    width: 85% !important;
-    max-width: 760px !important;
-    background: rgba(15, 15, 20, 0.45) !important;
-    backdrop-filter: blur(20px) saturate(140%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    border-radius: 16px !important;
-    box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.55) !important;
-    display: flex !important;
-    gap: 12px !important;
-    padding: 12px !important;
-    overflow-x: auto !important;
-    z-index: 1000 !important;
-    transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    opacity: 0.15 !important; /* Start dimmed */
-}
-
-/* Hover triggers full opacity and lift */
-#nex-preview-thumbnails:hover {
-    opacity: 1 !important;
-    transform: translateX(-50%) translateY(-3px) !important;
-}
-
-/* Scrollbar styling for custom thumbnails strip */
-#nex-preview-thumbnails::-webkit-scrollbar {
-    height: 6px;
-}
-
-#nex-preview-thumbnails::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-#nex-preview-thumbnails::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-}
-
-#nex-preview-thumbnails::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.35);
-}
-
-/* Thumbnail Item styling */
-.nex-thumb-item {
-    width: 64px !important;
-    height: 64px !important;
-    flex-shrink: 0 !important;
-    padding: 0 !important;
-    border-radius: 10px !important;
-    overflow: hidden !important;
-    border: 2px solid rgba(255, 255, 255, 0.1) !important;
-    cursor: pointer !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
-}
-
-.nex-thumb-item img {
+/* Ensure the main preview image fits perfectly and is styled nicely */
+#preview_workspace .preview_panel {
     width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    display: block !important;
+    height: 768px !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    background: rgba(255, 255, 255, 0.02) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2) !important;
 }
 
-.nex-thumb-item:hover {
-    transform: scale(1.1) !important;
-    border-color: #c084fc !important;
-    box-shadow: 0 4px 16px rgba(192, 132, 252, 0.4) !important;
-}
-
-.nex-thumb-item.active {
-    border-color: #a78bfa !important;
-    box-shadow: 0 0 12px rgba(167, 139, 250, 0.6) !important;
-    transform: scale(1.05) !important;
-}
-
-/* Layout overrides based on gallery-open state */
-
-/* If preview column is visible and gallery-open is inactive: hide gallery column */
-#preview_workspace:not(.gallery-open) .nex-preview-column:not(.hidden):not([style*="display: none"]) ~ .nex-gallery-column {
+/* Hide the legacy gallery and its wrapper column completely */
+.nex-gallery-column, #final_gallery {
     display: none !important;
     width: 0 !important;
     max-width: 0 !important;
@@ -111,47 +30,10 @@
     flex: 0 0 0 !important;
 }
 
-/* If preview column is visible and gallery-open is inactive: stretch preview column to 100% */
-#preview_workspace:not(.gallery-open) .nex-preview-column:not(.hidden):not([style*="display: none"]) {
+/* Force the preview column to take full space */
+.nex-preview-column {
     width: 100% !important;
     max-width: 100% !important;
     flex: 1 1 100% !important;
     display: block !important;
-}
-
-/* Close gallery button on the inner-left edge of the gallery column */
-#nex-close-gallery-btn {
-    position: absolute !important;
-    top: 50% !important;
-    left: -16px !important; /* Offset to float on the boundary line */
-    transform: translateY(-50%) !important;
-    width: 32px !important;
-    height: 64px !important;
-    background: rgba(15, 15, 20, 0.8) !important;
-    backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-right: none !important;
-    border-radius: 8px 0 0 8px !important;
-    color: rgba(255, 255, 255, 0.8) !important;
-    font-size: 1.1rem !important;
-    font-weight: 700 !important;
-    cursor: pointer !important;
-    z-index: 1005 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.35) !important;
-}
-
-#nex-close-gallery-btn:hover {
-    background: #ef4444 !important;
-    color: #ffffff !important;
-    border-color: #f87171 !important;
-    left: -20px !important; /* Pull out slightly on hover */
-    width: 36px !important;
-}
-
-.nex-gallery-column {
-    position: relative !important;
 }

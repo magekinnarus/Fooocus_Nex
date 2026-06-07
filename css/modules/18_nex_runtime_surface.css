@@ -1,0 +1,121 @@
+.nex-runtime-status-panel {
+    margin-top: 4px;
+}
+
+#nex-runtime-status-panel {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+#nex-runtime-status-panel:empty {
+    display: none !important;
+}
+
+.nex-runtime-status-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.nex-runtime-status-card.is-active {
+    border-color: rgba(167, 139, 250, 0.24);
+    background: linear-gradient(180deg, rgba(167, 139, 250, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.nex-runtime-status-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.nex-runtime-status-card__title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.94);
+    letter-spacing: 0.03em;
+}
+
+.nex-runtime-status-card__meta {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.58);
+}
+
+.nex-runtime-status-card__body {
+    font-size: 0.84rem;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.nex-runtime-progress-track {
+    position: relative;
+    width: 100%;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.nex-runtime-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #60a5fa, #a78bfa);
+    transition: width 0.18s ease-out;
+}
+
+.nex-runtime-queue-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.nex-runtime-queue-toolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 2px;
+}
+
+.nex-runtime-inline-btn {
+    flex: 0 0 auto;
+    min-width: 110px;
+}
+
+#nex-runtime-queue-panel .task-thumbnails {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+#nex-runtime-queue-panel .task-thumbnail-wrapper {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#nex-runtime-queue-panel .task-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+    .nex-runtime-queue-toolbar {
+        flex-direction: column;
+    }
+
+    .nex-runtime-inline-btn {
+        width: 100%;
+    }
+}
