@@ -479,9 +479,9 @@ def load_contextual_model(model_path, clip_vision_path=None, ip_negative_path=No
     if model_path in contextual_models:
         return contextual_models[model_path]
 
-    load_device = model_management.get_torch_device()
+    load_device = runtime_resources.get_torch_device()
     offload_device = torch.device("cpu")
-    use_fp16 = model_management.should_use_fp16(device=load_device)
+    use_fp16 = runtime_resources.should_use_fp16(device=load_device)
     dtype = torch.float16 if use_fp16 else torch.float32
 
     if model_path.lower().endswith(".safetensors"):

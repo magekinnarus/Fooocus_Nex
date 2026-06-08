@@ -26,11 +26,12 @@ class LoRAPatchDef:
 
 
 class LazyWeight:
-    def __init__(self, path: str, key: str, shape: list[int], dtype: str) -> None:
+    def __init__(self, path: str, key: str, shape: list[int], dtype: str, tensor: torch.Tensor | None = None) -> None:
         self.path = path
         self.key = key
         self.shape = list(shape)
         self.dtype = self._normalize_dtype(dtype)
+        self._tensor = tensor
 
     @staticmethod
     def _normalize_dtype(dtype: Any) -> str:
@@ -54,6 +55,8 @@ class LazyWeight:
         return len(self.shape)
 
     def load(self) -> torch.Tensor:
+        if self._tensor is not None:
+            return self._tensor
         with safe_open(self.path, framework="pt", device="cpu") as handle:
             return handle.get_tensor(self.key)
 
@@ -68,17 +71,30 @@ class SafeOpenHeaderOnly(dict):
     def __init__(self, path: str) -> None:
         super().__init__()
         self.path = path
-        with safe_open(path, framework="pt", device="cpu") as handle:
-            for key in handle.keys():
-                try:
-                    slice_view = handle.get_slice(key)
-                    shape = list(slice_view.get_shape())
-                    dtype = str(slice_view.get_dtype())
-                except Exception:
-                    tensor = handle.get_tensor(key)
-                    shape = list(tensor.shape)
-                    dtype = str(tensor.dtype)
-                self[key] = LazyWeight(path, key, shape, dtype)
+        try:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                for key in handle.keys():
+                    try:
+                        slice_view = handle.get_slice(key)
+                        shape = list(slice_view.get_shape())
+                        dtype = str(slice_view.get_dtype())
+                    except Exception:
+                        tensor = handle.get_tensor(key)
+                        shape = list(tensor.shape)
+                        dtype = str(tensor.dtype)
+                    self[key] = LazyWeight(path, key, shape, dtype)
+        except Exception:
+            try:
+                sd = torch.load(path, map_location="cpu", weights_only=True)
+            except Exception:
+                sd = torch.load(path, map_location="cpu", weights_only=False)
+            if isinstance(sd, dict) and "state_dict" in sd:
+                sd = sd["state_dict"]
+            for key, tensor in sd.items():
+                if isinstance(tensor, torch.Tensor):
+                    self[key] = LazyWeight(path, key, list(tensor.shape), str(tensor.dtype), tensor=tensor)
+                else:
+                    self[key] = tensor
 
 
 def _resolve_tensor(w: Any, device: torch.device, dtype: torch.dtype) -> Any:

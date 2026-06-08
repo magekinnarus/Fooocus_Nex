@@ -185,6 +185,53 @@ def _release_route_runtime_state(task_state):
     task_state.ensure_cn_task_maps()
 
 
+def _resolve_preflight_additional_loras(task_state) -> list:
+    additional_loras = []
+
+    # 1. Inpaint / Outpaint patch LoRA
+    try:
+        from modules import flags, config
+        from modules.objr_engine import is_flux_fill_inpaint_route
+
+        # Check outpaint
+        mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
+        has_mixed_outpaint_request = mixed_cn_outpaint_workflow and getattr(task_state, 'outpaint_input_image', None) is not None and (
+            getattr(task_state, 'outpaint_step2_checkbox', False)
+            or bool(getattr(task_state, 'outpaint_selections', []))
+            or getattr(task_state, 'outpaint_mask_image', None) is not None
+        )
+        is_outpaint = (task_state.current_tab == 'outpaint' or has_mixed_outpaint_request) and getattr(task_state, 'outpaint_input_image', None) is not None
+
+        # Check inpaint
+        mixed_cn_inpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_inpaint', False)
+        has_mixed_inpaint_request = mixed_cn_inpaint_workflow and getattr(task_state, 'inpaint_input_image', None) is not None
+        is_inpaint = not is_outpaint and (task_state.current_tab == 'inpaint' or has_mixed_inpaint_request) and getattr(task_state, 'inpaint_input_image', None) is not None
+
+        use_flux_fill_inpaint = task_state.current_tab == 'inpaint' and is_flux_fill_inpaint_route(getattr(task_state, 'inpaint_route', None))
+
+        if (is_outpaint or is_inpaint) and not use_flux_fill_inpaint:
+            engine = getattr(task_state, 'outpaint_engine', 'None') if is_outpaint else getattr(task_state, 'inpaint_engine', 'None')
+            engine = flags.normalize_inpaint_engine_version(engine, default=flags.INPAINT_ENGINE_NONE)
+            if engine != flags.INPAINT_ENGINE_NONE:
+                inpaint_patch_model_path = config.downloading_inpaint_models(engine)
+                additional_loras.append((inpaint_patch_model_path, 1.0))
+    except Exception:
+        pass
+
+    # 2. FaceID LoRA
+    try:
+        from modules import flags, model_registry
+
+        contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
+        if len(contextual_tasks.get(flags.cn_faceid, [])) > 0:
+            faceid_lora_path = model_registry.ensure_asset('contextual.faceid.lora')
+            additional_loras.append((faceid_lora_path, 1.0))
+    except Exception:
+        pass
+
+    return additional_loras
+
+
 def _resolve_sdxl_process_key(task_state) -> process_transition.ProcessKey | None:
     from modules.pipeline.inference import resolve_unified_sdxl_process_key
 
@@ -365,6 +412,9 @@ def handler(async_task: AsyncTask):
 
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
 
+    # Pre-resolve and pre-populate expected additional LoRAs so preflight/postflight keys match
+    task_state.base_model_additional_loras = _resolve_preflight_additional_loras(task_state)
+
     requested_process_key = _resolve_requested_process_key(task_state, route)
 
     _apply_process_transition_gate(requested_process_key)
@@ -381,6 +431,7 @@ def handler(async_task: AsyncTask):
         sdxl_policy=task_state.sdxl_execution_policy,
         progressbar_callback=progressbar,
         yield_result_callback=yield_result,
+        base_model_additional_loras=list(task_state.base_model_additional_loras),
     )
     PipelineStageRunner().run(route, route_context)
 

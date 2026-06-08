@@ -13,7 +13,6 @@ from . import model_base
 from . import model_detection
 
 from . import sd1_clip
-from . import sd2_clip
 from . import sdxl_clip
 
 import ldm_patched.modules.model_patcher
@@ -317,9 +316,6 @@ def load_clip(ckpt_paths, embedding_directory=None):
         if "text_model.encoder.layers.30.mlp.fc1.weight" in clip_data[0]:
             clip_target.clip = sdxl_clip.SDXLRefinerClipModel
             clip_target.tokenizer = sdxl_clip.SDXLTokenizer
-        elif "text_model.encoder.layers.22.mlp.fc1.weight" in clip_data[0]:
-            clip_target.clip = sd2_clip.SD2ClipModel
-            clip_target.tokenizer = sd2_clip.SD2Tokenizer
         else:
             clip_target.clip = sd1_clip.SD1ClipModel
             clip_target.tokenizer = sd1_clip.SD1Tokenizer
@@ -413,13 +409,7 @@ def load_checkpoint(config_path=None, ckpt_path=None, output_vae=True, output_cl
     if output_clip:
         w = WeightsLoader()
         clip_target = EmptyClass()
-        clip_target.params = clip_config.get("params", {})
-        if clip_config["target"].endswith("FrozenOpenCLIPEmbedder"):
-            clip_target.clip = sd2_clip.SD2ClipModel
-            clip_target.tokenizer = sd2_clip.SD2Tokenizer
-            clip = CLIP(clip_target, embedding_directory=embedding_directory)
-            w.cond_stage_model = clip.cond_stage_model.clip_h
-        elif clip_config["target"].endswith("FrozenCLIPEmbedder"):
+        if clip_config["target"].endswith("FrozenCLIPEmbedder"):
             clip_target.clip = sd1_clip.SD1ClipModel
             clip_target.tokenizer = sd1_clip.SD1Tokenizer
             clip = CLIP(clip_target, embedding_directory=embedding_directory)

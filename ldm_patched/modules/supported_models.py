@@ -3,7 +3,6 @@ from . import model_base
 from . import utils
 
 from . import sd1_clip
-from . import sd2_clip
 from . import sdxl_clip
 
 from . import supported_models_base
@@ -50,68 +49,6 @@ class SD15(supported_models_base.BASE):
 
     def clip_target(self):
         return supported_models_base.ClipTarget(sd1_clip.SD1Tokenizer, sd1_clip.SD1ClipModel)
-
-class SD20(supported_models_base.BASE):
-    unet_config = {
-        "context_dim": 1024,
-        "model_channels": 320,
-        "use_linear_in_transformer": True,
-        "adm_in_channels": None,
-        "use_temporal_attention": False,
-    }
-
-    latent_format = latent_formats.SD15
-
-    def model_type(self, state_dict, prefix=""):
-        if self.unet_config["in_channels"] == 4: #SD2.0 inpainting models are not v prediction
-            k = "{}output_blocks.11.1.transformer_blocks.0.norm1.bias".format(prefix)
-            out = state_dict[k]
-            if torch.std(out, unbiased=False) > 0.09: # not sure how well this will actually work. I guess we will find out.
-                return model_base.ModelType.V_PREDICTION
-        return model_base.ModelType.EPS
-
-    def process_clip_state_dict(self, state_dict):
-        replace_prefix = {}
-        replace_prefix["conditioner.embedders.0.model."] = "cond_stage_model.model." #SD2 in sgm format
-        state_dict = utils.state_dict_prefix_replace(state_dict, replace_prefix)
-
-        state_dict = utils.transformers_convert(state_dict, "cond_stage_model.model.", "cond_stage_model.clip_h.transformer.text_model.", 24)
-        return state_dict
-
-    def process_clip_state_dict_for_saving(self, state_dict):
-        replace_prefix = {}
-        replace_prefix["clip_h"] = "cond_stage_model.model"
-        state_dict = utils.state_dict_prefix_replace(state_dict, replace_prefix)
-        state_dict = diffusers_convert.convert_text_enc_state_dict_v20(state_dict)
-        return state_dict
-
-    def clip_target(self):
-        return supported_models_base.ClipTarget(sd2_clip.SD2Tokenizer, sd2_clip.SD2ClipModel)
-
-class SD21UnclipL(SD20):
-    unet_config = {
-        "context_dim": 1024,
-        "model_channels": 320,
-        "use_linear_in_transformer": True,
-        "adm_in_channels": 1536,
-        "use_temporal_attention": False,
-    }
-
-    clip_vision_prefix = "embedder.model.visual."
-    noise_aug_config = {"noise_schedule_config": {"timesteps": 1000, "beta_schedule": "squaredcos_cap_v2"}, "timestep_dim": 768}
-
-
-class SD21UnclipH(SD20):
-    unet_config = {
-        "context_dim": 1024,
-        "model_channels": 320,
-        "use_linear_in_transformer": True,
-        "adm_in_channels": 2048,
-        "use_temporal_attention": False,
-    }
-
-    clip_vision_prefix = "embedder.model.visual."
-    noise_aug_config = {"noise_schedule_config": {"timesteps": 1000, "beta_schedule": "squaredcos_cap_v2"}, "timestep_dim": 1024}
 
 class SDXLRefiner(supported_models_base.BASE):
     unet_config = {
@@ -282,34 +219,6 @@ class Stable_Zero123(supported_models_base.BASE):
     def clip_target(self):
         return None
 
-class SD_X4Upscaler(SD20):
-    unet_config = {
-        "context_dim": 1024,
-        "model_channels": 256,
-        'in_channels': 7,
-        "use_linear_in_transformer": True,
-        "adm_in_channels": None,
-        "use_temporal_attention": False,
-    }
-
-    unet_extra_config = {
-        "disable_self_attentions": [True, True, True, False],
-        "num_classes": 1000,
-        "num_heads": 8,
-        "num_head_channels": -1,
-    }
-
-    latent_format = latent_formats.SD_X4
-
-    sampling_settings = {
-        "linear_start": 0.0001,
-        "linear_end": 0.02,
-    }
-
-    def get_model(self, state_dict, prefix="", device=None, model_options={}):
-        operations = model_options.get("custom_operations", None)
-        out = model_base.SD_X4Upscaler(self, device=device, operations=operations)
-        return out
 
 class Flux(supported_models_base.BASE):
     unet_config = {
@@ -339,5 +248,5 @@ class FluxInpaint(Flux):
         "in_channels": 96,
     }
 
-models = [FluxInpaint, Flux, Stable_Zero123, SD15, SD20, SD21UnclipL, SD21UnclipH, SDXL, SSD1B, Segmind_Vega, SD_X4Upscaler]
+models = [FluxInpaint, Flux, Stable_Zero123, SD15, SDXL, SSD1B, Segmind_Vega]
 models += [SVD_img2vid]

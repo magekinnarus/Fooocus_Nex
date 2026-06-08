@@ -495,7 +495,8 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
                 if progressbar_callback:
                     progressbar_callback(task_state, 1, 'Downloading inpainter ...')
                 inpaint_patch_model_path = config.downloading_inpaint_models(engine)
-                base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
+                if (inpaint_patch_model_path, 1.0) not in base_model_additional_loras:
+                    base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
                 print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
             else:
                 inpaint_patch_model_path = None
