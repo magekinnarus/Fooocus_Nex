@@ -16,7 +16,7 @@ image_router = APIRouter()
 
 def get_workspaces_root():
     """Returns the root directory for all allocated workspaces."""
-    root = os.path.abspath(os.path.join(modules.config.path_outputs, "workspaces"))
+    root = os.path.abspath(os.path.join(modules.config.temp_path, "workspaces"))
     os.makedirs(root, exist_ok=True)
     return root
 

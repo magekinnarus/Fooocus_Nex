@@ -448,7 +448,7 @@ def ensure_workspace_dir(workspace_id=None, prefix='mask_slot'):
     else:
         resolved_workspace_id = f"{prefix}_{uuid.uuid4().hex}"
 
-    root = os.path.abspath(os.path.join(modules.config.path_outputs, "workspaces"))
+    root = os.path.abspath(os.path.join(modules.config.temp_path, "workspaces"))
     os.makedirs(root, exist_ok=True)
     workspace_dir = os.path.join(root, resolved_workspace_id)
     os.makedirs(workspace_dir, exist_ok=True)
@@ -489,17 +489,17 @@ def resolve_workspace_image_path(candidate_path, workspace_id, preferred_name='b
 
 
 
-def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspace_id, outpaint_selections, expansion_size):
+def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspace_id, mask_workspace_id, outpaint_selections, expansion_size):
     directions = outpaint_selections if isinstance(outpaint_selections, list) else []
     resolved_base_path = resolve_workspace_image_path(base_image_path, base_workspace_id, preferred_name='base.png')
     if not resolved_base_path:
-        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Upload a Base Image first, then wait a moment for it to finish saving.")
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=mask_workspace_id or ""), gr.update(value=""), gr.update(value=False), gr.update(value="Upload a Base Image first, then wait a moment for it to finish saving.")
     if len(directions) == 0:
-        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Choose at least one Outpaint direction before preparing.")
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=mask_workspace_id or ""), gr.update(value=""), gr.update(value=False), gr.update(value="Choose at least one Outpaint direction before preparing.")
 
     original_image = unpack_gradio_data(resolved_base_path)
     if original_image is None:
-        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=False), gr.update(value="Unable to read the current Base Image.")
+        return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=mask_workspace_id or ""), gr.update(value=""), gr.update(value=False), gr.update(value="Unable to read the current Base Image.")
 
     direction = directions[0].lower()
     try:
@@ -531,6 +531,7 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
     )
     prepared_bb_path, resolved_bb_workspace_id = save_to_workspace_png(
         ctx.bb_image,
+        workspace_id=bb_workspace_id,
         filename=bb_filename,
         prefix='outpaint_bb'
     )
@@ -542,7 +543,7 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
         gr.update(value=prepared_bb_path),
         gr.update(value=resolved_bb_workspace_id),
         gr.update(value=""),
-        gr.update(value=""),
+        gr.update(value=mask_workspace_id or ""),
         gr.update(value=""),
         gr.update(value=True),
         gr.update(value=notice)

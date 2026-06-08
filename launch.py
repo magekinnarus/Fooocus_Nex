@@ -148,7 +148,7 @@ if __name__ == "__main__":
             else:
                 print(f"[Cleanup] Failed to delete content of outputs temp dir.")
 
-        workspaces_dir = os.path.join(config.path_outputs, "workspaces")
+        workspaces_dir = os.path.join(config.temp_path, "workspaces")
         if os.path.exists(workspaces_dir):
             print(f'[Cleanup] Attempting to delete content of workspaces dir {workspaces_dir}')
             result_workspaces = delete_folder_content(workspaces_dir, '[Cleanup Workspaces] ')

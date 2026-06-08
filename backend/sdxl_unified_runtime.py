@@ -32,7 +32,10 @@ from backend.sdxl_runtime_contract import (
     UnifiedSDXLRuntimeProtocol,
     UnifiedSDXLRuntimeSeams,
 )
-from backend.sdxl_unified_runtime_artifacts import UnifiedSDXLRuntimeArtifactMixin
+from backend.sdxl_unified_runtime_artifacts import (
+    UnifiedSDXLRuntimeArtifactMixin,
+    clear_spatial_latent_cache,
+)
 from backend.sdxl_unified_runtime_execution import UnifiedSDXLRuntimeExecutionMixin
 
 
@@ -171,6 +174,7 @@ def clear_unified_sdxl_runtime_component_cache() -> None:
     while _SHARED_SDXL_COMPILED_UNET_CACHE:
         _, entry = _SHARED_SDXL_COMPILED_UNET_CACHE.popitem(last=False)
         _release_shared_sdxl_compiled_unet(entry)
+    clear_spatial_latent_cache()
     gc.collect()
     resources.soft_empty_cache(force=True)
 

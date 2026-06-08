@@ -1082,7 +1082,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     outpaint_prepare_button.click(
         mask_proc.prepare_outpaint_step1_assets,
-        inputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_workspace_id, outpaint_selections, inpaint_outpaint_expansion_size],
+        inputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_workspace_id, outpaint_mask_workspace_id, outpaint_selections, inpaint_outpaint_expansion_size],
         outputs=[outpaint_input_image, outpaint_input_workspace_id, outpaint_bb_image, outpaint_bb_workspace_id, outpaint_mask_image, outpaint_mask_workspace_id, outpaint_bb_mask_data, outpaint_step2_checkbox, outpaint_prepare_notice],
         queue=False,
         show_progress=True

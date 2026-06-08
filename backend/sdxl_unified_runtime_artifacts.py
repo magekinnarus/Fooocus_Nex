@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import time
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -11,6 +13,48 @@ from backend.sdxl_runtime_contract import (
     SpatialConditioningArtifact,
     StructuralConditioningArtifact,
 )
+
+
+_SPATIAL_LATENT_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_SPATIAL_LATENT_CACHE_LIMIT = 8
+
+
+def _clone_spatial_cache_value(value: Any) -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, dict):
+        return {key: _clone_spatial_cache_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_spatial_cache_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_spatial_cache_value(item) for item in value)
+    return value
+
+
+def load_spatial_latent_cache(cache_key: str | None) -> dict[str, Any] | None:
+    if not cache_key:
+        return None
+
+    cached = _SPATIAL_LATENT_CACHE.get(cache_key)
+    if cached is None:
+        return None
+
+    _SPATIAL_LATENT_CACHE.move_to_end(cache_key)
+    return _clone_spatial_cache_value(cached)
+
+
+def remember_spatial_latent_cache(cache_key: str | None, payload: dict[str, Any] | None) -> None:
+    if not cache_key or payload is None:
+        return
+
+    _SPATIAL_LATENT_CACHE[cache_key] = _clone_spatial_cache_value(payload)
+    _SPATIAL_LATENT_CACHE.move_to_end(cache_key)
+    while len(_SPATIAL_LATENT_CACHE) > _SPATIAL_LATENT_CACHE_LIMIT:
+        _SPATIAL_LATENT_CACHE.popitem(last=False)
+
+
+def clear_spatial_latent_cache() -> None:
+    _SPATIAL_LATENT_CACHE.clear()
 
 
 class UnifiedSDXLRuntimeArtifactMixin:
@@ -160,7 +204,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
         if spatial_mode == "inpaint":
             return self._prepare_inpaint_spatial_conditioning_artifacts(pixels)
 
-        metrics: dict[str, float] = {}
+        metrics: dict[str, float] = {"spatial_cache_hit": 0.0}
         image_fingerprint = self._hash_payload(pixels)
         source_fingerprint = self._hash_payload(
             {
@@ -313,6 +357,84 @@ class UnifiedSDXLRuntimeArtifactMixin:
             resolved["working_mask"] = self._normalize_source_mask(getattr(context, "original_mask", None), working_pixels)
         return resolved
 
+    def _resolve_spatial_vae_identity(self) -> str:
+        vae_path = str(getattr(self.config, "vae_path", "") or "").strip()
+        if vae_path:
+            return str(self._fingerprint_source_path(vae_path) or vae_path)
+        if self.base_model is not None and self.base_model.fingerprint:
+            return f"embedded:{self.base_model.fingerprint}"
+        return f"embedded:{self.config.checkpoint_path}"
+
+    def _resolve_spatial_latent_artifacts(
+        self,
+        *,
+        spatial_mode: str,
+        bb_pixels: torch.Tensor,
+        bb_mask: torch.Tensor,
+    ) -> dict[str, Any]:
+        vae_identity = self._resolve_spatial_vae_identity()
+        bb_pixels_fingerprint = self._hash_payload(bb_pixels)
+        mask_fingerprint = self._hash_payload(bb_mask)
+        cache_key = self._hash_payload(
+            {
+                "spatial_mode": str(spatial_mode or "image").strip().lower(),
+                "vae_identity": vae_identity,
+                "bb_pixels_fingerprint": bb_pixels_fingerprint,
+                "bb_mask_fingerprint": mask_fingerprint,
+            }
+        )
+
+        cached = load_spatial_latent_cache(cache_key)
+        if cached is not None:
+            logging.info(
+                "[Nex-SpatialCache] hit route=%s mode=%s fingerprint=%s",
+                self.route_label,
+                spatial_mode,
+                cache_key[:12],
+            )
+            return {
+                **cached,
+                "cache_hit": True,
+                "encode_wall": 0.0,
+                "vae_identity": vae_identity,
+                "bb_pixels_fingerprint": bb_pixels_fingerprint,
+                "mask_fingerprint": mask_fingerprint,
+            }
+
+        encode_start = time.perf_counter()
+        route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
+        encode_wall = time.perf_counter() - encode_start
+        denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
+        source_latent_fingerprint = self._hash_payload(route_latent)
+        denoise_mask_fingerprint = self._hash_payload(denoise_mask)
+
+        remember_spatial_latent_cache(
+            cache_key,
+            {
+                "route_latent": route_latent,
+                "denoise_mask": denoise_mask,
+                "source_latent_fingerprint": source_latent_fingerprint,
+                "denoise_mask_fingerprint": denoise_mask_fingerprint,
+            },
+        )
+        logging.info(
+            "[Nex-SpatialCache] miss route=%s mode=%s fingerprint=%s",
+            self.route_label,
+            spatial_mode,
+            cache_key[:12],
+        )
+        return {
+            "route_latent": route_latent,
+            "denoise_mask": denoise_mask,
+            "source_latent_fingerprint": source_latent_fingerprint,
+            "denoise_mask_fingerprint": denoise_mask_fingerprint,
+            "cache_hit": False,
+            "encode_wall": float(encode_wall),
+            "vae_identity": vae_identity,
+            "bb_pixels_fingerprint": bb_pixels_fingerprint,
+            "mask_fingerprint": mask_fingerprint,
+        }
+
     def _prepare_inpaint_spatial_conditioning_artifacts(
         self,
         pixels: torch.Tensor,
@@ -362,25 +484,32 @@ class UnifiedSDXLRuntimeArtifactMixin:
             target_width = int(prepared_context["target_width"])
             target_height = int(prepared_context["target_height"])
 
-        encode_start = time.perf_counter()
-        route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
-        encode_wall = time.perf_counter() - encode_start
-        denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
-
         image_fingerprint = self._hash_payload(original_pixels)
-        mask_fingerprint = self._hash_payload(bb_mask)
+        latent_artifacts = self._resolve_spatial_latent_artifacts(
+            spatial_mode="inpaint",
+            bb_pixels=bb_pixels,
+            bb_mask=bb_mask,
+        )
+        route_latent = latent_artifacts["route_latent"]
+        denoise_mask = latent_artifacts["denoise_mask"]
+        encode_wall = float(latent_artifacts["encode_wall"])
+        mask_fingerprint = latent_artifacts["mask_fingerprint"]
+        bb_pixels_fingerprint = latent_artifacts["bb_pixels_fingerprint"]
+        vae_identity = latent_artifacts["vae_identity"]
         source_fingerprint = self._hash_payload(
             {
                 "checkpoint": self.base_model.fingerprint if self.base_model is not None else self.config.checkpoint_path,
+                "vae_identity": vae_identity,
                 "image": image_fingerprint,
                 "base_mask": self._hash_payload(base_mask) if base_mask is not None else None,
+                "bb_pixels_fingerprint": bb_pixels_fingerprint,
                 "bbox": bbox,
                 "target_width": target_width,
                 "target_height": target_height,
             }
         )
-        source_latent_fingerprint = self._hash_payload(route_latent)
-        denoise_mask_fingerprint = self._hash_payload(denoise_mask)
+        source_latent_fingerprint = latent_artifacts["source_latent_fingerprint"]
+        denoise_mask_fingerprint = latent_artifacts["denoise_mask_fingerprint"]
         artifact_fingerprint = self._hash_payload(
             {
                 "source_fingerprint": source_fingerprint,
@@ -411,6 +540,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
             "spatial_mask_coverage": float(mask_coverage),
             "spatial_bbox_area_ratio": float(bbox_area_ratio),
             "inpaint_prepare_cpu": float(prepare_wall),
+            "spatial_cache_hit": 1.0 if latent_artifacts["cache_hit"] else 0.0,
         }
         return (
             SpatialConditioningArtifact(
@@ -479,18 +609,25 @@ class UnifiedSDXLRuntimeArtifactMixin:
             working_mask = prepared_context["working_mask"]
             prepare_wall = 0.0
 
-        encode_start = time.perf_counter()
-        route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
-        encode_wall = time.perf_counter() - encode_start
-        denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
-
         image_fingerprint = self._hash_payload(original_pixels)
-        mask_fingerprint = self._hash_payload(bb_mask)
+        latent_artifacts = self._resolve_spatial_latent_artifacts(
+            spatial_mode="outpaint",
+            bb_pixels=bb_pixels,
+            bb_mask=bb_mask,
+        )
+        route_latent = latent_artifacts["route_latent"]
+        denoise_mask = latent_artifacts["denoise_mask"]
+        encode_wall = float(latent_artifacts["encode_wall"])
+        mask_fingerprint = latent_artifacts["mask_fingerprint"]
+        bb_pixels_fingerprint = latent_artifacts["bb_pixels_fingerprint"]
+        vae_identity = latent_artifacts["vae_identity"]
         source_fingerprint = self._hash_payload(
             {
                 "checkpoint": self.base_model.fingerprint if self.base_model is not None else self.config.checkpoint_path,
+                "vae_identity": vae_identity,
                 "image": image_fingerprint,
                 "base_mask": self._hash_payload(base_mask) if base_mask is not None else None,
+                "bb_pixels_fingerprint": bb_pixels_fingerprint,
                 "direction": str(self.config.outpaint_direction or "").strip().lower() or None,
                 "expansion": int(self.config.outpaint_expansion_size),
                 "pixelate": bool(self.config.outpaint_pixelate),
@@ -499,8 +636,8 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 "target_height": target_height,
             }
         )
-        source_latent_fingerprint = self._hash_payload(route_latent)
-        denoise_mask_fingerprint = self._hash_payload(denoise_mask)
+        source_latent_fingerprint = latent_artifacts["source_latent_fingerprint"]
+        denoise_mask_fingerprint = latent_artifacts["denoise_mask_fingerprint"]
         artifact_fingerprint = self._hash_payload(
             {
                 "source_fingerprint": source_fingerprint,
@@ -534,6 +671,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
             "spatial_mask_coverage": float(mask_coverage),
             "spatial_bbox_area_ratio": float(bbox_area_ratio),
             "outpaint_prepare_cpu": float(prepare_wall),
+            "spatial_cache_hit": 1.0 if latent_artifacts["cache_hit"] else 0.0,
         }
         return (
             SpatialConditioningArtifact(
