@@ -89,6 +89,7 @@ def get_completed_queue_html():
                 {thumbs_html}
                 <div class="task-actions" style="display: flex; gap: 8px; margin-top: 8px;">
                     <button onclick='stageAllImages({escaped_images_json}, this)' class="queue-btn btn-stage" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 6px; background: rgba(167, 139, 250, 0.12); color: #c084fc; border: 1px solid rgba(167, 139, 250, 0.25); cursor: pointer;">Stage</button>
+                    <button onclick="triggerQueueAction('{task.task_id}', 'delete_completed')" class="queue-btn btn-delete" style="padding: 4px 10px; font-size: 0.75rem; border-radius: 6px; cursor: pointer;">Delete</button>
                 </div>
             </div>
         </div>
@@ -1529,6 +1530,8 @@ def handle_queue_action(task_id, action_type, current_task):
             worker.request_interrupt('skip', active_task)
     elif action_type == 'cancel':
         worker.cancel_task(task_id)
+    elif action_type == 'delete_completed':
+        runtime_surface_state.request_delete_completed_task(task_id)
 
     task_html, progress_value, status_html, skip_update = get_running_panel_updates()
     return task_html, gr.update(value=progress_value), status_html, skip_update, get_pending_queue_html()

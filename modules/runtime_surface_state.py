@@ -183,16 +183,31 @@ def get_completed_image_path(task_id: str, image_index: int) -> str | None:
     if image_index < 0:
         return None
 
-    for record in completed_tasks_history:
-        if record.task_id != task_id:
-            continue
-        if image_index >= len(record.images):
-            return None
-        image_path = str(record.images[image_index] or "")
-        if not image_path or not os.path.exists(image_path):
-            return None
-        return image_path
+    with _state_mutex:
+        for record in completed_tasks_history:
+            if record.task_id != task_id:
+                continue
+            if image_index >= len(record.images):
+                return None
+            image_path = str(record.images[image_index] or "")
+            if not image_path or not os.path.exists(image_path):
+                return None
+            return image_path
     return None
+
+
+def remove_completed_task(task_id: str) -> bool:
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return False
+
+    with _state_mutex:
+        for index, record in enumerate(completed_tasks_history):
+            if record.task_id != normalized_task_id:
+                continue
+            completed_tasks_history.pop(index)
+            return True
+    return False
 
 
 def get_runtime_snapshot():
@@ -240,6 +255,10 @@ def _clear_progress_if_idle():
 def request_cancel_task(task_id: str):
     worker.cancel_task(task_id)
     _clear_progress_if_idle()
+
+
+def request_delete_completed_task(task_id: str) -> bool:
+    return remove_completed_task(task_id)
 
 
 def request_clear_all():

@@ -87,6 +87,10 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
             ('Force CLIP', 'clip_model', task_state.clip_model_name)
         ]
 
+        description = str(task_dict.get('description', '') or '').strip()
+        if description:
+            d.insert(0, ('Description', 'description', description))
+
         if task_state.adaptive_cfg != config.default_cfg_tsnr:
             d.append(('CFG Mimicking from TSNR', 'adaptive_cfg', task_state.adaptive_cfg))
 

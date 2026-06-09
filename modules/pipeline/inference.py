@@ -3,6 +3,7 @@ import time
 import logging
 import torch
 import numpy as np
+from PIL import Image
 import modules.core as core
 import modules.flags as flags
 import modules.config as config
@@ -16,6 +17,43 @@ from modules.pipeline.output import save_and_log, yield_result
 
 def _is_debug_console_logging_enabled() -> bool:
     return logging.getLogger().isEnabledFor(logging.DEBUG)
+
+
+def _resolve_preview_update_interval(task_state) -> int:
+    try:
+        return max(1, int(getattr(task_state, 'preview_update_interval', 1) or 1))
+    except Exception:
+        return 1
+
+
+def _resolve_preview_max_side(task_state) -> int:
+    try:
+        return max(0, int(getattr(task_state, 'preview_max_side', 0) or 0))
+    except Exception:
+        return 0
+
+
+def _downscale_preview_transport_image(preview_image, *, max_side: int):
+    if not isinstance(preview_image, np.ndarray) or max_side <= 0:
+        return preview_image
+    if preview_image.ndim < 2:
+        return preview_image
+
+    height, width = preview_image.shape[:2]
+    longest_side = max(int(height), int(width))
+    if longest_side <= 0 or longest_side <= int(max_side):
+        return preview_image
+
+    scale = float(max_side) / float(longest_side)
+    target_width = max(1, int(round(width * scale)))
+    target_height = max(1, int(round(height * scale)))
+    resampling = getattr(Image, 'Resampling', Image).LANCZOS
+    try:
+        return np.asarray(
+            Image.fromarray(preview_image).resize((target_width, target_height), resample=resampling)
+        )
+    except Exception:
+        return preview_image
 
 
 def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None, disable_pbar=True):
@@ -58,23 +96,42 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
                 f'last={step_wall:.2f}s/it avg={average_step_wall:.2f}s/it eta={eta_wall:.1f}s'
             )
 
-        if preview_transform is not None and y is not None:
-            y = preview_transform(y)
-
-        if (
+        preview_image = None
+        preview_update_interval = _resolve_preview_update_interval(task_state)
+        should_emit_preview_image = (
             y is not None
-            and isinstance(y, np.ndarray)
-            and hasattr(task_state, 'inpaint_context')
-            and task_state.inpaint_context is not None
-        ):
-            # y is an RGB preview array from the previewer.
-            from modules.pipeline.inpaint import InpaintPipeline
-            inpaint = InpaintPipeline()
-            y = inpaint.stitch(task_state.inpaint_context, y)
-        elif not isinstance(y, np.ndarray):
-            y = None
+            and (
+                preview_update_interval <= 1
+                or completed_steps == int(total_steps)
+                or (completed_steps % preview_update_interval) == 0
+            )
+        )
 
-        task_state.yields.append(['preview', (progress_val, status_text, y)])
+        if should_emit_preview_image:
+            preview_image = y
+            if preview_transform is not None and preview_image is not None:
+                preview_image = preview_transform(preview_image)
+
+            if (
+                preview_image is not None
+                and isinstance(preview_image, np.ndarray)
+                and hasattr(task_state, 'inpaint_context')
+                and task_state.inpaint_context is not None
+            ):
+                # Stitch the localized preview back into the full canvas before transport downscaling.
+                from modules.pipeline.inpaint import InpaintPipeline
+
+                inpaint = InpaintPipeline()
+                preview_image = inpaint.stitch(task_state.inpaint_context, preview_image)
+            elif not isinstance(preview_image, np.ndarray):
+                preview_image = None
+
+            preview_image = _downscale_preview_transport_image(
+                preview_image,
+                max_side=_resolve_preview_max_side(task_state),
+            )
+
+        task_state.yields.append(['preview', (progress_val, status_text, preview_image)])
 
     return callback
 

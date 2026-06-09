@@ -33,6 +33,10 @@ async def post_runtime_surface_action(payload: dict = Body(...)):
         if not task_id:
             raise HTTPException(status_code=400, detail="Missing task_id for cancel action")
         runtime_surface_state.request_cancel_task(task_id)
+    elif action == "delete_completed":
+        if not task_id:
+            raise HTTPException(status_code=400, detail="Missing task_id for delete_completed action")
+        runtime_surface_state.request_delete_completed_task(task_id)
     elif action == "clear_all":
         runtime_surface_state.request_clear_all()
     elif action == "refresh":

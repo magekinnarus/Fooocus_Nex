@@ -3,6 +3,31 @@ import ldm_patched.modules.args_parser as args_parser
 args_parser.parser.add_argument("--share", action='store_true', help="Set whether to share on Gradio.")
 args_parser.parser.add_argument("--colab", action='store_true',
                                 help="Use the Colab config profile (config_colab.txt).")
+args_parser.parser.add_argument(
+    "--memory-environment-profile",
+    type=str,
+    default=None,
+    help=(
+        "Override the resolved memory environment profile. "
+        "This changes memory-policy defaults, but does not by itself force Flux Fill streaming posture. "
+        "Supported values: auto, colab_pro, colab_free, local_low_vram, local_normal, custom."
+    ),
+)
+args_parser.parser.add_argument(
+    "--hardware-total-ram-mb",
+    type=float,
+    default=None,
+    help="Override detected total system RAM (MB) for runtime planning and profile resolution.",
+)
+args_parser.parser.add_argument(
+    "--hardware-total-vram-mb",
+    type=float,
+    default=None,
+    help=(
+        "Override detected total GPU VRAM (MB) for runtime planning and profile resolution. "
+        "Useful for simulating streaming-class Flux Fill hardware on high-RAM Colab sessions."
+    ),
+)
 args_parser.parser.add_argument("--preset", type=str, default=None, help="Apply specified UI preset.")
 args_parser.parser.add_argument("--disable-preset-selection", action='store_true',
                                 help="Disables preset selection in Gradio.")

@@ -28,6 +28,24 @@ Known mismatch:
   `huggingface-hub==1.4.1`, which breaks `transformers` import and therefore
   must not be used for mission validation.
 
+## Optional Launch Overrides
+
+For constrained-hardware reproduction on a roomier Colab Pro session, the UI
+launch path now supports:
+
+- `--memory-environment-profile`
+- `--hardware-total-ram-mb`
+- `--hardware-total-vram-mb`
+
+Example constrained Colab streaming simulation:
+
+- keep `--colab`
+- keep the roomy Colab Pro RAM budget
+- add `--hardware-total-vram-mb 12288`
+- if you want the simulation fully explicit, also add `--hardware-total-ram-mb 57344`
+- leave `--memory-environment-profile` on `auto` or pin it to `colab_pro`
+- do not use `colab_free` for fp8 Flux Fill streaming validation; that profile exists because free-tier RAM is too small for the target streaming test
+
 ## Search And Compile
 
 Ownership/runtime audit search:

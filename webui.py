@@ -515,6 +515,8 @@ with shared.gradio_root:
                 overwrite_height = debug_panel_result['overwrite_height']
                 overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
                 disable_preview = debug_panel_result['disable_preview']
+                preview_update_interval = debug_panel_result['preview_update_interval']
+                preview_max_side = debug_panel_result['preview_max_side']
                 disable_intermediate_results = debug_panel_result['disable_intermediate_results']
                 disable_seed_increment = debug_panel_result['disable_seed_increment']
                 if not args_manager.args.disable_metadata:
@@ -585,6 +587,8 @@ with shared.gradio_root:
             'inpaint_mask_image': inpaint_mask_image_path,
             'inpaint_bb_image': inpaint_bb_image_path,
             'disable_preview': disable_preview,
+            'preview_update_interval': preview_update_interval,
+            'preview_max_side': preview_max_side,
             'disable_intermediate_results': disable_intermediate_results,
             'disable_seed_increment': disable_seed_increment,
             'adm_scaler_positive': adm_scaler_positive,

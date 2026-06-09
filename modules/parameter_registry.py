@@ -111,6 +111,8 @@ PARAM_REGISTRY: List[ParamDef] = [
 
     # --- Settings & Toggles ---
     ParamDef('disable_preview', 'disable_preview', False, bool),
+    ParamDef('preview_update_interval', 'preview_update_interval', 1, int),
+    ParamDef('preview_max_side', 'preview_max_side', 0, int),
     ParamDef('disable_intermediate_results', 'disable_intermediate_results', False, bool),
     ParamDef('disable_seed_increment', 'disable_seed_increment', False, bool),
     

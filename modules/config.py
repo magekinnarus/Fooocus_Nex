@@ -604,12 +604,40 @@ memory_environment_profile_override = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, str) and x.lower() in memory_environment_profiles.KNOWN_PROFILE_OVERRIDES,
     expected_type=str
 )
+cli_memory_environment_profile_override = getattr(args_manager.args, 'memory_environment_profile', None)
+if isinstance(cli_memory_environment_profile_override, str) and cli_memory_environment_profile_override.strip():
+    normalized_cli_memory_profile = cli_memory_environment_profile_override.strip().lower()
+    if normalized_cli_memory_profile not in memory_environment_profiles.KNOWN_PROFILE_OVERRIDES:
+        raise ValueError(
+            '--memory-environment-profile must be one of: '
+            + ', '.join(sorted(memory_environment_profiles.KNOWN_PROFILE_OVERRIDES))
+        )
+    print(
+        f'Overriding config value memory_environment_profile with '
+        f'{cli_memory_environment_profile_override}'
+    )
+    memory_environment_profile_override = normalized_cli_memory_profile
+    config_dict['memory_environment_profile'] = memory_environment_profile_override
 memory_profile_custom_name = get_config_item_or_set_default(
     key='memory_profile_custom_name',
     default_value='Custom Override',
     validator=lambda x: isinstance(x, str) and len(x.strip()) > 0,
     expected_type=str
 )
+hardware_total_ram_override_mb = getattr(args_manager.args, 'hardware_total_ram_mb', None)
+if hardware_total_ram_override_mb is not None:
+    hardware_total_ram_override_mb = float(hardware_total_ram_override_mb)
+    if hardware_total_ram_override_mb <= 0.0:
+        raise ValueError('--hardware-total-ram-mb must be greater than 0.')
+    print(f'Overriding detected total RAM with {hardware_total_ram_override_mb:.0f} MB')
+
+hardware_total_vram_override_mb = getattr(args_manager.args, 'hardware_total_vram_mb', None)
+if hardware_total_vram_override_mb is not None:
+    hardware_total_vram_override_mb = float(hardware_total_vram_override_mb)
+    if hardware_total_vram_override_mb <= 0.0:
+        raise ValueError('--hardware-total-vram-mb must be greater than 0.')
+    print(f'Overriding detected total VRAM with {hardware_total_vram_override_mb:.0f} MB')
+
 memory_low_ram_headroom_override_mb = _get_optional_memory_policy_override('memory_low_ram_headroom_mb')
 memory_critical_ram_headroom_override_mb = _get_optional_memory_policy_override('memory_critical_ram_headroom_mb')
 memory_checkpoint_switch_headroom_override_mb = _get_optional_memory_policy_override('memory_checkpoint_switch_ram_headroom_mb')
@@ -617,6 +645,8 @@ memory_linux_malloc_trim_trigger_override_mb = _get_optional_memory_policy_overr
 resolved_memory_environment_profile = memory_environment_profiles.resolve_environment_profile(
     override=memory_environment_profile_override,
     custom_name=memory_profile_custom_name,
+    total_ram_mb=hardware_total_ram_override_mb,
+    total_vram_mb=hardware_total_vram_override_mb,
     custom_policy_overrides={
         'low_ram_headroom_mb': memory_low_ram_headroom_override_mb,
         'critical_ram_headroom_mb': memory_critical_ram_headroom_override_mb,

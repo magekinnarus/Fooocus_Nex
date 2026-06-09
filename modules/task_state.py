@@ -56,6 +56,8 @@ class TaskState:
     objr_mask_blur: int = 6
     objr_blend_mode: str = "morphological"
     disable_preview: bool = False
+    preview_update_interval: int = 1
+    preview_max_side: int = 0
     disable_intermediate_results: bool = False
     disable_seed_increment: bool = False
     adm_scaler_positive: float = 1.5

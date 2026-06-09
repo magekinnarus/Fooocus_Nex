@@ -4,6 +4,7 @@ import time
 from typing import Sequence
 
 import numpy as np
+from PIL import Image
 
 from backend import conditioning
 from backend import environment_profile as environment_profiles
@@ -104,42 +105,93 @@ def describe_route(route: PipelineRoute) -> list[str]:
 
 
 def _save_step1_result(context: PipelineRouteContext, payload, description: str) -> None:
-    from modules.pipeline.output import save_and_log
-
     if payload is None:
         return
 
     images_to_save = payload if isinstance(payload, (list, tuple)) else [payload]
-    normalized_images = []
-    for image in images_to_save:
-        if isinstance(image, np.ndarray) and image.ndim == 2:
-            normalized_images.append(np.stack([image] * 3, axis=-1))
-        else:
-            normalized_images.append(image)
 
     task_state = context.task_state
     if context.progressbar_callback is not None:
         context.progressbar_callback(task_state, 100, f'Saving {description} ...')
 
+    img_paths = []
+    for image in images_to_save:
+        saved_path = _save_logged_output(
+            context,
+            image,
+            description,
+            prompt_text=getattr(task_state, 'prompt', ''),
+            negative_prompt=getattr(task_state, 'negative_prompt', ''),
+            seed=getattr(task_state, 'seed', None),
+        )
+        if saved_path:
+            img_paths.append(saved_path)
+    if context.yield_result_callback is not None:
+        context.yield_result_callback(task_state, img_paths, 100, do_not_show_finished_images=True)
+
+
+def _load_logged_image_payload(payload):
+    if isinstance(payload, str):
+        with Image.open(payload) as image:
+            return np.array(image)
+    return payload
+
+
+def _resolve_logged_image_dimensions(payload, *, fallback_height: int, fallback_width: int) -> tuple[int, int]:
+    if isinstance(payload, np.ndarray):
+        if payload.ndim == 2:
+            height, width = payload.shape
+            return int(height), int(width)
+        if payload.ndim >= 3:
+            height, width = payload.shape[:2]
+            return int(height), int(width)
+    return int(fallback_height), int(fallback_width)
+
+
+def _save_logged_output(
+    context: PipelineRouteContext,
+    payload,
+    description: str,
+    *,
+    prompt_text: str = "",
+    negative_prompt: str = "",
+    seed=None,
+):
+    from modules.pipeline.output import save_and_log
+
+    if payload is None:
+        return None
+
+    task_state = context.task_state
+    image_payload = _load_logged_image_payload(payload)
+    if image_payload is None:
+        return None
+
+    height, width = _resolve_logged_image_dimensions(
+        image_payload,
+        fallback_height=getattr(task_state, 'height', 0) or 0,
+        fallback_width=getattr(task_state, 'width', 0) or 0,
+    )
     img_paths = save_and_log(
         task_state,
-        task_state.height,
-        task_state.width,
-        normalized_images,
+        height,
+        width,
+        [image_payload],
         {
-            'log_positive_prompt': task_state.prompt,
-            'log_negative_prompt': task_state.negative_prompt,
+            'log_positive_prompt': str(prompt_text or ''),
+            'log_negative_prompt': str(negative_prompt or ''),
             'positive': [],
             'negative': [],
-            'styles': task_state.style_selections,
-            'task_seed': task_state.seed,
+            'styles': list(getattr(task_state, 'style_selections', []) or []),
+            'task_seed': getattr(task_state, 'seed', 0) if seed is None else seed,
             'description': description,
         },
         False,
-        task_state.loras,
+        list(getattr(task_state, 'loras', []) or []),
     )
-    if context.yield_result_callback is not None:
-        context.yield_result_callback(task_state, img_paths, 100, do_not_show_finished_images=True)
+    if not img_paths:
+        return None
+    return img_paths[0]
 
 
 def _record_prepared_route_artifact(context: PipelineRouteContext, stage_name: str, payload, **extra):
@@ -953,10 +1005,25 @@ class RemovalStage(PipelineStage):
                     jit=task_state.bgr_jit,
                 )
                 bgr_engine.unload_model()
+                persisted_char_path = _save_logged_output(
+                    context,
+                    char_path,
+                    'Background Removal Subject',
+                    seed=getattr(task_state, 'seed', None),
+                )
+                persisted_mask_path = _save_logged_output(
+                    context,
+                    mask_path,
+                    'Background Removal Mask',
+                    seed=getattr(task_state, 'seed', None),
+                )
                 if context.yield_result_callback is not None:
                     context.yield_result_callback(
                         task_state,
-                        [char_path, mask_path],
+                        [
+                            persisted_char_path or char_path,
+                            persisted_mask_path or mask_path,
+                        ],
                         50 if flags.remove_obj in task_state.goals else 100,
                         do_not_show_finished_images=True,
                     )
@@ -996,8 +1063,21 @@ class RemovalStage(PipelineStage):
                     flux_disable_pbar=True,
                 )
                 objr_engine.unload_model()
+                persisted_res_path = _save_logged_output(
+                    context,
+                    res_path,
+                    'Flux Fill Object Removal' if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL else 'Object Removal',
+                    prompt_text=getattr(task_state, 'remove_prompt', ''),
+                    negative_prompt=getattr(task_state, 'negative_prompt', ''),
+                    seed=getattr(task_state, 'seed', None),
+                )
                 if context.yield_result_callback is not None:
-                    context.yield_result_callback(task_state, [res_path], 100, do_not_show_finished_images=True)
+                    context.yield_result_callback(
+                        task_state,
+                        [persisted_res_path or res_path],
+                        100,
+                        do_not_show_finished_images=True,
+                    )
 
             return PipelineStageResult(route_complete=True, notes={'completed': True})
         finally:

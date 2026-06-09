@@ -127,6 +127,7 @@
                             <span class="badge completed-badge">Completed</span>
                             <span class="task-id">ID: ${escapeHtml(task.task_id)}</span>
                         </div>
+                        <button class="queue-btn btn-delete nex-runtime-inline-btn" data-runtime-action="delete_completed" data-task-id="${escapeHtml(task.task_id)}">Delete</button>
                     </div>
                     <div class="task-details">
                         <p class="task-prompt">"${escapeHtml(task.prompt_preview)}"</p>
