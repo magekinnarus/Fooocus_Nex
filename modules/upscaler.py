@@ -152,7 +152,6 @@ def perform_upscale(img, model_name=None, scale_override=None, retain_warm=False
     target_scale = scale_override if scale_override is not None else native_scale
     
     from modules.upscale_engine import NexUpscaleEngine
-    import backend.resources as resources
     import gc
     
     def upscale_fn(t):
