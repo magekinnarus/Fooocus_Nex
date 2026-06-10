@@ -158,7 +158,7 @@ if __name__ == "__main__":
                 print(f"[Cleanup] Failed to delete content of workspaces dir.")
 
     phase_start = time.perf_counter()
-    config.default_base_model_name, config.checkpoint_downloads = download_models(
+    config.default_base_model_name, config.checkpoint_downloads, _ = download_models(
         config.default_base_model_name, config.checkpoint_downloads,
         config.embeddings_downloads, config.lora_downloads, config.vae_downloads, config.upscale_downloads)
     _log_startup_phase('download_models', phase_start)

@@ -92,6 +92,8 @@ def _is_upscale_request(state) -> bool:
     route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
     if route_id != "":
         return route_id in {"upscale", "super_upscale"}
+    if not bool(getattr(state, "input_image_checkbox", False)):
+        return False
     if _normalize_text(getattr(state, "current_tab", "")).lower() != "uov":
         return False
     if getattr(state, "uov_input_image", None) is None:
@@ -106,6 +108,8 @@ def _has_outpaint_request(state) -> bool:
     route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
     if route_id != "":
         return route_id == "outpaint"
+    if not bool(getattr(state, "input_image_checkbox", False)):
+        return False
     mixed_cn_outpaint_workflow = _normalize_text(getattr(state, "current_tab", "")).lower() == "ip" and bool(
         getattr(state, "mixing_image_prompt_and_outpaint", False)
     )
@@ -124,6 +128,8 @@ def _has_inpaint_request(state) -> bool:
     route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
     if route_id != "":
         return route_id in {"inpaint", "flux_inpaint"}
+    if not bool(getattr(state, "input_image_checkbox", False)):
+        return False
     mixed_cn_inpaint_workflow = _normalize_text(getattr(state, "current_tab", "")).lower() == "ip" and bool(
         getattr(state, "mixing_image_prompt_and_inpaint", False)
     )

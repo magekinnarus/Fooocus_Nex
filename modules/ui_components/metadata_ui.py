@@ -178,20 +178,24 @@ def get_lora(key: str, fallback: str | None, source_dict: dict, results: list):
         results.append(1)
 
 def load_parameter_button_click(raw_metadata: dict | str, is_generating: bool):
-    inpaint_mode = modules.flags.inpaint_option_default
-
     loaded_parameter_dict = raw_metadata
     if isinstance(raw_metadata, str):
         loaded_parameter_dict = json.loads(raw_metadata)
     assert isinstance(loaded_parameter_dict, dict)
 
     results = []
-    base_model_name = loaded_parameter_dict.get('base_model', loaded_parameter_dict.get('Base Model', modules.config.default_base_model_name))
-    active_base_model_name = modules.config.coerce_active_base_model_selection(base_model_name)
     normalized_parameter_dict = dict(loaded_parameter_dict)
-    normalized_parameter_dict['base_model'] = active_base_model_name
-    normalized_parameter_dict['Base Model'] = active_base_model_name
-    resolution_labels = modules.config.get_aspect_ratio_labels_for_model(active_base_model_name)
+    base_model_name = loaded_parameter_dict.get('base_model', loaded_parameter_dict.get('Base Model'))
+    active_base_model_name = None
+
+    if isinstance(base_model_name, str):
+        active_base_model_name = modules.config.coerce_active_base_model_selection(base_model_name)
+        normalized_parameter_dict['base_model'] = active_base_model_name
+        normalized_parameter_dict['Base Model'] = active_base_model_name
+
+    resolution_labels = modules.config.get_aspect_ratio_labels_for_model(
+        active_base_model_name or modules.config.default_base_model_name
+    )
 
     get_image_number('image_number', 'Image Number', normalized_parameter_dict, results)
     get_str('prompt', 'Prompt', normalized_parameter_dict, results)
@@ -230,28 +234,42 @@ def parse_meta_from_preset(preset_content):
     assert isinstance(preset_content, dict)
     preset_prepared = {}
     items = preset_content
+    is_initial = len(items) == 0
+
+    def get_preset_key_fallback(key):
+        mapping = {
+            "Selected_model": "default_model",
+        }
+        attr_name = mapping.get(key, key)
+        return getattr(modules.config, attr_name, None)
 
     for settings_key, meta_key in modules.config.possible_preset_keys.items():
+        if not is_initial and settings_key not in items:
+            continue
+
         if settings_key == "default_loras":
-            loras = getattr(modules.config, settings_key)
+            loras = get_preset_key_fallback(settings_key)
             if settings_key in items:
                 loras = items[settings_key]
-            for index, lora in enumerate(loras[:modules.config.default_max_lora_number]):
+            max_loras = modules.config.default_max_lora_number if is_initial else len(loras)
+            for index, lora in enumerate(loras[:max_loras]):
                 preset_prepared[f'lora_combined_{index + 1}'] = ' : '.join(map(str, lora))
         elif settings_key == "default_aspect_ratio":
-            if settings_key in items and items[settings_key] is not None:
-                default_aspect_ratio = items[settings_key]
-                width, height = default_aspect_ratio.split('*')
-            else:
-                default_aspect_ratio = getattr(modules.config, settings_key)
-                width, height = default_aspect_ratio.split('횞')
-                height = height[:height.index(" ")]
-            preset_prepared[meta_key] = (width, height)
+            default_aspect_ratio = items.get(settings_key) or get_preset_key_fallback(settings_key)
+            if default_aspect_ratio is not None:
+                clean_str = default_aspect_ratio
+                for sep in ['*', 'x', '×', '횞']:
+                    clean_str = clean_str.replace(sep, ' ')
+                tokens = clean_str.strip().split()
+                if len(tokens) >= 2:
+                    width, height = tokens[0], tokens[1]
+                    preset_prepared[meta_key] = (width, height)
         else:
-            preset_prepared[meta_key] = items[settings_key] if settings_key in items and items[settings_key] is not None else getattr(modules.config, settings_key)
+            preset_prepared[meta_key] = items[settings_key] if settings_key in items and items[settings_key] is not None else get_preset_key_fallback(settings_key)
 
         if settings_key == "default_styles" or settings_key == "default_aspect_ratio":
-            preset_prepared[meta_key] = str(preset_prepared[meta_key])
+            if meta_key in preset_prepared:
+                preset_prepared[meta_key] = str(preset_prepared[meta_key])
 
     return preset_prepared
 

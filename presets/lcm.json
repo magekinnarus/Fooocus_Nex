@@ -1,29 +1,8 @@
 {
-    "default_model": "juggernautXL_v8Rundiffusion.safetensors",
     "default_loras": [
         [
             true,
             "sdxl_lcm_lora.safetensors",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
-            1.0
-        ],
-        [
-            true,
-            "None",
             1.0
         ]
     ],
@@ -31,17 +10,7 @@
     "default_sample_sharpness": 2.0,
     "default_sampler": "lcm",
     "default_scheduler": "lcm",
-    "default_prompt": "",
-    "default_prompt_negative": "",
-    "default_styles": [
-        "Fooocus Enhance",
-        "Fooocus Sharp"
-    ],
-    "default_aspect_ratio": "1152*896",
     "default_overwrite_step": 8,
-    "checkpoint_downloads": {
-        "juggernautXL_v8Rundiffusion.safetensors": "https://huggingface.co/lllyasviel/fav_models/resolve/main/fav/juggernautXL_v8Rundiffusion.safetensors"
-    },
     "embeddings_downloads": {},
     "lora_downloads": {
         "sdxl_lcm_lora.safetensors": "https://huggingface.co/lllyasviel/misc/resolve/main/sdxl_lcm_lora.safetensors"

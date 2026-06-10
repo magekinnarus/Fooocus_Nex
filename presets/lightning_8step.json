@@ -2,7 +2,7 @@
     "default_loras": [
         [
             true,
-            "sdxl_lightning_4step_lora.safetensors",
+            "sdxl_lightning_8step_lora.safetensors",
             1.0
         ]
     ],
@@ -10,9 +10,9 @@
     "default_sample_sharpness": 2.0,
     "default_sampler": "euler",
     "default_scheduler": "sgm_uniform",
-    "default_overwrite_step": 4,
+    "default_overwrite_step": 8,
     "embeddings_downloads": {},
     "lora_downloads": {
-        "sdxl_lightning_4step_lora.safetensors": "https://huggingface.co/mashb1t/misc/resolve/main/sdxl_lightning_4step_lora.safetensors"
+        "sdxl_lightning_8step_lora.safetensors": "https://huggingface.co/ByteDance/SDXL-Lightning/resolve/main/sdxl_lightning_8step_lora.safetensors"
     }
 }

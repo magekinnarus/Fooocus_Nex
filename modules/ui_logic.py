@@ -31,7 +31,7 @@ import modules.ui_components.inpaint_panel as inpaint_panel
 import modules.ui_components.outpaint_panel as outpaint_panel
 import args_manager
 import copy
-from modules.setup_utils import download_models
+from modules.setup_utils import download_preset_models
 from modules.model_manager import default_model_manager
 
 from modules.sdxl_styles import legal_style_names
@@ -492,6 +492,30 @@ def get_filtered_lora_choices_for_model(base_model_name):
     return ['None'] + choices
 
 
+def get_active_lora_choices_for_model(base_model_name, *current_lora_models):
+    choices = list(get_filtered_lora_choices_for_model(base_model_name))
+    try:
+        installed_choices_with_presets = set(
+            default_model_manager.list_installed_lora_dropdown_choices(
+                base_model_name=base_model_name,
+                include_preset_managed=True,
+            )
+        )
+    except Exception as exc:
+        print(f'Failed to build active LoRA choices for {base_model_name}: {exc}')
+        installed_choices_with_presets = set()
+
+    for current_lora_model in current_lora_models:
+        if (
+            isinstance(current_lora_model, str)
+            and current_lora_model not in {'', 'None'}
+            and current_lora_model in installed_choices_with_presets
+            and current_lora_model not in choices
+        ):
+            choices.append(current_lora_model)
+    return choices
+
+
 def get_filtered_vae_choices_for_model(base_model_name):
     if _base_model_requires_default_vae(base_model_name):
         return [modules.flags.default_vae]
@@ -590,7 +614,7 @@ def update_model_dependent_choices(base_model_name, current_aspect_ratio, curren
     vae_choices = get_filtered_vae_choices_for_model(base_model_name)
     vae_value = _resolve_vae_value_for_base_model(base_model_name, current_vae_model, vae_choices)
     clip_update = get_synced_clip_update_for_base_model(base_model_name, current_clip_model)
-    lora_choices = get_filtered_lora_choices_for_model(base_model_name)
+    lora_choices = get_active_lora_choices_for_model(base_model_name, *current_lora_models)
     lora_updates = []
     for current_lora_model in current_lora_models:
         value = current_lora_model if current_lora_model in lora_choices else 'None'
@@ -599,12 +623,7 @@ def update_model_dependent_choices(base_model_name, current_aspect_ratio, curren
 
 
 def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_model, current_clip_model, *current_lora_models):
-    modules.config.update_files()
-    try:
-        default_model_manager.refresh_catalog_index(force_refresh=True)
-        default_model_manager.refresh_installed_index()
-    except Exception as exc:
-        print(f'Failed to refresh model index: {exc}')
+    _refresh_model_file_indexes()
 
     base_model_choices, base_model_value = _get_base_model_dropdown_state(current_base_model)
 
@@ -625,6 +644,15 @@ def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_
     for lora_model_update in lora_model_updates:
         results += [gr.update(interactive=True), lora_model_update, gr.update()]
     return results
+
+
+def _refresh_model_file_indexes():
+    modules.config.update_files()
+    try:
+        default_model_manager.refresh_catalog_index(force_refresh=True)
+        default_model_manager.refresh_installed_index()
+    except Exception as exc:
+        print(f'Failed to refresh model index: {exc}')
 
 def _resolve_dropdown_choice(candidate_value, available_choices):
     if candidate_value is None:
@@ -711,7 +739,7 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
         folder_paths=modules.config.paths_clips,
         root_keys=('clip',),
     ) or 'None'
-    lora_choices = get_filtered_lora_choices_for_model(base_value)
+    lora_choices = get_active_lora_choices_for_model(base_value, *current_lora_models)
 
     drop_selector = ''
     drop_target = ''
@@ -746,7 +774,7 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
                     *current_lora_models,
                 )
                 vae_value = vae_update['value']
-                lora_choices = get_filtered_lora_choices_for_model(base_value)
+                lora_choices = get_active_lora_choices_for_model(base_value, *current_lora_models)
             else:
                 aspect_ratio_update = gr.update(choices=modules.config.get_aspect_ratio_labels_for_model(base_value) or modules.config.available_aspect_ratios_labels, value=current_aspect_ratio)
                 clip_update = gr.update(choices=clip_choices, value=clip_value)
@@ -813,9 +841,106 @@ def update_style_label(selections):
     
     return gr.update(label=label)
 
-def preset_selection_change(preset, is_generating):
+PRESET_SPEED_LORAS = {
+    'sdxl_lcm_lora.safetensors',
+    'sdxl_lightning_4step_lora.safetensors',
+    'sdxl_lightning_8step_lora.safetensors',
+}
+
+
+def _parse_lora_metadata(raw_value):
+    parts = str(raw_value).split(' : ')
+    enabled = True
+    name = 'None'
+    weight = 1.0
+
+    if len(parts) == 3:
+        enabled = parts[0] == 'True'
+        name = parts[1]
+        weight = float(parts[2])
+    elif len(parts) == 2:
+        name = parts[0]
+        weight = float(parts[1])
+    elif len(parts) == 1 and parts[0]:
+        name = parts[0]
+
+    return [enabled, name, weight]
+
+
+def _format_lora_metadata(lora_state):
+    enabled, name, weight = lora_state
+    return f'{enabled} : {name} : {weight}'
+
+
+def _merge_preset_lora_state(preset_prepared, lora_args):
+    if len(lora_args) < 3:
+        return
+
+    slot_count = min(len(lora_args) // 3, modules.config.default_max_lora_number)
+    current_loras = []
+    for slot_index in range(slot_count):
+        offset = slot_index * 3
+        current_loras.append([
+            bool(lora_args[offset]),
+            str(lora_args[offset + 1]),
+            float(lora_args[offset + 2]),
+        ])
+
+    merged_loras = [slot.copy() for slot in current_loras]
+    preset_loras = {}
+    for slot_index in range(slot_count):
+        key = f'lora_combined_{slot_index + 1}'
+        if key in preset_prepared:
+            preset_loras[slot_index] = _parse_lora_metadata(preset_prepared[key])
+
+    preset_has_speed_lora = any(
+        lora_state[1] in PRESET_SPEED_LORAS for lora_state in preset_loras.values()
+    )
+
+    if preset_has_speed_lora:
+        for slot_index in range(1, slot_count):
+            if merged_loras[slot_index][1] in PRESET_SPEED_LORAS:
+                merged_loras[slot_index] = [True, 'None', 1.0]
+
+    if 0 in preset_loras:
+        slot1_lora = merged_loras[0]
+        preset_slot1_lora = preset_loras[0]
+        if (
+            slot1_lora[1] not in {'', 'None'}
+            and slot1_lora[1] not in PRESET_SPEED_LORAS
+            and slot1_lora != preset_slot1_lora
+        ):
+            free_slot_index = next(
+                (
+                    index for index in range(1, slot_count)
+                    if merged_loras[index][1] == 'None' and index not in preset_loras
+                ),
+                None,
+            )
+            if free_slot_index is not None:
+                merged_loras[free_slot_index] = slot1_lora.copy()
+                print(
+                    f"[Preset] Shifted custom LoRA '{slot1_lora[1]}' "
+                    f"from slot 1 to slot {free_slot_index + 1}"
+                )
+            else:
+                print(
+                    f"[Preset] Slot 1 custom LoRA '{slot1_lora[1]}' overwritten "
+                    f"(no free slots 2-{slot_count})"
+                )
+
+    for slot_index, lora_state in preset_loras.items():
+        merged_loras[slot_index] = lora_state.copy()
+
+    for slot_index, lora_state in enumerate(merged_loras):
+        preset_prepared[f'lora_combined_{slot_index + 1}'] = _format_lora_metadata(lora_state)
+
+
+def preset_selection_change(preset, is_generating, *args):
     preset_content = modules.config.try_get_preset_content(preset) if preset != 'initial' else {}
-    preset_prepared = modules.meta_parser.parse_meta_from_preset(preset_content)
+    preset_prepared = metadata_ui.parse_meta_from_preset(preset_content)
+    if preset != 'initial':
+        _merge_preset_lora_state(preset_prepared, args)
 
     default_model = preset_prepared.get('base_model')
     previous_default_models = preset_prepared.get('previous_default_models', [])
@@ -825,14 +950,27 @@ def preset_selection_change(preset, is_generating):
     vae_downloads = preset_prepared.get('vae_downloads', {})
     upscale_downloads = preset_prepared.get('upscale_downloads', {})
 
-    preset_prepared['base_model'], preset_prepared['checkpoint_downloads'] = download_models(
+    downloaded_base_model, downloaded_checkpoint_downloads, downloaded_new_assets = download_preset_models(
         default_model, checkpoint_downloads, embeddings_downloads, lora_downloads,
         vae_downloads, upscale_downloads)
+
+    if downloaded_new_assets:
+        _refresh_model_file_indexes()
+
+    if downloaded_base_model is not None:
+        preset_prepared['base_model'] = downloaded_base_model
+    else:
+        preset_prepared.pop('base_model', None)
+
+    if downloaded_checkpoint_downloads:
+        preset_prepared['checkpoint_downloads'] = downloaded_checkpoint_downloads
+    else:
+        preset_prepared.pop('checkpoint_downloads', None)
 
     if 'prompt' in preset_prepared and preset_prepared.get('prompt') == '':
         del preset_prepared['prompt']
 
-    return metadata_ui.load_parameter_button_click(json.dumps(preset_prepared), is_generating, modules.flags.inpaint_option_default)
+    return metadata_ui.load_parameter_button_click(json.dumps(preset_prepared), is_generating)
 
 def inpaint_engine_state_change(inpaint_engine_version):
     inpaint_engine_version = modules.flags.normalize_inpaint_engine_version(
@@ -1007,7 +1145,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     )
 
     if not args_manager.args.disable_preset_selection:
-        preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
+        preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating] + lora_ctrls, outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
             .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
             .then(lambda: None, js='()=>{refresh_style_localization();}')
