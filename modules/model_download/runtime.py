@@ -107,6 +107,48 @@ def _resolve_civitai_direct_url(url: str, headers: Iterable[tuple[str, str]] = (
     return _do_resolve(url)
 
 
+def _is_huggingface_download_url(url: str) -> bool:
+    parsed = urlparse(str(url or '').strip())
+    host = (parsed.netloc or '').lower()
+    mirror_host = urlparse(os.environ.get("HF_MIRROR", "")).netloc.lower()
+    return host.endswith('huggingface.co') or (mirror_host and host == mirror_host)
+
+
+def _resolve_hf_direct_url(url: str, headers: Iterable[tuple[str, str]] = ()) -> str:
+    # Use headers for resolution to ensure UA is set
+    request_headers = {key: value for key, value in headers}
+    if 'User-Agent' not in request_headers:
+        request_headers['User-Agent'] = _CIVITAI_ARIA2_USER_AGENT
+
+    try:
+        if requests is not None:
+            # Try HEAD first as it's the most efficient
+            try:
+                response = requests.head(url, headers=request_headers, allow_redirects=True, timeout=15)
+                response.raise_for_status()
+                return response.url
+            except Exception as head_exc:
+                status_code = getattr(getattr(head_exc, 'response', None), 'status_code', None)
+                if status_code in (403, 405) or "403" in str(head_exc) or "405" in str(head_exc):
+                    with requests.get(url, headers=request_headers, allow_redirects=True, timeout=15, stream=True) as response:
+                        response.raise_for_status()
+                        return response.url
+                raise head_exc
+
+        import urllib.request
+        request = urllib.request.Request(url, headers=request_headers, method='HEAD')
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.geturl()
+        except Exception:
+            request.method = 'GET'
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.geturl()
+    except Exception as e:
+        print(f"Hugging Face redirect resolution failed for {url}: {e}. Downloading directly.")
+        return url
+
+
 def _build_generic_aria2_command(
     *,
     url: str,
@@ -167,6 +209,14 @@ def _download_with_aria2(
             direct_url=direct_url,
             model_dir=model_dir,
             file_name=file_name,
+        )
+    elif _is_huggingface_download_url(url):
+        direct_url = _resolve_hf_direct_url(url, headers=headers)
+        command = _build_generic_aria2_command(
+            url=direct_url,
+            model_dir=model_dir,
+            file_name=file_name,
+            headers=headers,
         )
     else:
         command = _build_generic_aria2_command(
