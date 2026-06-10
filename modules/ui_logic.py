@@ -203,7 +203,8 @@ def generate_clicked(task: worker.AsyncTask, image_number, disable_preview):
 
     with resources.interrupt_processing_mutex:
         resources.interrupt_processing = False
-    # outputs=[progress_html, progress_window, gallery, preview_column, gallery_column]
+    # Legacy direct Gradio generation path retained for compatibility reference.
+    # The queued runtime-surface UI no longer uses this function for live preview transport.
 
     if not task.is_valid:
         message = getattr(task, 'validation_message', 'The current request is not ready yet.')
@@ -1122,16 +1123,12 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     )
 
     generate_button.click(
-        fn=lambda session_gallery, last_preview, active_id: (
-            session_gallery,
-            last_preview,
-            active_id,
+        fn=lambda: (
             gr.skip(),
             gr.update(visible=True),
             gr.update(visible=False)
         ),
-        inputs=[session_gallery_images, last_preview_image, active_task_id],
-        outputs=[session_gallery_images, last_preview_image, active_task_id, gallery, preview_column, gallery_column],
+        outputs=[gallery, preview_column, gallery_column],
         js="""
         () => {
             ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
@@ -1148,14 +1145,6 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         .then(fn=get_tasks, inputs=ctrls, outputs=current_tasks_state) \
         .then(fn=enqueue_tasks, inputs=[current_tasks_state, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=[currentTask]) \
         .then(fn=update_history_link, outputs=history_link)
-
-    timer.tick(
-        fn=poll_preview_surface,
-        inputs=[last_preview_image, active_task_id],
-        outputs=[progress_window, last_preview_image, active_task_id],
-        show_progress='hidden',
-        queue=False
-    )
 
     def handle_reconnect_click(task):
         worker.request_interrupt('stop', task)
@@ -1229,26 +1218,6 @@ def enqueue_tasks(tasks, use_img, tab, rbg, robj):
     if worker.get_active_task() is None:
         runtime_surface_state.set_progress_state(visible=True, number=1, text='Waiting for task to start ...')
     return first_task
-
-
-_last_rendered_preview_revision = -1
-
-
-def poll_preview_surface(last_preview, active_id):
-    global _last_rendered_preview_revision
-    runtime_surface_state.drain_worker_state()
-    preview_value, preview_revision = runtime_surface_state.get_preview_state()
-
-    preview_update = gr.skip()
-    new_preview = last_preview
-    if preview_revision != _last_rendered_preview_revision:
-        _last_rendered_preview_revision = preview_revision
-        new_preview = preview_value
-        preview_update = gr.update(visible=True, value=preview_value)
-
-    active_task = worker.get_active_task()
-    new_active_id = getattr(active_task, 'task_id', None)
-    return preview_update, new_preview, new_active_id
 
 
 def _append_new_gallery_items(task, gallery_items, product):
@@ -1363,6 +1332,8 @@ _last_rendered_pending_queue_html = None
 _last_rendered_queue_len = -1
 
 
+# Legacy Gradio queue/panel polling remainder kept only as an explicit quarantine.
+# W14 removed the active preview transport bridge from the wired UI path.
 def poll_active_task_status(session_gallery, last_preview, active_id, disable_preview_val):
     global _last_seen_active_task
     global _last_rendered_running_task_html, _last_rendered_running_progress_value

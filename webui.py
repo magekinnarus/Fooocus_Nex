@@ -60,9 +60,6 @@ shared.gradio_root = gr.Blocks(title=title, head=javascript_html() + css_html())
 with shared.gradio_root:
     currentTask = gr.State(worker.AsyncTask(args=[]))
     current_tasks_state = gr.State([])
-    session_gallery_images = gr.State([])
-    last_preview_image = gr.State(None)
-    active_task_id = gr.State(None)
     inpaint_engine_state = gr.State('empty')
     outpaint_engine_state = gr.State('empty')
     remove_mask_state = gr.State(None)
@@ -72,9 +69,7 @@ with shared.gradio_root:
                 with gr.Tab(label='Preview', id='preview_workspace', elem_id='preview_workspace'):
                     with gr.Row():
                         with gr.Column(scale=5, min_width=420, visible=True) as preview_column:
-                            progress_window = gr.Image(label='Live Preview', show_label=True, interactive=False, visible=True,
-                                                       height=768, type='numpy',
-                                                       elem_classes=['main_view', 'preview_panel'])
+                            gr.HTML('<div id="nex-runtime-preview-panel" class="nex-runtime-preview-panel main_view"></div>')
                         with gr.Column(scale=6, min_width=500, visible=False) as gallery_column:
                             gallery = gr.Gallery(label='Gallery', show_label=True, object_fit='contain', visible=True, height=768,
                                                  elem_classes=['resizable_area', 'main_view', 'final_gallery', 'image_gallery'],
@@ -516,7 +511,6 @@ with shared.gradio_root:
                 overwrite_upscale_strength = debug_panel_result['overwrite_upscale_strength']
                 disable_preview = debug_panel_result['disable_preview']
                 preview_update_interval = debug_panel_result['preview_update_interval']
-                preview_max_side = debug_panel_result['preview_max_side']
                 disable_intermediate_results = debug_panel_result['disable_intermediate_results']
                 disable_seed_increment = debug_panel_result['disable_seed_increment']
                 if not args_manager.args.disable_metadata:
@@ -588,7 +582,6 @@ with shared.gradio_root:
             'inpaint_bb_image': inpaint_bb_image_path,
             'disable_preview': disable_preview,
             'preview_update_interval': preview_update_interval,
-            'preview_max_side': preview_max_side,
             'disable_intermediate_results': disable_intermediate_results,
             'disable_seed_increment': disable_seed_increment,
             'adm_scaler_positive': adm_scaler_positive,
@@ -668,7 +661,6 @@ with shared.gradio_root:
             'stop_button': stop_button,
             'skip_button': skip_button,
             'progress_html': progress_html,
-            'progress_window': progress_window,
             'preview_column': preview_column,
             'gallery_column': gallery_column,
             'inpaint_toggle_toolbar': inpaint_toggle_toolbar,
@@ -729,16 +721,10 @@ with shared.gradio_root:
             'remove_mask_state': remove_mask_state,
             'queue_tab': queue_tab,
             'current_tasks_state': current_tasks_state,
-            'session_gallery_images': session_gallery_images,
-            'last_preview_image': last_preview_image,
-            'active_task_id': active_task_id,
         }
 
         if not args_manager.args.disable_preset_selection:
             ui_elements['preset_selection'] = preset_selection
-
-        timer = gr.Timer(value=0.5, active=True)
-        ui_elements['timer'] = timer
 
         ui_logic.register_all_events(ctrls_dict, currentTask, ui_elements)
 

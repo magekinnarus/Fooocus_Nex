@@ -1,9 +1,7 @@
-import os
 import time
 import logging
 import torch
 import numpy as np
-from PIL import Image
 import modules.core as core
 import modules.flags as flags
 import modules.config as config
@@ -24,36 +22,6 @@ def _resolve_preview_update_interval(task_state) -> int:
         return max(1, int(getattr(task_state, 'preview_update_interval', 1) or 1))
     except Exception:
         return 1
-
-
-def _resolve_preview_max_side(task_state) -> int:
-    try:
-        return max(0, int(getattr(task_state, 'preview_max_side', 0) or 0))
-    except Exception:
-        return 0
-
-
-def _downscale_preview_transport_image(preview_image, *, max_side: int):
-    if not isinstance(preview_image, np.ndarray) or max_side <= 0:
-        return preview_image
-    if preview_image.ndim < 2:
-        return preview_image
-
-    height, width = preview_image.shape[:2]
-    longest_side = max(int(height), int(width))
-    if longest_side <= 0 or longest_side <= int(max_side):
-        return preview_image
-
-    scale = float(max_side) / float(longest_side)
-    target_width = max(1, int(round(width * scale)))
-    target_height = max(1, int(round(height * scale)))
-    resampling = getattr(Image, 'Resampling', Image).LANCZOS
-    try:
-        return np.asarray(
-            Image.fromarray(preview_image).resize((target_width, target_height), resample=resampling)
-        )
-    except Exception:
-        return preview_image
 
 
 def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None, disable_pbar=True):
@@ -125,11 +93,6 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
                 preview_image = inpaint.stitch(task_state.inpaint_context, preview_image)
             elif not isinstance(preview_image, np.ndarray):
                 preview_image = None
-
-            preview_image = _downscale_preview_transport_image(
-                preview_image,
-                max_side=_resolve_preview_max_side(task_state),
-            )
 
         task_state.yields.append(['preview', (progress_val, status_text, preview_image)])
 

@@ -12,6 +12,8 @@ function gradioApp() {
 
 var uiUpdateCallbacks = [];
 var uiAfterUpdateCallbacks = [];
+var aspectRatioLabelObserver = null;
+var aspectRatioLabelTarget = null;
 
 function onUiUpdate(callback) {
     uiUpdateCallbacks.push(callback);
@@ -101,6 +103,26 @@ function refresh_style_localization() {
     processNode(stylesNode);
 }
 
+function get_selected_aspect_ratio_value(fallbackValue) {
+    const root = gradioApp();
+    const checked = root.querySelector('#aspect_ratios_selection input[type="radio"]:checked') ||
+        root.querySelector('.aspect_ratios input[type="radio"]:checked');
+    if (checked && checked.value) {
+        return htmlDecode(String(checked.value));
+    }
+
+    const checkedLabel = checked ? checked.closest('label') : null;
+    const checkedText = checkedLabel ? (checkedLabel.querySelector('span')?.textContent || checkedLabel.textContent) : '';
+    if (checkedText && String(checkedText).trim()) {
+        return htmlDecode(String(checkedText).trim());
+    }
+
+    if (fallbackValue === undefined || fallbackValue === null) {
+        return '';
+    }
+    return htmlDecode(String(fallbackValue));
+}
+
 function refresh_aspect_ratios_label(value) {
     const root = gradioApp();
     const label = root.querySelector('#aspect_ratios_accordion summary .label-wrap span') ||
@@ -116,7 +138,44 @@ function refresh_aspect_ratios_label(value) {
     if (typeof translation == "undefined") {
         translation = "Aspect Ratios";
     }
-    label.textContent = translation + " " + htmlDecode(value);
+    const selectedValue = get_selected_aspect_ratio_value(value);
+    label.textContent = selectedValue ? `${translation} ${selectedValue}` : translation;
+}
+
+function bind_aspect_ratio_label_sync() {
+    const root = gradioApp();
+    const selectionRoot = root.querySelector('#aspect_ratios_selection') || root.querySelector('.aspect_ratios');
+    if (!selectionRoot) {
+        return;
+    }
+
+    if (aspectRatioLabelTarget !== selectionRoot) {
+        if (aspectRatioLabelObserver) {
+            aspectRatioLabelObserver.disconnect();
+        }
+
+        aspectRatioLabelTarget = selectionRoot;
+        aspectRatioLabelObserver = new MutationObserver(function () {
+            window.requestAnimationFrame(function () {
+                refresh_aspect_ratios_label();
+            });
+        });
+        aspectRatioLabelObserver.observe(selectionRoot, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['checked', 'value', 'aria-checked']
+        });
+        selectionRoot.addEventListener('change', function () {
+            window.requestAnimationFrame(function () {
+                refresh_aspect_ratios_label();
+            });
+        });
+    }
+
+    window.requestAnimationFrame(function () {
+        refresh_aspect_ratios_label();
+    });
 }
 
 function localizeWholePage() {
@@ -140,6 +199,8 @@ document.addEventListener("DOMContentLoaded", function () {
         localizeWholePage();
     }
 
+    bind_aspect_ratio_label_sync();
+
     // Connection recovery monitor
     let lastStatus = true;
     setInterval(() => {
@@ -149,4 +210,8 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         lastStatus = status;
     }, 5000);
+});
+
+onUiUpdate(function () {
+    bind_aspect_ratio_label_sync();
 });

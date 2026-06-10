@@ -57,7 +57,7 @@ rg -n "sdxl_runtime_owner|process_diffusion|runtime_family|execution_mode|gguf_s
 Compile sanity on the authoritative runtime surfaces:
 
 ```powershell
-.\venv\Scripts\python.exe -m py_compile backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py
+.\venv\Scripts\python.exe -m py_compile backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py modules\runtime_surface_state.py modules\runtime_surface_api.py modules\ui_logic.py webui.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tests\test_runtime_surface_api.py
 ```
 
 ## Regression Matrix
@@ -88,10 +88,10 @@ Covers:
 - retained GGUF dispatch seam classification
 - explicit compatibility-lane expectations
 
-### 3. Runtime-Centered Memory / Hardware / Flux Fill Sanity
+### 3. Runtime-Centered Memory / Hardware / Flux Fill / Runtime-Surface Sanity
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_memory_governor.py tests/test_w11_policy_simplification.py tests/test_async_worker_process_transition.py tests/test_flux_fill_integration.py -q
+.\venv\Scripts\python.exe -m pytest tests/test_memory_governor.py tests/test_w11_policy_simplification.py tests/test_async_worker_process_transition.py tests/test_flux_fill_integration.py tests/test_runtime_surface_api.py -q
 ```
 
 Covers:
@@ -99,6 +99,7 @@ Covers:
 - runtime-native memory policy
 - hardware-tier mapping
 - Flux Fill route/session sanity
+- runtime-surface preview and completed-image API ownership
 - transition isolation behavior
 
 ### 4. Tracked Route / Stage Smoke

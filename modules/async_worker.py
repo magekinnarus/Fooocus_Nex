@@ -410,6 +410,10 @@ def handler(async_task: AsyncTask):
     ):
         route = build_generation_route(task_state)
 
+    task_state.runtime_route_id = route.route_id
+    task_state.runtime_route_family = route.family
+    task_state.runtime_route_display_name = route.display_name
+
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
 
     # Pre-resolve and pre-populate expected additional LoRAs so preflight/postflight keys match

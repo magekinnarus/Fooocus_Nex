@@ -96,6 +96,9 @@ class TaskState:
     cn_tasks_by_channel: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
 
     # --- Runtime State ---
+    runtime_route_id: str = ""
+    runtime_route_family: str = ""
+    runtime_route_display_name: str = ""
     yields: List[Any] = field(default_factory=list)
     results: List[Any] = field(default_factory=list)
     last_stop: Union[bool, str] = False

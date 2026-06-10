@@ -87,16 +87,7 @@ def build_debug_tab():
         maximum=20,
         step=1,
         value=1,
-        info='Keeps progress text live every step, but only sends preview images every N steps.'
-    )
-
-    results['preview_max_side'] = gr.Slider(
-        label='Preview Image Max Side (0 = Full Size)',
-        minimum=0,
-        maximum=1024,
-        step=64,
-        value=0,
-        info='Lower values reduce preview bandwidth over Colab tunnels.'
+        info='Keeps progress text live every step, but only sends preview images every N steps. Preview image size now auto-fits the panel.'
     )
     
     results['disable_intermediate_results'] = gr.Checkbox(

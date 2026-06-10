@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from modules import runtime_surface_state
 
@@ -20,6 +20,39 @@ async def get_runtime_surface_completed_image(task_id: str, image_index: int):
     if image_path is None:
         raise HTTPException(status_code=404, detail="Completed image not found")
     return FileResponse(image_path)
+
+
+@runtime_surface_router.get("/runtime_surface_api/preview_image")
+async def get_runtime_surface_preview_image(
+    revision: int | None = Query(default=None),
+    max_width: int | None = Query(default=None),
+    max_height: int | None = Query(default=None),
+):
+    runtime_surface_state.drain_worker_state()
+    _preview_value, preview_revision = runtime_surface_state.get_preview_state()
+    preview_headers = {"Cache-Control": "no-store, max-age=0"}
+    requested_max_width = max(0, int(max_width or 0))
+    requested_max_height = max(0, int(max_height or 0))
+
+    if requested_max_width <= 0 and requested_max_height <= 0:
+        preview_path = runtime_surface_state.get_preview_image_path()
+        if preview_path is not None:
+            preview_headers["X-Nex-Preview-Revision"] = str(int(preview_revision))
+            return FileResponse(preview_path, headers=preview_headers)
+
+    preview_bytes, media_type, encoded_revision = runtime_surface_state.get_preview_image_bytes(
+        max_width=requested_max_width,
+        max_height=requested_max_height,
+    )
+    if preview_bytes is None or media_type is None:
+        preview_path = runtime_surface_state.get_preview_image_path()
+        if preview_path is None:
+            raise HTTPException(status_code=404, detail="Preview image not found")
+        preview_headers["X-Nex-Preview-Revision"] = str(int(preview_revision))
+        return FileResponse(preview_path, headers=preview_headers)
+
+    preview_headers["X-Nex-Preview-Revision"] = str(int(encoded_revision))
+    return Response(content=preview_bytes, media_type=media_type, headers=preview_headers)
 
 
 @runtime_surface_router.post("/runtime_surface_api/action")
