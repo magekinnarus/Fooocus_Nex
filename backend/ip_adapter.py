@@ -2,6 +2,8 @@ import math
 import os
 import shutil
 import warnings
+import hashlib
+from collections import OrderedDict
 
 import numpy as np
 import safetensors.torch as sf
@@ -18,6 +20,22 @@ from ldm_patched.modules.ops import manual_cast
 from backend.ops import use_patched_ops
 from backend.pulid_encoders import IDEncoder
 from modules.core import numpy_to_pytorch
+
+_CONTEXTUAL_PAYLOAD_CACHE: OrderedDict[tuple, tuple[list[torch.Tensor], list[torch.Tensor]]] = OrderedDict()
+_CONTEXTUAL_PAYLOAD_CACHE_LIMIT = 8
+
+
+def _clone_contextual_payload(payload):
+    if payload is None:
+        return None
+    ip_conds, ip_unconds = payload
+    cloned_conds = [t.clone() if isinstance(t, torch.Tensor) else t for t in ip_conds]
+    cloned_unconds = [t.clone() if isinstance(t, torch.Tensor) else t for t in ip_unconds]
+    return (cloned_conds, cloned_unconds)
+
+
+def clear_contextual_payload_cache() -> None:
+    _CONTEXTUAL_PAYLOAD_CACHE.clear()
 
 
 SD_V12_CHANNELS = [320] * 4 + [640] * 4 + [1280] * 4 + [1280] * 6 + [640] * 6 + [320] * 6 + [1280] * 2
@@ -426,6 +444,13 @@ def _ensure_clip_vision(path):
     return clip_vision_models[path]
 
 
+def _select_clip_vision_model(path):
+    clip_model = _ensure_clip_vision(path)
+    if clip_model is not None:
+        return clip_model
+    return next(iter(clip_vision_models.values()), None)
+
+
 def _ensure_ip_negative(path):
     if not isinstance(path, str):
         return None
@@ -612,49 +637,94 @@ def preprocess(img, model_path, clip_vision_path=None, ip_negative_path=None, in
     if entry is None:
         return None
 
+    cn_type = entry["kind"]
+    cn_img_hash = hashlib.sha256(img.tobytes()).hexdigest()
+    insightface_model_names_tuple = tuple(insightface_model_names) if insightface_model_names is not None else None
+
+    cache_key = (cn_img_hash, cn_type, model_path, clip_vision_path, ip_negative_path, insightface_model_names_tuple)
+
+    try:
+        from backend.sdxl_unified_runtime import _PREPROCESSOR_METRICS
+    except ImportError:
+        _PREPROCESSOR_METRICS = None
+
+    cached_val = _CONTEXTUAL_PAYLOAD_CACHE.get(cache_key)
+    if cached_val is not None:
+        _CONTEXTUAL_PAYLOAD_CACHE.move_to_end(cache_key)
+        if _PREPROCESSOR_METRICS is not None:
+            _PREPROCESSOR_METRICS["contextual_hits"] += 1.0
+        return _clone_contextual_payload(cached_val)
+
+    if _PREPROCESSOR_METRICS is not None:
+        _PREPROCESSOR_METRICS["contextual_misses"] += 1.0
+
     if entry["kind"] == "faceid_v2":
-        return preprocess_faceid(
+        res = preprocess_faceid(
             img,
             model_path,
             clip_vision_path=clip_vision_path,
             insightface_model_names=insightface_model_names,
         )
-    if entry["kind"] == "pulid":
+    elif entry["kind"] == "pulid":
         raise NotImplementedError("PuLID preprocessing is not wired yet in the backend contextual path.")
-    return preprocess_ip_adapter(img, model_path, ip_negative_path=ip_negative_path)
+    else:
+        res = preprocess_ip_adapter(
+            img,
+            model_path,
+            clip_vision_path=clip_vision_path,
+            ip_negative_path=ip_negative_path,
+        )
+
+    if res is not None:
+        _CONTEXTUAL_PAYLOAD_CACHE[cache_key] = _clone_contextual_payload(res)
+        _CONTEXTUAL_PAYLOAD_CACHE.move_to_end(cache_key)
+        while len(_CONTEXTUAL_PAYLOAD_CACHE) > _CONTEXTUAL_PAYLOAD_CACHE_LIMIT:
+            _CONTEXTUAL_PAYLOAD_CACHE.popitem(last=False)
+
+    return res
 
 
-def preprocess_ip_adapter(img, model_path, ip_negative_path=None):
+def preprocess_ip_adapter(img, model_path, clip_vision_path=None, ip_negative_path=None):
     entry = contextual_models[model_path]
-    clip_model = next(iter(clip_vision_models.values()), None)
+    clip_model = _select_clip_vision_model(clip_vision_path)
     if clip_model is None:
         raise RuntimeError("CLIP vision must be loaded before preprocessing IP-Adapter inputs.")
 
-    outputs = clip_model.encode_image(numpy_to_pytorch(img))
-    adapter_model = entry["model"]
-    image_proj_model = entry["image_proj_model"]
-    ip_layers = entry["ip_layers"]
+    try:
+        clip_patcher = getattr(clip_model, 'patcher', None)
+        if clip_patcher is not None:
+            runtime_resources.load_model_gpu(clip_patcher)
+        else:
+            try:
+                clip_model.model.to(runtime_resources.get_torch_device())
+            except Exception:
+                pass
 
-    cond = outputs.penultimate_hidden_states if adapter_model.plus else outputs.image_embeds
-    cond = cond.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+        outputs = clip_model.encode_image(numpy_to_pytorch(img))
+        adapter_model = entry["model"]
+        image_proj_model = entry["image_proj_model"]
+        ip_layers = entry["ip_layers"]
 
-    runtime_resources.load_model_gpu(image_proj_model)
-    cond = image_proj_model.model(cond).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+        cond = outputs.penultimate_hidden_states if adapter_model.plus else outputs.image_embeds
+        cond = cond.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    runtime_resources.load_model_gpu(ip_layers)
-    kv_modules = _sorted_kv_modules(ip_layers.model)
+        runtime_resources.load_model_gpu(image_proj_model)
+        cond = image_proj_model.model(cond).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    ip_unconds = entry["ip_unconds"]
-    if ip_unconds is None:
+        runtime_resources.load_model_gpu(ip_layers)
+        kv_modules = _sorted_kv_modules(ip_layers.model)
+
         negative = _ensure_ip_negative(ip_negative_path)
         if negative is None:
             raise RuntimeError("IP-Adapter negative embedding is required for contextual preprocessing.")
         negative = negative.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
         ip_unconds = [module(negative).cpu() for module in kv_modules]
-        entry["ip_unconds"] = ip_unconds
 
-    ip_conds = [module(cond).cpu() for module in kv_modules]
-    return ip_conds, ip_unconds
+        ip_conds = [module(cond).cpu() for module in kv_modules]
+        return ip_conds, ip_unconds
+    finally:
+        _offload_contextual_entry(entry)
+        _offload_clip_vision_model(clip_model)
 
 
 def _detect_faces(face_app, bgr_image):
@@ -694,48 +764,61 @@ def preprocess_faceid(img, model_path, clip_vision_path=None, insightface_model_
     cond_embeds = []
     uncond_embeds = []
 
-    runtime_resources.load_model_gpu(image_proj_model)
+    try:
+        clip_patcher = getattr(clip_model, 'patcher', None)
+        if clip_patcher is not None:
+            runtime_resources.load_model_gpu(clip_patcher)
+        else:
+            try:
+                clip_model.model.to(runtime_resources.get_torch_device())
+            except Exception:
+                pass
 
-    for face in sorted(faces, key=lambda current: (current.bbox[2] - current.bbox[0]) * (current.bbox[3] - current.bbox[1]), reverse=True):
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="`estimate` is deprecated since version 0.26",
-                category=FutureWarning,
+        runtime_resources.load_model_gpu(image_proj_model)
+
+        for face in sorted(faces, key=lambda current: (current.bbox[2] - current.bbox[0]) * (current.bbox[3] - current.bbox[1]), reverse=True):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="`estimate` is deprecated since version 0.26",
+                    category=FutureWarning,
+                )
+                aligned = face_align.norm_crop(bgr_image, landmark=face.kps, image_size=256)
+            aligned_rgb = np.ascontiguousarray(aligned[:, :, ::-1].copy())
+            outputs = clip_model.encode_image(numpy_to_pytorch(aligned_rgb))
+            clip_embeds = outputs.penultimate_hidden_states.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+            cond_id = torch.from_numpy(face.normed_embedding).unsqueeze(0).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+            zero_id = torch.zeros_like(cond_id)
+            zero_clip = torch.zeros_like(clip_embeds)
+
+            cond_embeds.append(
+                image_proj_model.model(
+                    cond_id,
+                    clip_embeds,
+                    scale=adapter_model.faceid_scale,
+                    shortcut=adapter_model.faceid_shortcut,
+                )
             )
-            aligned = face_align.norm_crop(bgr_image, landmark=face.kps, image_size=256)
-        aligned_rgb = np.ascontiguousarray(aligned[:, :, ::-1].copy())
-        outputs = clip_model.encode_image(numpy_to_pytorch(aligned_rgb))
-        clip_embeds = outputs.penultimate_hidden_states.to(device=adapter_model.load_device, dtype=adapter_model.dtype)
-        cond_id = torch.from_numpy(face.normed_embedding).unsqueeze(0).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
-        zero_id = torch.zeros_like(cond_id)
-        zero_clip = torch.zeros_like(clip_embeds)
-
-        cond_embeds.append(
-            image_proj_model.model(
-                cond_id,
-                clip_embeds,
-                scale=adapter_model.faceid_scale,
-                shortcut=adapter_model.faceid_shortcut,
+            uncond_embeds.append(
+                image_proj_model.model(
+                    zero_id,
+                    zero_clip,
+                    scale=adapter_model.faceid_scale,
+                    shortcut=adapter_model.faceid_shortcut,
+                )
             )
-        )
-        uncond_embeds.append(
-            image_proj_model.model(
-                zero_id,
-                zero_clip,
-                scale=adapter_model.faceid_scale,
-                shortcut=adapter_model.faceid_shortcut,
-            )
-        )
 
-    cond = torch.mean(torch.cat(cond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
-    uncond = torch.mean(torch.cat(uncond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+        cond = torch.mean(torch.cat(cond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
+        uncond = torch.mean(torch.cat(uncond_embeds, dim=0), dim=0, keepdim=True).to(device=adapter_model.load_device, dtype=adapter_model.dtype)
 
-    runtime_resources.load_model_gpu(ip_layers)
-    kv_modules = _sorted_kv_modules(ip_layers.model)
-    ip_conds = [module(cond).cpu() for module in kv_modules]
-    ip_unconds = [module(uncond).cpu() for module in kv_modules]
-    return ip_conds, ip_unconds
+        runtime_resources.load_model_gpu(ip_layers)
+        kv_modules = _sorted_kv_modules(ip_layers.model)
+        ip_conds = [module(cond).cpu() for module in kv_modules]
+        ip_unconds = [module(uncond).cpu() for module in kv_modules]
+        return ip_conds, ip_unconds
+    finally:
+        _offload_contextual_entry(entry)
+        _offload_clip_vision_model(clip_model)
 
 
 def patch_model(model, tasks):

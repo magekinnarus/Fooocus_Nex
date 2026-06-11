@@ -52,29 +52,19 @@ def chained_hasattr(obj, chained_attr):
             return False
     return True
 
-# A backward and forward compatible way to get `torch.compiler.disable`.
 def get_torch_compiler_disable_decorator():
     def dummy_decorator(*args, **kwargs):
         def noop(x):
             return x
         return noop
 
-    from packaging import version
-
-    if not chained_hasattr(torch, "compiler.disable"):
-        logging.info("ComfyUI-GGUF: Torch too old for torch.compile - bypassing")
-        return dummy_decorator # torch too old
-    elif version.parse(torch.__version__) >= version.parse("2.8"):
-        logging.info("ComfyUI-GGUF: Allowing full torch compile")
-        return dummy_decorator # torch compile works
-    if chained_hasattr(torch, "_dynamo.config.nontraceable_tensor_subclasses"):
-        logging.info("ComfyUI-GGUF: Allowing full torch compile (nightly)")
-        return dummy_decorator # torch compile works, nightly before 2.8 release
-    else:
-        logging.info("ComfyUI-GGUF: Partial torch compile only, consider updating pytorch")
-        if hasattr(torch, "compiler") and hasattr(torch.compiler, "disable"):
-            return torch.compiler.disable
-        return dummy_decorator
+    # Startup on Colab can stall for tens of seconds if we touch
+    # `torch.compiler` or `_dynamo` during module import, because Python then
+    # pulls in the full compile subsystem from slow VM storage. Fooocus_Nex does
+    # not rely on torch.compile for GGUF execution, so bypass the probe entirely
+    # and keep the decorator as a no-op.
+    logging.info("ComfyUI-GGUF: Skipping torch.compile startup probe")
+    return dummy_decorator
 
 torch_compiler_disable = get_torch_compiler_disable_decorator()
 

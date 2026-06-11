@@ -1,4 +1,6 @@
 import numpy as np
+import hashlib
+from collections import OrderedDict
 import modules.config as config
 import modules.core as core
 import modules.flags as flags
@@ -12,11 +14,23 @@ from modules.util import (HWC3, resize_image, get_image_shape_ceil, set_image_sh
 from modules.upscaler import perform_upscale
 import modules.mask_processing as mask_proc
 
+_STRUCTURAL_PREPROCESS_CACHE: OrderedDict[tuple, np.ndarray] = OrderedDict()
+_STRUCTURAL_PREPROCESS_CACHE_LIMIT = 8
+
 
 class EarlyReturnException(BaseException):
     def __init__(self, payload=None):
         super().__init__()
         self.payload = payload
+
+
+def _reset_preprocessor_metrics_once(task_state):
+    if getattr(task_state, "_nex_preprocessor_metrics_started", False):
+        return
+    from backend.sdxl_unified_runtime import clear_preprocessor_metrics
+
+    clear_preprocessor_metrics()
+    setattr(task_state, "_nex_preprocessor_metrics_started", True)
 
 
 def prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask):
@@ -569,6 +583,13 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
 def load_controlnet_support_models(image_input_result=None):
     image_input_result = image_input_result or {}
 
+    controlnet_paths = image_input_result.get('controlnet_paths') or {}
+    requested_controlnets = [path for path in dict.fromkeys(controlnet_paths.values()) if path]
+    if requested_controlnets:
+        import modules.default_pipeline as default_pipeline
+
+        default_pipeline.refresh_controlnets(requested_controlnets)
+
     contextual_assets = image_input_result.get('contextual_assets') or {}
     for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():
         contextual_ip_adapter.load_contextual_model(
@@ -596,11 +617,13 @@ def _save_structural_preprocessor_output(cn_img, cn_type, slot_index):
 
 
 def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=None):
+    _reset_preprocessor_metrics_once(task_state)
     width, height = task_state.width, task_state.height
     structural_tasks = task_state.get_cn_tasks_for_channel(flags.cn_structural)
     structural_preprocessor_paths = structural_preprocessor_paths or {}
 
     def preprocess_structural_tasks(cn_type, tasks, processor=None):
+        from backend.sdxl_unified_runtime import _PREPROCESSOR_METRICS
         valid_tasks = []
         for slot_index, task in enumerate(tasks, start=1):
             raw_img, cn_stop, cn_weight = task
@@ -610,48 +633,76 @@ def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=
             cn_img = resize_image(cn_img, width=width, height=height)
             if not task_state.skipping_cn_preprocessor and processor is not None:
                 model_path = structural_preprocessor_paths.get(cn_type)
-                try:
-                    cn_img = processor(cn_type, cn_img, model_path)
-                except Exception as exc:
-                    print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
-                    continue
-                _save_structural_preprocessor_output(cn_img, cn_type, slot_index)
+                
+                # Fingerprint input image
+                source_image_hash = hashlib.sha256(cn_img.tobytes()).hexdigest()
+                
+                # Parameters
+                if cn_type == flags.cn_canny:
+                    params = (task_state.canny_low_threshold, task_state.canny_high_threshold)
+                else:
+                    params = ()
+                
+                cache_key = (source_image_hash, width, height, cn_type, model_path, params)
+                
+                cached_res = _STRUCTURAL_PREPROCESS_CACHE.get(cache_key)
+                if cached_res is not None:
+                    _STRUCTURAL_PREPROCESS_CACHE.move_to_end(cache_key)
+                    _PREPROCESSOR_METRICS["structural_hits"] += 1.0
+                    cn_img = cached_res.copy()
+                else:
+                    _PREPROCESSOR_METRICS["structural_misses"] += 1.0
+                    try:
+                        cn_img = processor(cn_type, cn_img, model_path)
+                    except Exception as exc:
+                        print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
+                        continue
+                    _save_structural_preprocessor_output(cn_img, cn_type, slot_index)
+                    
+                    _STRUCTURAL_PREPROCESS_CACHE[cache_key] = cn_img.copy()
+                    _STRUCTURAL_PREPROCESS_CACHE.move_to_end(cache_key)
+                    while len(_STRUCTURAL_PREPROCESS_CACHE) > _STRUCTURAL_PREPROCESS_CACHE_LIMIT:
+                        _STRUCTURAL_PREPROCESS_CACHE.popitem(last=False)
+                        
             cn_img = HWC3(cn_img)
             task[0] = core.numpy_to_pytorch(cn_img)
             valid_tasks.append(task)
         task_state.set_cn_tasks(cn_type, valid_tasks)
 
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.STRUCTURAL_PREPROCESS,
-        task=task_state,
-        notes={'task_count': sum(len(tasks) for tasks in structural_tasks.values())},
-        end_notes={'completed': True},
-    ):
-        preprocess_structural_tasks(
-            flags.cn_canny,
-            structural_tasks.get(flags.cn_canny, []),
-            lambda _cn_type, cn_img, _model_path: preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
-        )
-        preprocess_structural_tasks(
-            flags.cn_cpds,
-            structural_tasks.get(flags.cn_cpds, []),
-            lambda _cn_type, cn_img, _model_path: preprocessors.cpds(cn_img)
-        )
-        preprocess_structural_tasks(
-            flags.cn_depth,
-            structural_tasks.get(flags.cn_depth, []),
-            structural_preprocessors.run_structural_preprocessor
-        )
-        preprocess_structural_tasks(
-            flags.cn_mistoline,
-            structural_tasks.get(flags.cn_mistoline, []),
-            structural_preprocessors.run_structural_preprocessor
-        )
-        preprocess_structural_tasks(
-            flags.cn_mlsd,
-            structural_tasks.get(flags.cn_mlsd, []),
-            structural_preprocessors.run_structural_preprocessor
-        )
+    try:
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.STRUCTURAL_PREPROCESS,
+            task=task_state,
+            notes={'task_count': sum(len(tasks) for tasks in structural_tasks.values())},
+            end_notes={'completed': True},
+        ):
+            preprocess_structural_tasks(
+                flags.cn_canny,
+                structural_tasks.get(flags.cn_canny, []),
+                lambda _cn_type, cn_img, _model_path: preprocessors.canny_pyramid(cn_img, task_state.canny_low_threshold, task_state.canny_high_threshold)
+            )
+            preprocess_structural_tasks(
+                flags.cn_cpds,
+                structural_tasks.get(flags.cn_cpds, []),
+                lambda _cn_type, cn_img, _model_path: preprocessors.cpds(cn_img)
+            )
+            preprocess_structural_tasks(
+                flags.cn_depth,
+                structural_tasks.get(flags.cn_depth, []),
+                structural_preprocessors.run_structural_preprocessor
+            )
+            preprocess_structural_tasks(
+                flags.cn_mistoline,
+                structural_tasks.get(flags.cn_mistoline, []),
+                structural_preprocessors.run_structural_preprocessor
+            )
+            preprocess_structural_tasks(
+                flags.cn_mlsd,
+                structural_tasks.get(flags.cn_mlsd, []),
+                structural_preprocessors.run_structural_preprocessor
+            )
+    finally:
+        structural_preprocessors.apply_residency_policy('destroy')
 
     task_state.prepared_structural_cn_tasks = {
         cn_type: [list(task) for task in list(task_state.cn_tasks[cn_type])]
@@ -660,6 +711,7 @@ def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=
 
 
 def preprocess_contextual_controlnets(task_state, contextual_assets=None):
+    _reset_preprocessor_metrics_once(task_state)
     width, height = task_state.width, task_state.height
     contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
     contextual_assets = contextual_assets or {}
@@ -715,15 +767,19 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
             valid_tasks.append(normalize_contextual_task(task))
         task_state.set_cn_tasks(cn_type, valid_tasks)
 
-    with resources.memory_phase_scope(
-        resources.MemoryPhase.CONTEXTUAL_PREPROCESS,
-        task=task_state,
-        notes={'task_count': sum(len(tasks) for tasks in contextual_tasks.values())},
-        end_notes={'completed': True},
-    ):
-        preprocess_contextual_tasks(flags.cn_ip, contextual_tasks.get(flags.cn_ip, []), resize_to=224)
-        preprocess_contextual_tasks(flags.cn_faceid, contextual_tasks.get(flags.cn_faceid, []))
-        preprocess_contextual_tasks(flags.cn_pulid, contextual_tasks.get(flags.cn_pulid, []))
+    try:
+        with resources.memory_phase_scope(
+            resources.MemoryPhase.CONTEXTUAL_PREPROCESS,
+            task=task_state,
+            notes={'task_count': sum(len(tasks) for tasks in contextual_tasks.values())},
+            end_notes={'completed': True},
+        ):
+            preprocess_contextual_tasks(flags.cn_ip, contextual_tasks.get(flags.cn_ip, []), resize_to=224)
+            preprocess_contextual_tasks(flags.cn_faceid, contextual_tasks.get(flags.cn_faceid, []))
+            preprocess_contextual_tasks(flags.cn_pulid, contextual_tasks.get(flags.cn_pulid, []))
+    finally:
+        contextual_ip_adapter.apply_contextual_residency('destroy')
+        pulid_runtime.apply_contextual_residency('destroy')
 
     all_contextual_tasks = []
     for cn_type in [flags.cn_ip, flags.cn_faceid]:

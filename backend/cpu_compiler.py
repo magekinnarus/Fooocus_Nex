@@ -267,6 +267,7 @@ class CpuArtifactCompiler:
 
         if target_device.type != "cpu":
             pin_unet_host = False
+            num_workers = 1
 
         patch_count = len(getattr(patcher, "patches", {}) or {})
         if patch_count == 0:
@@ -274,7 +275,8 @@ class CpuArtifactCompiler:
                 _pin_module_tensors(patcher.model)
             return {"status": "noop", "patch_count": 0}
 
-        num_workers = cls._resolve_worker_count(num_workers, patch_count)
+        if target_device.type == "cpu":
+            num_workers = cls._resolve_worker_count(num_workers, patch_count)
 
         logging.info(f"[CpuArtifactCompiler] Compiling {patch_count} patches on device {target_device} across {num_workers} worker threads.")
 

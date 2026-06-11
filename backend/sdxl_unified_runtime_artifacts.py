@@ -142,15 +142,44 @@ class UnifiedSDXLRuntimeArtifactMixin:
             if self.config.controlnet_quality:
                 loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
             return controlnet
+        try:
+            import modules.default_pipeline as default_pipeline
+        except Exception:
+            default_pipeline = None
+
+        if default_pipeline is not None:
+            controlnet = default_pipeline.loaded_ControlNets.get(model_path)
+            if controlnet is None and not getattr(self, "_structural_controlnets_prefetched", False):
+                requested_paths = [
+                    path for path in dict.fromkeys((self.config.controlnet_paths or {}).values()) if path
+                ]
+                if requested_paths:
+                    try:
+                        default_pipeline.refresh_controlnets(requested_paths)
+                    except Exception:
+                        logging.debug("Falling back to runtime-local structural ControlNet loading.", exc_info=True)
+                self._structural_controlnets_prefetched = True
+                controlnet = default_pipeline.loaded_ControlNets.get(model_path)
+            if controlnet is not None:
+                if self.config.controlnet_quality:
+                    loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
+                self._loaded_controlnets[model_path] = controlnet
+                self._borrowed_controlnet_paths.add(model_path)
+                return controlnet
+
         core = self._load_structural_runtime_modules()
         controlnet = core.load_controlnet(model_path)
         if self.config.controlnet_quality:
             loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
         self._loaded_controlnets[model_path] = controlnet
+        self._borrowed_controlnet_paths.discard(model_path)
         return controlnet
 
     def _unload_controlnets(self) -> None:
-        for controlnet in self._loaded_controlnets.values():
+        borrowed_paths = set(getattr(self, "_borrowed_controlnet_paths", set()) or set())
+        for model_path, controlnet in self._loaded_controlnets.items():
+            if model_path in borrowed_paths:
+                continue
             cleanup = getattr(controlnet, "cleanup", None)
             if callable(cleanup):
                 try:
@@ -158,6 +187,8 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 except Exception:
                     pass
         self._loaded_controlnets = {}
+        self._borrowed_controlnet_paths = set()
+        self._structural_controlnets_prefetched = False
 
     def _apply_structural_controlnets_to_conditioning(
         self,

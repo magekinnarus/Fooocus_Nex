@@ -130,6 +130,50 @@ class SharedSDXLCompiledUnetComponents:
     cache_fingerprint: str
 
 
+_PARSED_LORA_ADAPTER_CACHE: OrderedDict[tuple[str, str, str], tuple[str, dict[str, Any]]] = OrderedDict()
+_PARSED_LORA_ADAPTER_CACHE_LIMIT = 8
+_LORA_FILE_HASH_CACHE: dict[str, tuple[float, int, str]] = {}
+
+
+def _get_lora_file_hash(path: str) -> str:
+    try:
+        stat = os.stat(path)
+        mtime = stat.st_mtime
+        size = stat.st_size
+    except Exception:
+        return hashlib.sha256(path.encode("utf-8")).hexdigest()
+
+    cached = _LORA_FILE_HASH_CACHE.get(path)
+    if cached is not None:
+        cached_mtime, cached_size, cached_hash = cached
+        if cached_mtime == mtime and cached_size == size:
+            return cached_hash
+
+    new_hash = compute_file_hash(path)
+    _LORA_FILE_HASH_CACHE[path] = (mtime, size, new_hash)
+    return new_hash
+
+
+def clear_parsed_lora_adapter_cache() -> None:
+    _PARSED_LORA_ADAPTER_CACHE.clear()
+    _LORA_FILE_HASH_CACHE.clear()
+
+
+_PREPROCESSOR_METRICS = {
+    "structural_hits": 0.0,
+    "structural_misses": 0.0,
+    "contextual_hits": 0.0,
+    "contextual_misses": 0.0,
+}
+
+
+def clear_preprocessor_metrics() -> None:
+    _PREPROCESSOR_METRICS["structural_hits"] = 0.0
+    _PREPROCESSOR_METRICS["structural_misses"] = 0.0
+    _PREPROCESSOR_METRICS["contextual_hits"] = 0.0
+    _PREPROCESSOR_METRICS["contextual_misses"] = 0.0
+
+
 _SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str | None, str], SharedSDXLBaseComponents] = OrderedDict()
 _SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT = 1
 _SHARED_SDXL_COMPILED_UNET_CACHE: OrderedDict[
@@ -174,6 +218,13 @@ def clear_unified_sdxl_runtime_component_cache() -> None:
     while _SHARED_SDXL_COMPILED_UNET_CACHE:
         _, entry = _SHARED_SDXL_COMPILED_UNET_CACHE.popitem(last=False)
         _release_shared_sdxl_compiled_unet(entry)
+    clear_parsed_lora_adapter_cache()
+    clear_preprocessor_metrics()
+    try:
+        from backend import ip_adapter
+        ip_adapter.clear_contextual_payload_cache()
+    except Exception:
+        pass
     clear_spatial_latent_cache()
     gc.collect()
     resources.soft_empty_cache(force=True)
@@ -222,9 +273,15 @@ class UnifiedSDXLRuntime(
         self._clip_identity: str = self._build_clip_identity()
         self._attached_payload: dict[str, Any] | None = None
         self._loaded_controlnets: dict[str, Any] = {}
+        self._borrowed_controlnet_paths: set[str] = set()
+        self._structural_controlnets_prefetched = False
         self._cold_load_metric = 0.0
         self._warm_reuse_metric = 0.0
         self._true_invalidation_metric = 0.0
+        self._lora_parse_cold_time = 0.0
+        self._lora_parse_warm_time = 0.0
+        self._lora_parse_hits = 0.0
+        self._lora_parse_misses = 0.0
 
     def load_components(self) -> float:
         if self._loaded:
@@ -281,14 +338,7 @@ class UnifiedSDXLRuntime(
 
         if self.unet is not None:
             self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
-            # Apply scheduler-specific patch to the UNet
-            orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
-            if orig_scheduler in ['lcm', 'tcd']:
-                from modules import core as modules_core
-                self.unet = modules_core.opModelSamplingDiscrete.patch(self.unet, orig_scheduler, False)[0]
-            elif orig_scheduler == 'edm_playground_v2.5':
-                from modules import core as modules_core
-                self.unet = modules_core.opModelSamplingContinuousEDM.patch(self.unet, orig_scheduler, 120.0, 0.002)[0]
+            self._reapply_scheduler_patches()
         if self.clip is not None:
             self.clip.runtime_policy = self.policy
             if hasattr(self.clip, "clip_layer"):
@@ -497,6 +547,14 @@ class UnifiedSDXLRuntime(
                 "warm_reuse": float(self._warm_reuse_metric),
                 "true_invalidation": float(self._true_invalidation_metric),
                 "compiled_unet_cache_hit": float(lora_metrics.get("compiled_unet_cache_hit", 0.0)),
+                "lora_parse_cold_time": float(self._lora_parse_cold_time),
+                "lora_parse_warm_time": float(self._lora_parse_warm_time),
+                "lora_parse_hits": float(self._lora_parse_hits),
+                "lora_parse_misses": float(self._lora_parse_misses),
+                "structural_cache_hits": float(_PREPROCESSOR_METRICS["structural_hits"]),
+                "structural_cache_misses": float(_PREPROCESSOR_METRICS["structural_misses"]),
+                "contextual_cache_hits": float(_PREPROCESSOR_METRICS["contextual_hits"]),
+                "contextual_cache_misses": float(_PREPROCESSOR_METRICS["contextual_misses"]),
                 "conditioning_encode_cpu": float(conditioning_encode_wall),
                 "conditioning_adm_cpu": float(adm_build_wall),
                 "conditioning_cache_hit": 1.0 if prompt_cache_hit else 0.0,
@@ -943,6 +1001,21 @@ class UnifiedSDXLRuntime(
         if hasattr(model, "model_lowvram"):
             model.model_lowvram = False
 
+    def _reapply_scheduler_patches(self) -> None:
+        if self.unet is None:
+            return
+        orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
+        if orig_scheduler in ['lcm', 'tcd']:
+            from modules import core as modules_core
+            self.unet = modules_core.opModelSamplingDiscrete.patch(self.unet, orig_scheduler, False)[0]
+        elif orig_scheduler == 'edm_playground_v2.5':
+            from modules import core as modules_core
+            self.unet = modules_core.opModelSamplingContinuousEDM.patch(self.unet, orig_scheduler, 120.0, 0.002)[0]
+        
+        model = getattr(self.unet, "model", None)
+        if model is not None:
+            model._nex_resident_scheduler = str(orig_scheduler)
+
     def _restore_clean_resident_component(self, patcher: Any, *, fallback_device: Any | None = None) -> bool:
         if patcher is None:
             return False
@@ -985,61 +1058,43 @@ class UnifiedSDXLRuntime(
         unet_host_pinned_bytes = 0
         self._compiled_unet_cache_hit = False
         desired_signature = self._lora_signature()
+        desired_scheduler = str(self.config.original_scheduler_name or self.config.scheduler or "")
+        
         clip_patcher = getattr(self.clip, "patcher", None)
         current_clip_signature = self._current_resident_lora_signature(clip_patcher)
         current_unet_signature = self._current_resident_lora_signature(self.unet)
+        current_scheduler = getattr(getattr(self.unet, "model", None), "_nex_resident_scheduler", "")
 
-        if desired_signature:
-            if desired_signature == current_clip_signature and desired_signature == current_unet_signature:
-                self._compiled_unet_cache_hit = True
-                clip_compile_metrics = self._current_resident_compile_metrics(clip_patcher)
-                unet_compile = self._current_resident_compile_metrics(self.unet)
-                clip_patch_count = int(clip_compile_metrics.get("patch_count", 0))
-                unet_patch_count = int(unet_compile.get("patch_count", 0))
-                clip_host_pinned_bytes = int(clip_compile_metrics.get("host_pinned_bytes", 0))
-                unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
-                return {
-                    "spec_count": float(len(self._resolved_lora_specs)),
-                    "clip_patch_count": float(clip_patch_count),
-                    "unet_patch_count": float(unet_patch_count),
-                    "clip_host_pinned_bytes": float(clip_host_pinned_bytes),
-                    "unet_host_pinned_bytes": float(unet_host_pinned_bytes),
-                    "clip_compile_wall": 0.0,
-                    "unet_compile_wall": 0.0,
-                    "compiled_unet_cache_hit": 1.0,
-                    "clip_compile_metrics": clip_compile_metrics,
-                    "unet_compile_metrics": unet_compile,
-                }
-        elif current_clip_signature or current_unet_signature:
-            self._restore_clean_resident_component(clip_patcher, fallback_device=torch.device("cpu"))
-            self._restore_clean_resident_component(self.unet)
-            clean_unet_compile = self._default_compile_metrics()
-            unet_compile_wall = 0.0
-            if self._should_pin_unet_host_for_compile():
-                unet_compile_start = time.perf_counter()
-                clean_unet_compile = self._compile_patcher(
-                    self.unet,
-                    pin_model_host=self._should_pin_unet_host_for_compile(),
-                )
-                unet_compile_wall = time.perf_counter() - unet_compile_start
-            self._remember_resident_lora_state(clip_patcher, (), self._default_compile_metrics())
-            self._remember_resident_lora_state(self.unet, (), clean_unet_compile)
+        has_compiled_state = (
+            getattr(self.unet.model, "_nex_resident_compile_metrics", None) is not None
+            or (not desired_signature and not self._should_pin_unet_host_for_compile())
+        )
+
+        if desired_signature == current_clip_signature and desired_signature == current_unet_signature and desired_scheduler == current_scheduler and has_compiled_state:
+            self._compiled_unet_cache_hit = True
+            clip_compile_metrics = self._current_resident_compile_metrics(clip_patcher)
+            unet_compile = self._current_resident_compile_metrics(self.unet)
+            clip_patch_count = int(clip_compile_metrics.get("patch_count", 0))
+            unet_patch_count = int(unet_compile.get("patch_count", 0))
+            clip_host_pinned_bytes = int(clip_compile_metrics.get("host_pinned_bytes", 0))
+            unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
             return {
-                "spec_count": 0.0,
-                "clip_patch_count": 0.0,
-                "unet_patch_count": float(int(clean_unet_compile.get("patch_count", 0))),
-                "clip_host_pinned_bytes": 0.0,
-                "unet_host_pinned_bytes": float(int(clean_unet_compile.get("host_pinned_bytes", 0))),
+                "spec_count": float(len(self._resolved_lora_specs)),
+                "clip_patch_count": float(clip_patch_count),
+                "unet_patch_count": float(unet_patch_count),
+                "clip_host_pinned_bytes": float(clip_host_pinned_bytes),
+                "unet_host_pinned_bytes": float(unet_host_pinned_bytes),
                 "clip_compile_wall": 0.0,
-                "unet_compile_wall": float(unet_compile_wall),
-                "compiled_unet_cache_hit": 0.0,
-                "clip_compile_metrics": self._default_compile_metrics(),
-                "unet_compile_metrics": clean_unet_compile,
+                "unet_compile_wall": 0.0,
+                "compiled_unet_cache_hit": 1.0,
+                "clip_compile_metrics": clip_compile_metrics,
+                "unet_compile_metrics": unet_compile,
             }
 
-        if current_clip_signature or current_unet_signature:
-            self._restore_clean_resident_component(clip_patcher, fallback_device=torch.device("cpu"))
-            self._restore_clean_resident_component(self.unet)
+        # Clear active patched states and restore clean resident components
+        self._restore_clean_resident_component(clip_patcher, fallback_device=torch.device("cpu"))
+        self._restore_clean_resident_component(self.unet)
+        self._reapply_scheduler_patches()
 
         if not self._resolved_lora_specs:
             unet_compile = self._default_compile_metrics()
@@ -1118,9 +1173,38 @@ class UnifiedSDXLRuntime(
             else backend_lora.model_lora_keys_unet(model)
         )
         patch_count = 0
+        model_class_name = model.__class__.__name__
+
         for lora_path, strength in self._resolved_lora_specs:
-            header = SafeOpenHeaderOnly(lora_path)
-            patch_dict = backend_lora.load_lora(header, key_map, log_missing=False)
+            cache_key = (lora_path, target_family, model_class_name)
+            current_hash = _get_lora_file_hash(lora_path)
+            
+            cached_entry = _PARSED_LORA_ADAPTER_CACHE.get(cache_key)
+            if cached_entry is not None:
+                cached_hash, cached_patch_dict = cached_entry
+                if cached_hash == current_hash:
+                    start_time = time.perf_counter()
+                    _PARSED_LORA_ADAPTER_CACHE.move_to_end(cache_key)
+                    self._lora_parse_hits += 1.0
+                    patch_dict = cached_patch_dict
+                    self._lora_parse_warm_time += time.perf_counter() - start_time
+                else:
+                    _PARSED_LORA_ADAPTER_CACHE.pop(cache_key)
+                    cached_entry = None
+
+            if cached_entry is None:
+                start_time = time.perf_counter()
+                header = SafeOpenHeaderOnly(lora_path)
+                patch_dict = backend_lora.load_lora(header, key_map, log_missing=False)
+                self._lora_parse_misses += 1.0
+                self._lora_parse_cold_time += time.perf_counter() - start_time
+                
+                if patch_dict:
+                    _PARSED_LORA_ADAPTER_CACHE[cache_key] = (current_hash, patch_dict)
+                    _PARSED_LORA_ADAPTER_CACHE.move_to_end(cache_key)
+                    while len(_PARSED_LORA_ADAPTER_CACHE) > _PARSED_LORA_ADAPTER_CACHE_LIMIT:
+                        _PARSED_LORA_ADAPTER_CACHE.popitem(last=False)
+
             if not patch_dict:
                 continue
             patcher.add_patches(patch_dict, strength)

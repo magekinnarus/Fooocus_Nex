@@ -12,4 +12,4 @@ STRUCTURAL_CONTROLNET_ASSETS = {
     "MLSD": "structural.mlsd.controlnet",
 }
 
-from .runtime import offload_cached_preprocessors, run_structural_preprocessor
+from .runtime import apply_residency_policy, offload_cached_preprocessors, run_structural_preprocessor
