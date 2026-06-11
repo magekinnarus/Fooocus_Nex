@@ -316,16 +316,7 @@ def resolve_sdxl_execution_policy(
 
     allow_cpu_shadow = False
     if not allow_gguf_runtime_family and not unet_streaming:
-        if profile is not None:
-            ram_total_mb = getattr(profile, "total_ram_mb", 16384.0)
-        else:
-            try:
-                import psutil
-                ram_total_mb = float(psutil.virtual_memory().total / (1024**2))
-            except Exception:
-                ram_total_mb = 16384.0
-        if ram_total_mb >= 24576.0:
-            allow_cpu_shadow = True
+        allow_cpu_shadow = True
 
     notes = [plan.tier.name, plan.execution_class.name, plan.unet.mode.name]
     if is_legacy_sdxl_gguf:
@@ -340,7 +331,7 @@ def resolve_sdxl_execution_policy(
         execution_mode="streaming" if unet_streaming else "resident",
         hardware_tier=plan.tier.name,
         allow_cpu_shadow=allow_cpu_shadow,
-        prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT or plan.tier.name == "COLAB_FREE"),
+        prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
         prefer_gpu_vae_encode=(plan.vae.mode == ResidencyMode.GPU_RESIDENT),
         stream_budget_mb=stream_budget_mb,
         notes=tuple(notes),

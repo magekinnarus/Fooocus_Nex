@@ -222,6 +222,9 @@ class UnifiedSDXLRuntime(
         self._clip_identity: str = self._build_clip_identity()
         self._attached_payload: dict[str, Any] | None = None
         self._loaded_controlnets: dict[str, Any] = {}
+        self._cold_load_metric = 0.0
+        self._warm_reuse_metric = 0.0
+        self._true_invalidation_metric = 0.0
 
     def load_components(self) -> float:
         if self._loaded:
@@ -303,6 +306,23 @@ class UnifiedSDXLRuntime(
             reusable=True,
         )
         self._clip_identity = self._build_clip_identity()
+
+        from backend import process_transition
+        active_key = process_transition.get_active_process_key()
+        is_invalidation = False
+        is_cold_load = False
+        if not self._base_component_cache_hit:
+            if active_key is not None:
+                is_invalidation = True
+            elif len(_SHARED_SDXL_BASE_COMPONENT_CACHE) > 0:
+                is_invalidation = True
+            else:
+                is_cold_load = True
+
+        self._cold_load_metric = 1.0 if is_cold_load else 0.0
+        self._warm_reuse_metric = 1.0 if self._base_component_cache_hit else 0.0
+        self._true_invalidation_metric = 1.0 if is_invalidation else 0.0
+
         self._cold_model_load_cpu = 0.0 if self._base_component_cache_hit else (time.perf_counter() - start)
         cache_fingerprint = (self._checkpoint_fingerprint or checkpoint_path)[:12]
         logging.info(
@@ -473,6 +493,9 @@ class UnifiedSDXLRuntime(
             metrics={
                 "base_model_load_cpu": float(self._cold_model_load_cpu),
                 "base_model_cache_hit": 1.0 if self._base_component_cache_hit else 0.0,
+                "cold_load": float(self._cold_load_metric),
+                "warm_reuse": float(self._warm_reuse_metric),
+                "true_invalidation": float(self._true_invalidation_metric),
                 "compiled_unet_cache_hit": float(lora_metrics.get("compiled_unet_cache_hit", 0.0)),
                 "conditioning_encode_cpu": float(conditioning_encode_wall),
                 "conditioning_adm_cpu": float(adm_build_wall),
@@ -611,9 +634,16 @@ class UnifiedSDXLRuntime(
         return images, vae_attach, vae_decode
 
     def close(self) -> None:
-        self._detach_component(self.unet)
-        self._detach_component(getattr(self.vae, "patcher", None))
-        self._detach_component(getattr(self.clip, "patcher", None))
+        is_resident = (
+            self.policy is not None
+            and self.policy.execution_mode == "resident"
+            and self.config.execution_class != "cpu-first"
+            and self.route_label != "sdxl_streaming_runtime"
+        )
+        if not is_resident:
+            self._detach_component(self.unet)
+            self._detach_component(getattr(self.vae, "patcher", None))
+            self._detach_component(getattr(self.clip, "patcher", None))
         self._attached_payload = None
         self.execution_state = None
         self.prepared_inputs = None
@@ -854,22 +884,177 @@ class UnifiedSDXLRuntime(
                 total += tensor.numel() * tensor.element_size()
         return total
 
+    @staticmethod
+    def _default_compile_metrics() -> dict[str, Any]:
+        return {
+            "status": "noop",
+            "patch_count": 0,
+            "materialized_patch_keys": 0,
+            "host_pinned_bytes": 0,
+        }
+
+    def _current_resident_lora_signature(self, patcher: Any) -> tuple[str, ...]:
+        model = getattr(patcher, "model", None)
+        signature = getattr(model, "_nex_resident_lora_signature", ()) if model is not None else ()
+        if signature is None:
+            return ()
+        return tuple(str(item) for item in signature)
+
+    def _current_resident_compile_metrics(self, patcher: Any) -> dict[str, Any]:
+        model = getattr(patcher, "model", None)
+        metrics = getattr(model, "_nex_resident_compile_metrics", None) if model is not None else None
+        if isinstance(metrics, dict):
+            return dict(metrics)
+        return self._default_compile_metrics()
+
+    def _remember_resident_lora_state(
+        self,
+        patcher: Any,
+        signature: tuple[str, ...],
+        compile_metrics: dict[str, Any] | None = None,
+    ) -> None:
+        model = getattr(patcher, "model", None)
+        if model is None:
+            return
+        setattr(model, "_nex_resident_lora_signature", tuple(signature))
+        setattr(
+            model,
+            "_nex_resident_compile_metrics",
+            dict(compile_metrics or self._default_compile_metrics()),
+        )
+
+    def _clear_patcher_artifacts(self, patcher: Any) -> None:
+        if patcher is None:
+            return
+        for attr in ("patches", "weight_wrapper_patches", "backup", "object_patches_backup"):
+            value = getattr(patcher, attr, None)
+            if hasattr(value, "clear"):
+                try:
+                    value.clear()
+                except Exception:
+                    pass
+        model = getattr(patcher, "model", None)
+        if model is None:
+            return
+        if hasattr(model, "current_weight_patches_uuid"):
+            model.current_weight_patches_uuid = None
+        if hasattr(model, "lowvram_patch_counter"):
+            model.lowvram_patch_counter = 0
+        if hasattr(model, "model_lowvram"):
+            model.model_lowvram = False
+
+    def _restore_clean_resident_component(self, patcher: Any, *, fallback_device: Any | None = None) -> bool:
+        if patcher is None:
+            return False
+
+        model = getattr(patcher, "model", None)
+        runtime_reload = getattr(patcher, "runtime_reload", None)
+        if model is None or not callable(runtime_reload):
+            self._clear_patcher_artifacts(patcher)
+            self._remember_resident_lora_state(patcher, (), self._default_compile_metrics())
+            return False
+
+        target_device = fallback_device
+        current_device_getter = getattr(patcher, "current_loaded_device", None)
+        if target_device is None and callable(current_device_getter):
+            try:
+                target_device = current_device_getter()
+            except Exception:
+                target_device = None
+        if target_device is None:
+            target_device = getattr(model, "device", None)
+        if target_device is None:
+            target_device = getattr(patcher, "offload_device", None) or getattr(patcher, "load_device", None)
+        if target_device is None:
+            target_device = torch.device("cpu")
+
+        runtime_reload(model, target_device)
+        model.device = target_device
+        if hasattr(model, "model_loaded_weight_memory"):
+            model.model_loaded_weight_memory = (
+                patcher.model_size() if callable(getattr(patcher, "model_size", None)) else 0
+            )
+        self._clear_patcher_artifacts(patcher)
+        self._remember_resident_lora_state(patcher, (), self._default_compile_metrics())
+        return True
+
     def _materialize_lora_stack(self) -> dict[str, float]:
         clip_patch_count = 0
         unet_patch_count = 0
         clip_host_pinned_bytes = 0
         unet_host_pinned_bytes = 0
         self._compiled_unet_cache_hit = False
+        desired_signature = self._lora_signature()
+        clip_patcher = getattr(self.clip, "patcher", None)
+        current_clip_signature = self._current_resident_lora_signature(clip_patcher)
+        current_unet_signature = self._current_resident_lora_signature(self.unet)
+
+        if desired_signature:
+            if desired_signature == current_clip_signature and desired_signature == current_unet_signature:
+                self._compiled_unet_cache_hit = True
+                clip_compile_metrics = self._current_resident_compile_metrics(clip_patcher)
+                unet_compile = self._current_resident_compile_metrics(self.unet)
+                clip_patch_count = int(clip_compile_metrics.get("patch_count", 0))
+                unet_patch_count = int(unet_compile.get("patch_count", 0))
+                clip_host_pinned_bytes = int(clip_compile_metrics.get("host_pinned_bytes", 0))
+                unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
+                return {
+                    "spec_count": float(len(self._resolved_lora_specs)),
+                    "clip_patch_count": float(clip_patch_count),
+                    "unet_patch_count": float(unet_patch_count),
+                    "clip_host_pinned_bytes": float(clip_host_pinned_bytes),
+                    "unet_host_pinned_bytes": float(unet_host_pinned_bytes),
+                    "clip_compile_wall": 0.0,
+                    "unet_compile_wall": 0.0,
+                    "compiled_unet_cache_hit": 1.0,
+                    "clip_compile_metrics": clip_compile_metrics,
+                    "unet_compile_metrics": unet_compile,
+                }
+        elif current_clip_signature or current_unet_signature:
+            self._restore_clean_resident_component(clip_patcher, fallback_device=torch.device("cpu"))
+            self._restore_clean_resident_component(self.unet)
+            clean_unet_compile = self._default_compile_metrics()
+            unet_compile_wall = 0.0
+            if self._should_pin_unet_host_for_compile():
+                unet_compile_start = time.perf_counter()
+                clean_unet_compile = self._compile_patcher(
+                    self.unet,
+                    pin_model_host=self._should_pin_unet_host_for_compile(),
+                )
+                unet_compile_wall = time.perf_counter() - unet_compile_start
+            self._remember_resident_lora_state(clip_patcher, (), self._default_compile_metrics())
+            self._remember_resident_lora_state(self.unet, (), clean_unet_compile)
+            return {
+                "spec_count": 0.0,
+                "clip_patch_count": 0.0,
+                "unet_patch_count": float(int(clean_unet_compile.get("patch_count", 0))),
+                "clip_host_pinned_bytes": 0.0,
+                "unet_host_pinned_bytes": float(int(clean_unet_compile.get("host_pinned_bytes", 0))),
+                "clip_compile_wall": 0.0,
+                "unet_compile_wall": float(unet_compile_wall),
+                "compiled_unet_cache_hit": 0.0,
+                "clip_compile_metrics": self._default_compile_metrics(),
+                "unet_compile_metrics": clean_unet_compile,
+            }
+
+        if current_clip_signature or current_unet_signature:
+            self._restore_clean_resident_component(clip_patcher, fallback_device=torch.device("cpu"))
+            self._restore_clean_resident_component(self.unet)
 
         if not self._resolved_lora_specs:
-            unet_compile_start = time.perf_counter()
-            unet_compile = self._compile_patcher(
-                self.unet,
-                pin_model_host=self._should_pin_unet_host_for_compile(),
-            )
-            unet_compile_wall = time.perf_counter() - unet_compile_start
+            unet_compile = self._default_compile_metrics()
+            unet_compile_wall = 0.0
+            if self._should_pin_unet_host_for_compile():
+                unet_compile_start = time.perf_counter()
+                unet_compile = self._compile_patcher(
+                    self.unet,
+                    pin_model_host=self._should_pin_unet_host_for_compile(),
+                )
+                unet_compile_wall = time.perf_counter() - unet_compile_start
             unet_patch_count = int(unet_compile.get("patch_count", 0))
             unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
+            self._remember_resident_lora_state(clip_patcher, (), self._default_compile_metrics())
+            self._remember_resident_lora_state(self.unet, (), unet_compile)
             return {
                 "spec_count": 0.0,
                 "clip_patch_count": 0.0,
@@ -879,20 +1064,20 @@ class UnifiedSDXLRuntime(
                 "clip_compile_wall": 0.0,
                 "unet_compile_wall": float(unet_compile_wall),
                 "compiled_unet_cache_hit": 0.0,
-                "clip_compile_metrics": {"status": "noop", "patch_count": 0, "host_pinned_bytes": 0},
+                "clip_compile_metrics": self._default_compile_metrics(),
                 "unet_compile_metrics": unet_compile,
             }
 
         clip_patch_count = self._apply_lora_specs_to_patcher(
-            self.clip.patcher,
-            self.clip.patcher.model,
+            clip_patcher,
+            clip_patcher.model,
             target_family="clip",
         )
         clip_compile_wall = 0.0
-        clip_compile_metrics: dict[str, Any] = {"status": "noop", "patch_count": 0, "host_pinned_bytes": 0}
+        clip_compile_metrics: dict[str, Any] = self._default_compile_metrics()
         if clip_patch_count > 0:
             clip_compile_start = time.perf_counter()
-            clip_compile = self._compile_patcher(self.clip.patcher)
+            clip_compile = self._compile_patcher(clip_patcher)
             clip_compile_wall = time.perf_counter() - clip_compile_start
             clip_compile_metrics = clip_compile
             clip_host_pinned_bytes = int(clip_compile.get("host_pinned_bytes", 0))
@@ -907,6 +1092,8 @@ class UnifiedSDXLRuntime(
         unet_compile_wall = time.perf_counter() - unet_compile_start
         unet_patch_count = int(unet_compile.get("patch_count", 0))
         unet_host_pinned_bytes = int(unet_compile.get("host_pinned_bytes", 0))
+        self._remember_resident_lora_state(clip_patcher, desired_signature, clip_compile_metrics)
+        self._remember_resident_lora_state(self.unet, desired_signature, unet_compile)
 
         return {
             "spec_count": float(len(self._resolved_lora_specs)),

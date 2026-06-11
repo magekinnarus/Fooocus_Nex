@@ -570,11 +570,10 @@ class MemoryGovernor:
             return True
 
         snapshot = self.capture_snapshot()
-        if snapshot.total_vram_mb is None:
-            return True
-
         total_vram = snapshot.total_vram_mb
-        if total_vram < self.policy.low_vram_threshold_mb:
+        if total_vram is None:
+            cooldown = self.policy.minimum_cache_cooldown_s
+        elif total_vram < self.policy.low_vram_threshold_mb:
             cooldown = self.policy.low_vram_cache_cooldown_s
         elif total_vram < self.policy.medium_vram_threshold_mb:
             cooldown = self.policy.medium_vram_cache_cooldown_s
@@ -589,8 +588,18 @@ class MemoryGovernor:
         if snapshot.free_ram_mb is not None and snapshot.free_ram_mb < self.policy.low_ram_headroom_mb:
             cooldown = max(self.policy.minimum_cache_cooldown_s, cooldown * 0.5)
 
+        vram_pressure = False
+        if snapshot.free_vram_mb is not None and snapshot.total_vram_mb is not None and snapshot.total_vram_mb > 0.0:
+            vram_pressure = (snapshot.free_vram_mb / snapshot.total_vram_mb) < 0.12
+
+        ram_pressure = False
+        if snapshot.free_ram_mb is not None:
+            ram_pressure = snapshot.free_ram_mb < self.policy.low_ram_headroom_mb
+
+        under_pressure = vram_pressure or ram_pressure
+
         elapsed = time.time() - self._last_cache_flush
-        return elapsed >= max(self.policy.minimum_cache_cooldown_s, cooldown)
+        return (elapsed >= max(self.policy.minimum_cache_cooldown_s, cooldown)) and under_pressure
 
     def note_cache_flush(self):
         with self._lock:

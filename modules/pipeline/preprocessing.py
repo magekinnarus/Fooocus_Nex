@@ -270,6 +270,11 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
     )
     cached_tasks = _load_prompt_tasks_from_cache(prompt_fingerprint)
     if cached_tasks is not None:
+        for i, task in enumerate(cached_tasks):
+            if disable_seed_increment:
+                task['task_seed'] = task_state.seed % (constants.MAX_SEED + 1)
+            else:
+                task['task_seed'] = (task_state.seed + i) % (constants.MAX_SEED + 1)
         task_state.use_expansion = use_expansion
         task_state.positive_cond = None
         task_state.negative_cond = None

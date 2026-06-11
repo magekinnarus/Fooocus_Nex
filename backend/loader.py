@@ -189,6 +189,87 @@ def _build_unet_runtime_reload(source, *, dtype=None, prefixes=None):
     return _reload
 
 
+def _reload_sdxl_clip_weights(
+    target_model,
+    source_l,
+    source_g,
+    *,
+    device,
+    dtype=None,
+    prefixes_l=None,
+    prefixes_g=None,
+):
+    if hasattr(target_model, "to"):
+        if dtype is None:
+            target_model.to(device=device)
+        else:
+            target_model.to(device=device, dtype=dtype)
+
+    def _resolve_clip_source(source, prefixes):
+        if isinstance(source, str) and prefixes is not None:
+            return _extract_prefixed_safetensors_state_dict(
+                source,
+                prefixes,
+                device=torch.device("cpu"),
+            )
+        return resolve_source(source)
+
+    share_source = (
+        source_l == source_g
+        and prefixes_l == prefixes_g
+    )
+    sd_l = _resolve_clip_source(source_l, prefixes_l)
+    sd_g = sd_l if share_source else _resolve_clip_source(source_g, prefixes_g)
+
+    try:
+        if sd_l is not None:
+            if isinstance(sd_l, dict) and not any(
+                key.startswith("clip") or key.startswith("cond") or "embedders." in key
+                for key in sd_l.keys()
+            ):
+                target_model.load_sd(sd_l, force_type="l")
+            else:
+                target_model.load_sd(sd_l)
+        if sd_g is not None:
+            if isinstance(sd_g, dict) and not any(
+                key.startswith("clip") or key.startswith("cond") or "embedders." in key
+                for key in sd_g.keys()
+            ):
+                target_model.load_sd(sd_g, force_type="g")
+            else:
+                target_model.load_sd(sd_g)
+    finally:
+        if not share_source:
+            del sd_g
+        del sd_l
+        gc.collect()
+
+
+def _build_sdxl_clip_runtime_reload(
+    source_l,
+    source_g,
+    *,
+    dtype=None,
+    prefixes_l=None,
+    prefixes_g=None,
+):
+    if source_l is None or source_g is None:
+        return None
+
+    def _reload(target_model, target_device):
+        _reload_sdxl_clip_weights(
+            target_model,
+            source_l,
+            source_g,
+            device=target_device,
+            dtype=dtype,
+            prefixes_l=prefixes_l,
+            prefixes_g=prefixes_g,
+        )
+
+    return _reload
+
+
 def _stream_load_sdxl_unet_from_checkpoint(
     ckpt_path,
     *,
@@ -461,7 +542,18 @@ def patch_controlnet_for_quality(controlnet: Any, quality: Dict[str, Any]):
     target.forward = nex_patched_forward
     logging.info(f"[Nex] Quality: ControlNet patched (softness={controlnet_softness})")
 
-def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dtype=None):
+def load_sdxl_clip(
+    source_l,
+    source_g,
+    load_device=None,
+    offload_device=None,
+    dtype=None,
+    *,
+    reload_source_l=None,
+    reload_source_g=None,
+    reload_prefixes_l=None,
+    reload_prefixes_g=None,
+):
     """
     Loads SDXL CLIP (L and G) and returns a clean CLIP container.
     """
@@ -502,7 +594,26 @@ def load_sdxl_clip(source_l, source_g, load_device=None, offload_device=None, dt
             else:
                 model.load_sd(sd_g)
     
-    return CLIP(model, tokenizer, load_device, offload_device)
+    clip_container = CLIP(model, tokenizer, load_device, offload_device)
+    effective_reload_source_l = (
+        reload_source_l
+        if reload_source_l is not None
+        else (source_l if isinstance(source_l, str) else None)
+    )
+    effective_reload_source_g = (
+        reload_source_g
+        if reload_source_g is not None
+        else (source_g if isinstance(source_g, str) else None)
+    )
+    clip_container.patcher.runtime_reload = _build_sdxl_clip_runtime_reload(
+        effective_reload_source_l,
+        effective_reload_source_g,
+        dtype=dtype,
+        prefixes_l=reload_prefixes_l,
+        prefixes_g=reload_prefixes_g,
+    )
+    clip_container.patcher.runtime_release_to_meta = False
+    return clip_container
 
 def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_format=None):
     """
@@ -638,6 +749,10 @@ def load_sdxl_checkpoint(
             load_device=clip_load_device,
             offload_device=clip_offload_device,
             dtype=clip_dtype,
+            reload_source_l=ckpt_path,
+            reload_source_g=ckpt_path,
+            reload_prefixes_l=sdxl_def.PREFIXES["clip_l"],
+            reload_prefixes_g=sdxl_def.PREFIXES["clip_g"],
         )
         del clip_l_sd
         del clip_g_sd
@@ -720,6 +835,10 @@ def load_sdxl_checkpoint(
         load_device=clip_load_device,
         offload_device=clip_offload_device,
         dtype=clip_dtype,
+        reload_source_l=ckpt_path,
+        reload_source_g=ckpt_path,
+        reload_prefixes_l=sdxl_def.PREFIXES["clip_l"],
+        reload_prefixes_g=sdxl_def.PREFIXES["clip_g"],
     )
     del clip_l_sd
     del clip_g_sd

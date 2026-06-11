@@ -950,24 +950,14 @@ class PlacementPlanner:
         ledger: ResourceLedger,
         available_gpu_mb: float,
     ) -> ComponentPlacement:
-        if greedy and available_gpu_mb >= profile.clip_mb:
-            residency_mode = ResidencyMode.OPPORTUNISTIC_GPU.value
-            load_device = "cuda"
-            compute_device = "cuda"
-            preferred_gpu_mb = profile.clip_mb
-            required_gpu_mb = 160.0
-            pinned_cpu_mb = 0.0
-            host_ram_mb = 0.0
-            offload_device = "cuda"
-        else:
-            residency_mode = ResidencyMode.CPU_ONLY.value
-            load_device = "cpu"
-            compute_device = "cpu"
-            preferred_gpu_mb = 0.0
-            required_gpu_mb = 0.0
-            pinned_cpu_mb = profile.clip_mb
-            host_ram_mb = profile.clip_mb
-            offload_device = "cpu"
+        residency_mode = ResidencyMode.CPU_ONLY.value
+        load_device = "cpu"
+        compute_device = "cpu"
+        preferred_gpu_mb = 0.0
+        required_gpu_mb = 0.0
+        pinned_cpu_mb = profile.clip_mb
+        host_ram_mb = profile.clip_mb
+        offload_device = "cpu"
         return self._build_component(
             component_id="clip",
             family=family,
@@ -980,8 +970,8 @@ class PlacementPlanner:
             preferred_gpu_mb=preferred_gpu_mb,
             pinned_cpu_mb=pinned_cpu_mb,
             host_ram_mb=host_ram_mb,
-            transient_gpu_mb=160.0 if greedy else 0.0,
-            evict_before=("diffusion",) if greedy else (),
+            transient_gpu_mb=0.0,
+            evict_before=(),
             phase_scope=("prompt_encode",),
             ledger=ledger,
         )

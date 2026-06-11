@@ -92,16 +92,22 @@ def _classify_model_role(model_patcher):
     patcher_name = type(model_patcher).__name__
     model_obj = getattr(model_patcher, "model", None)
     model_name = type(model_obj).__name__ if model_obj is not None else "UnknownModel"
+    model_name_lower = model_name.lower()
 
     role = "model"
     if model_obj is not None:
         if hasattr(model_obj, "diffusion_model"):
             role = "unet"
-        elif 'controlnet' in model_name.lower():
+        elif 'controlnet' in model_name_lower:
             role = "controlnet"
-        elif model_name == "CLIP" or hasattr(model_obj, "tokenizer"):
+        elif model_name == "CLIP" or hasattr(model_obj, "tokenizer") or "clip" in model_name_lower:
             role = "clip"
-        elif model_name == "VAE" or hasattr(model_obj, "first_stage_model"):
+        elif (
+            model_name == "VAE"
+            or hasattr(model_obj, "first_stage_model")
+            or "autoencoder" in model_name_lower
+            or "autoencoding" in model_name_lower
+        ):
             role = "vae"
 
     gguf_suffix = "[gguf]" if "GGUF" in patcher_name else ""
@@ -967,7 +973,7 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             residency_mode == 'pinned'
             and not force_high_vram
             and vram_set_state in (VRAMState.NORMAL_VRAM, VRAMState.HIGH_VRAM)
-            and profile_name not in (environment_profiles.PROFILE_COLAB_FREE, environment_profiles.PROFILE_LOCAL_LOW_VRAM)
+            and profile_name not in (environment_profiles.PROFILE_LOCAL_LOW_VRAM,)
         )
         effective_force_full_load = force_full_load or pinned_full_load
 

@@ -206,6 +206,16 @@ class UnifiedSDXLRuntimeArtifactMixin:
 
         metrics: dict[str, float] = {"spatial_cache_hit": 0.0}
         image_fingerprint = self._hash_payload(pixels)
+
+        latent_artifacts = self._resolve_spatial_latent_artifacts(
+            spatial_mode="image",
+            bb_pixels=pixels,
+            bb_mask=None,
+        )
+        source_latent = latent_artifacts["route_latent"]
+        metrics["source_vae_encode_cpu"] = float(latent_artifacts["encode_wall"])
+        metrics["spatial_cache_hit"] = 1.0 if latent_artifacts["cache_hit"] else 0.0
+
         source_fingerprint = self._hash_payload(
             {
                 "checkpoint": self.base_model.fingerprint if self.base_model is not None else self.config.checkpoint_path,
@@ -214,10 +224,6 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 "target_height": int(self.config.height),
             }
         )
-
-        source_encode_start = time.perf_counter()
-        source_latent = self.vae.encode(pixels)["samples"].detach().cpu()
-        metrics["source_vae_encode_cpu"] = float(time.perf_counter() - source_encode_start)
 
         payload: dict[str, Any] = {
             "source_pixels": pixels,
@@ -370,11 +376,11 @@ class UnifiedSDXLRuntimeArtifactMixin:
         *,
         spatial_mode: str,
         bb_pixels: torch.Tensor,
-        bb_mask: torch.Tensor,
+        bb_mask: torch.Tensor | None,
     ) -> dict[str, Any]:
         vae_identity = self._resolve_spatial_vae_identity()
         bb_pixels_fingerprint = self._hash_payload(bb_pixels)
-        mask_fingerprint = self._hash_payload(bb_mask)
+        mask_fingerprint = self._hash_payload(bb_mask) if bb_mask is not None else None
         cache_key = self._hash_payload(
             {
                 "spatial_mode": str(spatial_mode or "image").strip().lower(),
@@ -404,9 +410,15 @@ class UnifiedSDXLRuntimeArtifactMixin:
         encode_start = time.perf_counter()
         route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
         encode_wall = time.perf_counter() - encode_start
-        denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
+        
+        if bb_mask is not None:
+            denoise_mask = self._build_denoise_mask(bb_mask, route_latent.shape)
+            denoise_mask_fingerprint = self._hash_payload(denoise_mask)
+        else:
+            denoise_mask = None
+            denoise_mask_fingerprint = None
+            
         source_latent_fingerprint = self._hash_payload(route_latent)
-        denoise_mask_fingerprint = self._hash_payload(denoise_mask)
 
         remember_spatial_latent_cache(
             cache_key,
