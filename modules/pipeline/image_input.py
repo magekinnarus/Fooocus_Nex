@@ -692,11 +692,6 @@ def preprocess_structural_controlnets(task_state, structural_preprocessor_paths=
                 structural_preprocessors.run_structural_preprocessor
             )
             preprocess_structural_tasks(
-                flags.cn_mistoline,
-                structural_tasks.get(flags.cn_mistoline, []),
-                structural_preprocessors.run_structural_preprocessor
-            )
-            preprocess_structural_tasks(
                 flags.cn_mlsd,
                 structural_tasks.get(flags.cn_mlsd, []),
                 structural_preprocessors.run_structural_preprocessor

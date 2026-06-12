@@ -575,7 +575,7 @@ class StructuralControlNetStage(PipelineStage):
         return _describe_route_resources(
             PipelineResourceRequirement(
                 resource_id='structural_preprocessors',
-                description='Structural preprocessors for Canny, CPDS, Depth, MistoLine, and MLSD guidance.',
+                description='Structural preprocessors for Canny, CPDS, Depth, and MLSD guidance.',
                 owner='backend.preprocessors.runtime',
                 tags=('controlnet', 'structural'),
             ),

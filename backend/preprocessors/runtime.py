@@ -8,7 +8,6 @@ from backend import resources
 from backend import utils as backend_utils
 from .mlsd.models import MobileV2_MLSD_Large
 from .mlsd.utils import pred_lines
-from .teed import TED
 
 DEPTH_MODEL_CONFIGS = {
     "vits": {"encoder": "vits", "features": 64, "out_channels": [48, 96, 192, 384]},
@@ -19,7 +18,6 @@ DEPTH_MODEL_CONFIGS = {
 
 _MODEL_CACHE = {
     "Depth": {"path": None, "model": None},
-    "MistoLine": {"path": None, "model": None},
     "MLSD": {"path": None, "model": None},
 }
 
@@ -90,12 +88,7 @@ def _load_depth_model(model_path):
     return model
 
 
-def _load_teed_model(model_path):
-    model = TED()
-    state_dict = _prepare_state_dict(backend_utils.load_torch_file(model_path))
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
-    return model
+
 
 
 def _load_mlsd_model(model_path):
@@ -140,23 +133,7 @@ def _safe_step(x, step=2):
     return y
 
 
-def preprocess_teed(image, model_path):
-    model = _get_cached_model("MistoLine", model_path, _load_teed_model)
-    device = resources.get_torch_device()
-    height, width = image.shape[:2]
 
-    image_tensor = torch.from_numpy(image.astype(np.float32)).permute(2, 0, 1).unsqueeze(0).to(device)
-    model = model.to(device)
-    with torch.no_grad():
-        edges = model(image_tensor)
-
-    edges = [edge.detach().cpu().numpy().astype(np.float32)[0, 0] for edge in edges]
-    edges = [cv2.resize(edge, (width, height), interpolation=cv2.INTER_LINEAR) for edge in edges]
-    edge = 1.0 / (1.0 + np.exp(-np.mean(np.stack(edges, axis=2), axis=2).astype(np.float64)))
-    edge = _safe_step(edge, step=2)
-    _offload_model(model)
-    edge = (edge * 255.0).clip(0, 255).astype(np.uint8)
-    return np.repeat(edge[..., None], 3, axis=2)
 
 
 def preprocess_mlsd(image, model_path, score_threshold=0.1, dist_threshold=0.1):
@@ -180,10 +157,6 @@ def run_structural_preprocessor(method, image, model_path=None):
         if not model_path:
             raise FileNotFoundError("Depth preprocessor path is missing")
         return preprocess_depth(image, model_path)
-    if method == "MistoLine":
-        if not model_path:
-            raise FileNotFoundError("MistoLine preprocessor path is missing")
-        return preprocess_teed(image, model_path)
     if method == "MLSD":
         if not model_path:
             raise FileNotFoundError("MLSD preprocessor path is missing")

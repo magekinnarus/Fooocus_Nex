@@ -72,12 +72,11 @@ cn_faceid = 'FaceID V2'
 cn_pulid = 'PuLID'
 cn_ip_face = 'FaceSwap'
 cn_canny = 'PyraCanny'
-cn_mistoline = 'MistoLine'
 cn_depth = 'Depth'
 cn_cpds = 'CPDS'
 cn_mlsd = 'MLSD'
 
-cn_structural_types = [cn_canny, cn_mistoline, cn_depth, cn_cpds, cn_mlsd]
+cn_structural_types = [cn_canny, cn_depth, cn_cpds, cn_mlsd]
 cn_contextual_types = [cn_ip, cn_faceid, cn_pulid]
 cn_type_aliases = {
     cn_ip_face: cn_faceid,
@@ -97,7 +96,6 @@ default_parameters = {
     cn_pulid: (0.9, 0.9),
     cn_ip_face: (0.9, 0.9),
     cn_canny: (0.5, 0.9),
-    cn_mistoline: (0.5, 0.9),
     cn_depth: (0.5, 0.9),
     cn_cpds: (0.5, 0.9),
     cn_mlsd: (0.5, 0.9),

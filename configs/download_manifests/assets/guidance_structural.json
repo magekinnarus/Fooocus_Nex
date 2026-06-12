@@ -62,36 +62,6 @@
       ]
     },
     {
-      "id": "structural.mistoline.preprocessor",
-      "kind": "preprocessor",
-      "channel": "Structural",
-      "method": "MistoLine",
-      "loader_type": "teed",
-      "artifact_type": "file",
-      "destination": "preprocessors",
-      "relative_path": "MTEED.pth",
-      "sources": [
-        {
-          "url": "https://huggingface.co/TheMistoAI/MistoLine/resolve/main/Anyline/MTEED.pth"
-        }
-      ]
-    },
-    {
-      "id": "structural.mistoline.controlnet",
-      "kind": "controlnet",
-      "channel": "Structural",
-      "method": "MistoLine",
-      "loader_type": "controlnet",
-      "artifact_type": "file",
-      "destination": "controlnet_models",
-      "relative_path": "mistoLine_fp16.safetensors",
-      "sources": [
-        {
-          "url": "https://huggingface.co/TheMistoAI/MistoLine/resolve/main/mistoLine_fp16.safetensors"
-        }
-      ]
-    },
-    {
       "id": "structural.mlsd.preprocessor",
       "kind": "preprocessor",
       "channel": "Structural",
