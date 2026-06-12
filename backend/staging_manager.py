@@ -28,9 +28,7 @@ class ResidencyMode(enum.Enum):
 
 class HardwareTier(enum.Enum):
     LOW_VRAM = "LOW_VRAM"
-    MID_VRAM = "MID_VRAM"
     NORMAL_VRAM = "NORMAL_VRAM"
-    COLAB_FREE = "COLAB_FREE"
     HIGH_VRAM = "HIGH_VRAM"
 
 
@@ -59,7 +57,12 @@ FLUX_FILL_STREAMING_PROFILE_OPEN_C64_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C64_D1_
 FLUX_FILL_STREAMING_PROFILE_OPEN_C128_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
 FLUX_RESIDENT_LOAD_STANDARD = "resident_cpu_shadow"
 FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW = "sticky_no_cpu_shadow"
+FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB = 40 * 1024.0
+FLUX_T5_STREAMING_MIN_AVAILABLE_RAM_MB = 32 * 1024.0
+FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB = 32 * 1024.0
+FLUX_T5_RESIDENT_MIN_AVAILABLE_RAM_MB = 24 * 1024.0
 FLUX_RESIDENT_EXECUTION_CLASSES = {
+    ExecutionClass.FLUX_RESIDENT_T4,
     ExecutionClass.FLUX_RESIDENT_T5,
     ExecutionClass.FLUX_RESIDENT_T6,
 }
@@ -619,12 +622,8 @@ class ExecutionClassSolver:
     def hardware_tier_for_vram(vram_total_mb: float, total_ram_mb: float = 16384.0) -> HardwareTier:
         if vram_total_mb <= 6144.0:
             return HardwareTier.LOW_VRAM
-        if vram_total_mb <= 8192.0:
-            return HardwareTier.MID_VRAM
-        if vram_total_mb <= 12288.0:
+        if vram_total_mb < 15360.0:
             return HardwareTier.NORMAL_VRAM
-        if total_ram_mb < 16384.0:
-            return HardwareTier.COLAB_FREE
         return HardwareTier.HIGH_VRAM
 
     def resolve_execution_class(self, family: str, vram_total_mb: float, total_ram_mb: float = 16384.0) -> tuple[ExecutionClass, HardwareTier]:
@@ -633,28 +632,31 @@ class ExecutionClassSolver:
         if family == "sdxl":
             if vram_total_mb < 8192.0:
                 return ExecutionClass.SDXL_STREAMING_T1, tier
-            if tier in (HardwareTier.MID_VRAM, HardwareTier.NORMAL_VRAM, HardwareTier.COLAB_FREE):
+            if tier == HardwareTier.NORMAL_VRAM:
                 return ExecutionClass.SDXL_RESIDENT_T2, tier
             return ExecutionClass.SDXL_GPU_GREEDY_T3PLUS, tier
         if family == "flux":
-            if tier in (HardwareTier.LOW_VRAM, HardwareTier.MID_VRAM):
+            if tier in (HardwareTier.LOW_VRAM, HardwareTier.NORMAL_VRAM):
                 return ExecutionClass.FLUX_STREAMING_T3, tier
-            if tier == HardwareTier.NORMAL_VRAM:
-                return ExecutionClass.FLUX_RESIDENT_T4, tier
-            if tier == HardwareTier.COLAB_FREE:
-                return ExecutionClass.FLUX_RESIDENT_T5, tier
             return ExecutionClass.FLUX_RESIDENT_T6, tier
         raise ValueError(f"Unsupported family for execution-class resolution: {family!r}")
 
     def resolve_t5_mode(
         self,
         total_ram_mb: float,
+        execution_class: ExecutionClass,
         ledger: ResourceLedger | None = None,
     ) -> str:
         available_ram_mb = total_ram_mb
         if ledger is not None:
             available_ram_mb = ledger.available_ram_mb(total_ram_mb)
-        if total_ram_mb >= 40960.0 and available_ram_mb >= 32768.0:
+        if execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
+            min_total_ram_mb = FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB
+            min_available_ram_mb = FLUX_T5_RESIDENT_MIN_AVAILABLE_RAM_MB
+        else:
+            min_total_ram_mb = FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB
+            min_available_ram_mb = FLUX_T5_STREAMING_MIN_AVAILABLE_RAM_MB
+        if total_ram_mb >= min_total_ram_mb and available_ram_mb >= min_available_ram_mb:
             return "cpu_fp16_resident"
         return "disk_paged_fp16"
 
@@ -673,7 +675,7 @@ class ExecutionClassSolver:
         profile = self.registry.profile_for_variant(resolved_variant)
         t5_mode = None
         if family == "flux":
-            t5_mode = self.resolve_t5_mode(total_ram_mb, ledger)
+            t5_mode = self.resolve_t5_mode(total_ram_mb, execution_class, ledger)
         return ResolvedRequest(
             family=family,
             requested_variant=requested_variant,

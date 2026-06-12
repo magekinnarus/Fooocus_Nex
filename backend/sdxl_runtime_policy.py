@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +40,7 @@ class SDXLExecutionPolicy:
     prefer_clip_gpu: bool = False
     prefer_gpu_vae_encode: bool = False
     stream_budget_mb: float = 256.0
+    resident_clean_source_device: str = "cpu"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     # Legacy compatibility fields
@@ -149,7 +152,7 @@ class SDXLExecutionPolicy:
             elif execution_mode == "streaming":
                 val = ExecutionClass.SDXL_STREAMING_T1
             else:
-                if self.hardware_tier in ("LOW_VRAM", "MID_VRAM", "NORMAL_VRAM", "COLAB_FREE"):
+                if self.hardware_tier in ("LOW_VRAM", "NORMAL_VRAM"):
                     val = ExecutionClass.SDXL_RESIDENT_T2
                 else:
                     val = ExecutionClass.SDXL_GPU_GREEDY_T3PLUS
@@ -280,6 +283,19 @@ def normalize_residency_class(residency_class: Any | None) -> str:
     return SDXL_RESIDENCY_CLASS_FULL
 
 
+def _resident_clean_source_device_override() -> str | None:
+    raw_value = str(os.environ.get("FOOOCUS_NEX_SDXL_RESIDENT_CLEAN_SOURCE_DEVICE", "") or "").strip().lower()
+    if raw_value in {"", "auto"}:
+        return None
+    if raw_value in {"cpu", "cuda"}:
+        return raw_value
+    logging.warning(
+        "Ignoring unsupported FOOOCUS_NEX_SDXL_RESIDENT_CLEAN_SOURCE_DEVICE=%r; expected auto, cpu, or cuda.",
+        raw_value,
+    )
+    return None
+
+
 def resolve_sdxl_execution_policy(
     *,
     architecture: str | None,
@@ -318,7 +334,16 @@ def resolve_sdxl_execution_policy(
     if not allow_gguf_runtime_family and not unet_streaming:
         allow_cpu_shadow = True
 
+    from backend.staging_manager import HardwareTier
+    resident_clean_source_device = "cpu"
+    if plan.tier == HardwareTier.HIGH_VRAM:
+        resident_clean_source_device = "cuda"
+
     notes = [plan.tier.name, plan.execution_class.name, plan.unet.mode.name]
+    clean_source_override = _resident_clean_source_device_override()
+    if clean_source_override is not None:
+        resident_clean_source_device = clean_source_override
+        notes.append(f"resident_clean_source_device={clean_source_override}")
     if is_legacy_sdxl_gguf:
         notes.append(SDXL_GGUF_DEPRECATED_NOTE)
 
@@ -334,5 +359,6 @@ def resolve_sdxl_execution_policy(
         prefer_clip_gpu=(plan.clip.mode == ResidencyMode.GPU_RESIDENT),
         prefer_gpu_vae_encode=(plan.vae.mode == ResidencyMode.GPU_RESIDENT),
         stream_budget_mb=stream_budget_mb,
+        resident_clean_source_device=resident_clean_source_device,
         notes=tuple(notes),
     )

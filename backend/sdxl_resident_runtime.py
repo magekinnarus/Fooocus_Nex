@@ -33,6 +33,7 @@ from backend.sdxl_unified_runtime_artifacts import (
 from backend.sdxl_unified_runtime_execution import UnifiedSDXLRuntimeExecutionMixin
 from backend import lora as backend_lora
 from backend.sdxl_unified_runtime import (
+    UnifiedSDXLRuntime,
     UnifiedSDXLRuntimeConfig,
     UnifiedSDXLPreparedInputs,
     UnifiedSDXLDenoiseResult,
@@ -46,11 +47,7 @@ from backend.sdxl_unified_runtime import (
 
 
 
-class ResidentSDXLRuntime(
-    UnifiedSDXLRuntimeArtifactMixin,
-    UnifiedSDXLRuntimeExecutionMixin,
-    UnifiedSDXLRuntimeProtocol,
-):
+class ResidentSDXLRuntime(UnifiedSDXLRuntime):
     """Resident-only SDXL runtime spine."""
 
     route_label = "sdxl_resident_runtime"
@@ -672,7 +669,7 @@ class ResidentSDXLRuntime(
         # Lazily create clean source snapshot on first non-empty apply
         if getattr(self.unet.model, "_nex_clean_unet_source", None) is None:
             snap_start = time.perf_counter()
-            snap_device = torch.device("cpu") if self.policy.allow_cpu_shadow else self._execution_device()
+            snap_device = self._resolve_clean_source_device()
             clean_source = {}
             for name, param in self.unet.model.named_parameters():
                 clean_source[name] = param.detach().to(device=snap_device, copy=True)
@@ -790,6 +787,16 @@ class ResidentSDXLRuntime(
             return resources.get_torch_device()
         except Exception:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _resolve_clean_source_device(self) -> torch.device:
+        configured = getattr(self.policy, "resident_clean_source_device", "cpu")
+        if isinstance(configured, torch.device):
+            device = configured
+        else:
+            device = torch.device(str(configured or "cpu").strip() or "cpu")
+        if device.type == "cuda" and device.index is None:
+            return self._execution_device()
+        return device
 
     def _clean_unet_budget_bytes(self, device: torch.device) -> int:
         if device.type != "cuda":
@@ -1071,4 +1078,3 @@ class ResidentSDXLRuntime(
         digest.update(repr(unet_compile_metrics.get("patch_count", 0)).encode("utf-8"))
         digest.update(repr(unet_compile_metrics.get("host_pinned_bytes", 0)).encode("utf-8"))
         return digest.hexdigest()
-

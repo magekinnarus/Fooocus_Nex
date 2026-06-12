@@ -36,6 +36,7 @@ launch path now supports:
 - `--memory-environment-profile`
 - `--hardware-total-ram-mb`
 - `--hardware-total-vram-mb`
+- `--sdxl-resident-clean-source-device`
 
 Example constrained Colab streaming simulation:
 
@@ -45,6 +46,13 @@ Example constrained Colab streaming simulation:
 - if you want the simulation fully explicit, also add `--hardware-total-ram-mb 57344`
 - leave `--memory-environment-profile` on `auto` or pin it to `colab_pro`
 - do not use `colab_free` for fp8 Flux Fill streaming validation; that profile exists because free-tier RAM is too small for the target streaming test
+
+Example forcing the resident SDXL clean UNet snapshot onto CPU on a roomy
+Colab Pro session:
+
+- keep `--memory-environment-profile colab_pro` or `auto`
+- add `--sdxl-resident-clean-source-device cpu`
+- this preserves the Colab Pro session while forcing the CPU-shadow resident lane for SDXL LoRA lifecycle validation
 
 ## Search And Compile
 

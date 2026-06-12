@@ -367,6 +367,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
 
     def close(self) -> None:
         self._park_compiled_unet_before_decode()
+        self._detach_component(self.unet)
         self._detach_component(getattr(self.vae, "patcher", None))
         self._detach_component(getattr(self.clip, "patcher", None))
         self._attached_payload = None

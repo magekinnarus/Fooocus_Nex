@@ -276,10 +276,14 @@ class UnifiedSDXLRuntime(
     )
 
     def __new__(cls, config: UnifiedSDXLRuntimeConfig | None = None):
-        if cls is UnifiedSDXLRuntime and _config_targets_resident_runtime(config):
-            from backend.sdxl_resident_runtime import ResidentSDXLRuntime
-
-            return ResidentSDXLRuntime(config)
+        if cls is UnifiedSDXLRuntime and config is not None:
+            if _config_targets_resident_runtime(config):
+                from backend.sdxl_resident_runtime import ResidentSDXLRuntime
+                target_cls = ResidentSDXLRuntime
+            else:
+                from backend.sdxl_streaming_runtime import SDXLStreamingRuntime
+                target_cls = SDXLStreamingRuntime
+            return super().__new__(target_cls)
         return super().__new__(cls)
 
     def __init__(self, config: UnifiedSDXLRuntimeConfig) -> None:
@@ -1260,23 +1264,13 @@ class UnifiedSDXLRuntime(
                     intermediate_dtype = tensor.dtype
                 break
 
-        if target_device.type == "cpu":
-            compile_result = CpuArtifactCompiler.compile_patcher(
-                patcher,
-                pin_unet_host=pin_model_host,
-            )
-        else:
-            # W01 compatibility bridge:
-            # resident callers still restore clean weights onto the live model shell
-            # before compile, so an empty clean_source means "use the current clean
-            # in-memory weights as the compile base" until W02 installs the fuller
-            # resident-runtime clean-source lifecycle.
-            compile_result = GpuArtifactCompiler.compile_patcher(
-                patcher,
-                clean_source={},
-                target_device=target_device,
-                intermediate_dtype=intermediate_dtype,
-            )
+        if target_device.type != "cpu":
+            raise AssertionError(f"UnifiedSDXLRuntime._compile_patcher only supports CPU-backed models, got device: {target_device}")
+
+        compile_result = CpuArtifactCompiler.compile_patcher(
+            patcher,
+            pin_unet_host=pin_model_host,
+        )
         host_pinned_bytes = self._measure_pinned_bytes(getattr(patcher, "model", None))
         return {
             **compile_result,
