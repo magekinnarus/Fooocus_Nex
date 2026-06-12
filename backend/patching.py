@@ -438,6 +438,22 @@ class NexModelPatcher:
 
     def load(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, full_load=False):
         with self.use_ejected():
+            active_device = device_to or self.load_device
+            if active_device is not None and not isinstance(active_device, torch.device):
+                active_device = torch.device(active_device)
+            current_device = self.current_loaded_device()
+            if current_device is not None and not isinstance(current_device, torch.device):
+                current_device = torch.device(current_device)
+
+            if (
+                not force_patch_weights
+                and current_device == active_device
+                and getattr(self.model, "current_weight_patches_uuid", None) == self.patches_uuid
+                and not self._current_device_is_meta()
+                and (full_load == (not getattr(self.model, "model_lowvram", False)))
+            ):
+                return
+
             if self.can_runtime_release() and self._current_device_is_meta():
                 reload_device = self.offload_device if self.offload_device is not None else (device_to or self.load_device)
                 self._reload_runtime_weights(reload_device)
@@ -457,8 +473,8 @@ class NexModelPatcher:
 
                 lowvram_weight = False
 
-                weight_key = "{}.weight".format(n)
-                bias_key = "{}.bias".format(n)
+                weight_key = f"{n}.weight" if n else "weight"
+                bias_key = f"{n}.bias" if n else "bias"
 
                 if not full_load and hasattr(m, "comfy_cast_weights"):
                     if mem_counter + module_mem >= lowvram_model_memory:
@@ -517,7 +533,7 @@ class NexModelPatcher:
                         continue
 
                 for param in params:
-                    self.patch_weight_to_device("{}.{}".format(n, param), device_to=device_to)
+                    self.patch_weight_to_device(f"{n}.{param}" if n else param, device_to=device_to)
 
                 logging.debug("lowvram: loaded module regularly {} {}".format(n, m))
                 m.comfy_patched_weights = True
