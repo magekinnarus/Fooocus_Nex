@@ -65,7 +65,7 @@ Compile sanity on the authoritative runtime surfaces:
 ### 1. Unified SDXL Runtime And Image-Input Handoff
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_sdxl_unified_runtime.py tests/test_unified_runtime_handoff.py tests/test_gguf_runtime_handoff.py tests/test_async_worker_process_transition.py tests/test_default_pipeline_process_reset.py tests/test_super_upscale_residency.py -q
+.\venv\Scripts\python.exe -m pytest tests\test_sdxl_unified_runtime.py tests\test_unified_runtime_handoff.py tests\test_gguf_runtime_handoff.py tests\test_async_worker_process_transition.py tests\test_default_pipeline_process_reset.py tests\test_super_upscale_residency.py -q
 ```
 
 Covers:
@@ -80,7 +80,7 @@ Covers:
 ### 2. Authoritative Pipeline Consolidation And GGUF Seam
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_gguf_dispatch_seam.py -q
+.\venv\Scripts\python.exe -m pytest tests\test_gguf_dispatch_seam.py -q
 ```
 
 Covers:
@@ -91,7 +91,7 @@ Covers:
 ### 3. Runtime-Centered Memory / Hardware / Flux Fill / Runtime-Surface Sanity
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_memory_governor.py tests/test_w11_policy_simplification.py tests/test_async_worker_process_transition.py tests/test_flux_fill_integration.py tests/test_runtime_surface_api.py -q
+.\venv\Scripts\python.exe -m pytest tests\test_memory_governor.py tests\test_w11_policy_simplification.py tests\test_async_worker_process_transition.py tests\test_flux_fill_integration.py tests\test_runtime_surface_api.py -q
 ```
 
 Covers:
@@ -105,7 +105,7 @@ Covers:
 ### 4. Tracked Route / Stage Smoke
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tracked_tests/test_pipeline_routes.py tracked_tests/test_pipeline_stage_runtime.py tracked_tests/test_memory_residency.py -q
+.\venv\Scripts\python.exe -m pytest tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tracked_tests\test_memory_residency.py -q
 ```
 
 Covers:
@@ -117,7 +117,7 @@ Covers:
 ### 5. Full Suite
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/ --ignore=tests/test_bgr.py --ignore=tests/test_objr.py -q
+.\venv\Scripts\python.exe -m pytest tests\ --ignore=tests\test_bgr.py --ignore=tests\test_objr.py -q
 ```
 
 Notes:

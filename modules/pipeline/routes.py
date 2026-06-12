@@ -72,6 +72,8 @@ def _has_inpaint_request(task_state) -> bool:
 
 
 def _is_flux_fill_inpaint_request(task_state) -> bool:
+    if not getattr(task_state, 'input_image_checkbox', False):
+        return False
     if task_state.current_tab != 'inpaint' or task_state.inpaint_input_image is None:
         return False
 

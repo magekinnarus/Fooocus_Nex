@@ -177,6 +177,23 @@ class SharedProcessRegistry:
         elif current.process_class != requested.process_class:
             reason = "process_class_change"
         elif current.authoritative_identity != requested.authoritative_identity:
+            is_same_base_components = False
+            if current.family == PROCESS_FAMILY_SDXL and requested.family == PROCESS_FAMILY_SDXL:
+                curr_id = current.authoritative_identity
+                req_id = requested.authoritative_identity
+                if isinstance(curr_id, tuple) and isinstance(req_id, tuple):
+                    if len(curr_id) >= 3 and len(req_id) >= 3:
+                        if curr_id[:3] == req_id[:3]:
+                            is_same_base_components = True
+            
+            if is_same_base_components:
+                return ProcessTransitionDecision(
+                    action="reuse",
+                    reason="lora_stack_change",
+                    reset_required=False,
+                    current_key=current,
+                    requested_key=requested,
+                )
             reason = "identity_change"
         else:
             reason = "same_process_identity"
