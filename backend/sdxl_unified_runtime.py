@@ -231,6 +231,33 @@ def clear_unified_sdxl_runtime_component_cache() -> None:
     resources.soft_empty_cache(force=True)
 
 
+def _config_targets_resident_runtime(config: UnifiedSDXLRuntimeConfig | None) -> bool:
+    if config is None:
+        return False
+
+    from backend.staging_manager import ExecutionClass
+
+    resident_execution_classes = {
+        ExecutionClass.SDXL_RESIDENT_T2,
+        ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+    }
+    candidates = (
+        getattr(config, "execution_class", None),
+        getattr(getattr(config, "runtime_policy", None), "execution_class", None),
+    )
+    for candidate in candidates:
+        normalized = candidate
+        if isinstance(normalized, str):
+            normalized_name = normalized.rsplit(".", 1)[-1]
+            try:
+                normalized = ExecutionClass[normalized_name]
+            except KeyError:
+                pass
+        if normalized in resident_execution_classes:
+            return True
+    return False
+
+
 class UnifiedSDXLRuntime(
     UnifiedSDXLRuntimeArtifactMixin,
     UnifiedSDXLRuntimeExecutionMixin,
@@ -247,6 +274,13 @@ class UnifiedSDXLRuntime(
         denoise_owner="backend.sdxl_unified_runtime",
         decode_owner="backend.sdxl_unified_runtime",
     )
+
+    def __new__(cls, config: UnifiedSDXLRuntimeConfig | None = None):
+        if cls is UnifiedSDXLRuntime and _config_targets_resident_runtime(config):
+            from backend.sdxl_resident_runtime import ResidentSDXLRuntime
+
+            return ResidentSDXLRuntime(config)
+        return super().__new__(cls)
 
     def __init__(self, config: UnifiedSDXLRuntimeConfig) -> None:
         self.config = config

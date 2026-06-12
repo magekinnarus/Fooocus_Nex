@@ -146,7 +146,7 @@ def should_retain_sdxl_warm_state(task_state) -> bool:
         return False
 
     decision = process_transition.evaluate_process_transition(requested_key)
-    return decision.action == 'reuse'
+    return decision.action == 'reuse' and decision.reason != 'lora_stack_change'
 
 
 def _register_active_unified_sdxl_process(task_state) -> None:
@@ -283,11 +283,15 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
                     notes={'route': 'tiled_refine', 'tile_size': [t.w, t.h], 'denoise': float(denoise)},
                     end_notes={'completed': True},
                 ):
-                    resources.load_models_gpu([runtime.vae.patcher])
-                    latent_dict = core.encode_vae(vae=runtime.vae, pixels=pixels)
+                    encode_spatial_pixels = getattr(runtime, "encode_spatial_pixels", None)
+                    if callable(encode_spatial_pixels):
+                        latent_samples = encode_spatial_pixels(pixels)
+                    else:
+                        resources.load_models_gpu([runtime.vae.patcher])
+                        latent_samples = core.encode_vae(vae=runtime.vae, pixels=pixels)["samples"]
                 
                 # Update prepared inputs with current tile's latent samples
-                prepared_inputs.payload["initial_latent"] = latent_dict["samples"]
+                prepared_inputs.payload["initial_latent"] = latent_samples
                 
                 # Setup tile step callback to catch interrupts mid-denoising
                 def tile_callback(step, temp_latent, x, total_steps, denoised=None):

@@ -63,6 +63,11 @@ class UnifiedSDXLRuntimeArtifactMixin:
 
         return core
 
+    def _encode_spatial_pixels_for_artifacts(self, pixels: torch.Tensor) -> torch.Tensor:
+        if self.vae is None:
+            raise RuntimeError("Unified SDXL runtime requires a loaded VAE before encoding spatial artifacts.")
+        return self.vae.encode(pixels)["samples"].detach().cpu()
+
     def _normalize_structural_task_shape(self, task: Any) -> tuple[Any, float, float]:
         if not isinstance(task, (list, tuple)) or len(task) < 3:
             raise ValueError(f"Unexpected structural task payload: {task!r}")
@@ -279,14 +284,14 @@ class UnifiedSDXLRuntimeArtifactMixin:
 
             masked_pixels = pixels * (1.0 - mask[..., None]) + 0.5 * mask[..., None]
             masked_encode_start = time.perf_counter()
-            masked_latent = self.vae.encode(masked_pixels)["samples"].detach().cpu()
+            masked_latent = self._encode_spatial_pixels_for_artifacts(masked_pixels)
             metrics["masked_vae_encode_cpu"] = float(time.perf_counter() - masked_encode_start)
 
             bb_pixels = self._crop_and_resize_pixels(pixels, bbox)
             bb_mask = self._crop_and_resize_mask(mask, bbox)
             bb_masked_pixels = bb_pixels * (1.0 - bb_mask[..., None]) + 0.5 * bb_mask[..., None]
             bb_encode_start = time.perf_counter()
-            bb_latent = self.vae.encode(bb_masked_pixels)["samples"].detach().cpu()
+            bb_latent = self._encode_spatial_pixels_for_artifacts(bb_masked_pixels)
             metrics["bb_vae_encode_cpu"] = float(time.perf_counter() - bb_encode_start)
             denoise_mask = self._build_denoise_mask(bb_mask, bb_latent.shape)
 
@@ -439,7 +444,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
             }
 
         encode_start = time.perf_counter()
-        route_latent = self.vae.encode(bb_pixels)["samples"].detach().cpu()
+        route_latent = self._encode_spatial_pixels_for_artifacts(bb_pixels)
         encode_wall = time.perf_counter() - encode_start
         
         if bb_mask is not None:

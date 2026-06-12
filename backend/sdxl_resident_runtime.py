@@ -557,6 +557,7 @@ class ResidentSDXLRuntime(
         self.unet = None
         self.clip = None
         self.vae = None
+        self._unload_controlnets()
         self._loaded = False
         self._base_component_cache_hit = False
         self._compiled_unet_cache_hit = False
@@ -621,6 +622,9 @@ class ResidentSDXLRuntime(
             else:
                 self.vae.first_stage_model.to(device=decode_device)
         return vae_decode.decode_latent(self.vae, latent, tiled=tiled)
+
+    def _encode_spatial_pixels_for_artifacts(self, pixels: torch.Tensor) -> torch.Tensor:
+        return self.encode_spatial_pixels(pixels).detach().cpu()
 
     def _materialize_lora_stack(self) -> dict[str, Any]:
         self._compiled_unet_cache_hit = False
@@ -1067,5 +1071,4 @@ class ResidentSDXLRuntime(
         digest.update(repr(unet_compile_metrics.get("patch_count", 0)).encode("utf-8"))
         digest.update(repr(unet_compile_metrics.get("host_pinned_bytes", 0)).encode("utf-8"))
         return digest.hexdigest()
-
 
