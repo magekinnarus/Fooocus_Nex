@@ -19,6 +19,7 @@ from typing import Any
 import torch
 from backend import conditioning, decode, k_diffusion, lora as backend_lora, loader, precision, resources, sampling
 from backend.cpu_compiler import CpuArtifactCompiler, SafeOpenHeaderOnly
+from backend.gpu_compiler import GpuArtifactCompiler
 from backend.lora_artifacts import compute_file_hash
 from backend.sdxl_runtime_contract import (
     BaseModelAvailability,
@@ -1215,10 +1216,33 @@ class UnifiedSDXLRuntime(
         if patcher is None:
             return {"status": "noop", "patch_count": 0, "host_pinned_bytes": 0}
 
-        compile_result = CpuArtifactCompiler.compile_patcher(
-            patcher,
-            pin_unet_host=pin_model_host,
-        )
+        model = getattr(patcher, "model", None)
+        target_device = torch.device("cpu")
+        intermediate_dtype = torch.float16
+        if model is not None:
+            for tensor in list(model.parameters()) + list(model.buffers()):
+                target_device = tensor.device
+                if isinstance(tensor, torch.Tensor) and tensor.is_floating_point():
+                    intermediate_dtype = tensor.dtype
+                break
+
+        if target_device.type == "cpu":
+            compile_result = CpuArtifactCompiler.compile_patcher(
+                patcher,
+                pin_unet_host=pin_model_host,
+            )
+        else:
+            # W01 compatibility bridge:
+            # resident callers still restore clean weights onto the live model shell
+            # before compile, so an empty clean_source means "use the current clean
+            # in-memory weights as the compile base" until W02 installs the fuller
+            # resident-runtime clean-source lifecycle.
+            compile_result = GpuArtifactCompiler.compile_patcher(
+                patcher,
+                clean_source={},
+                target_device=target_device,
+                intermediate_dtype=intermediate_dtype,
+            )
         host_pinned_bytes = self._measure_pinned_bytes(getattr(patcher, "model", None))
         return {
             **compile_result,

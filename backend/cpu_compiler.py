@@ -26,12 +26,22 @@ class LoRAPatchDef:
 
 
 class LazyWeight:
-    def __init__(self, path: str, key: str, shape: list[int], dtype: str, tensor: torch.Tensor | None = None) -> None:
+    def __init__(
+        self,
+        path: str,
+        key: str,
+        shape: list[int],
+        dtype: str,
+        tensor: torch.Tensor | None = None,
+        *,
+        load_strategy: str = "safetensors",
+    ) -> None:
         self.path = path
         self.key = key
         self.shape = list(shape)
         self.dtype = self._normalize_dtype(dtype)
         self._tensor = tensor
+        self._load_strategy = str(load_strategy)
 
     @staticmethod
     def _normalize_dtype(dtype: Any) -> str:
@@ -57,8 +67,24 @@ class LazyWeight:
     def load(self) -> torch.Tensor:
         if self._tensor is not None:
             return self._tensor
-        with safe_open(self.path, framework="pt", device="cpu") as handle:
-            return handle.get_tensor(self.key)
+        if self._load_strategy == "safetensors":
+            with safe_open(self.path, framework="pt", device="cpu") as handle:
+                return handle.get_tensor(self.key)
+        if self._load_strategy == "torch_load":
+            try:
+                sd = torch.load(self.path, map_location="cpu", weights_only=True)
+            except Exception:
+                sd = torch.load(self.path, map_location="cpu", weights_only=False)
+            if isinstance(sd, dict) and "state_dict" in sd:
+                sd = sd["state_dict"]
+            tensor = sd.get(self.key) if isinstance(sd, dict) else None
+            if not isinstance(tensor, torch.Tensor):
+                raise KeyError(f"Legacy tensor key {self.key!r} could not be reloaded from {self.path!r}.")
+            return tensor
+        raise RuntimeError(f"Unsupported LazyWeight load strategy: {self._load_strategy!r}")
+
+    def clear_materialized_tensor(self) -> None:
+        self._tensor = None
 
     def item(self):
         return self.load().item()
@@ -82,7 +108,7 @@ class SafeOpenHeaderOnly(dict):
                         tensor = handle.get_tensor(key)
                         shape = list(tensor.shape)
                         dtype = str(tensor.dtype)
-                    self[key] = LazyWeight(path, key, shape, dtype)
+                    self[key] = LazyWeight(path, key, shape, dtype, load_strategy="safetensors")
         except Exception:
             try:
                 sd = torch.load(path, map_location="cpu", weights_only=True)
@@ -92,7 +118,14 @@ class SafeOpenHeaderOnly(dict):
                 sd = sd["state_dict"]
             for key, tensor in sd.items():
                 if isinstance(tensor, torch.Tensor):
-                    self[key] = LazyWeight(path, key, list(tensor.shape), str(tensor.dtype), tensor=tensor)
+                    self[key] = LazyWeight(
+                        path,
+                        key,
+                        list(tensor.shape),
+                        str(tensor.dtype),
+                        tensor=tensor,
+                        load_strategy="torch_load",
+                    )
                 else:
                     self[key] = tensor
 
@@ -266,8 +299,10 @@ class CpuArtifactCompiler:
             break
 
         if target_device.type != "cpu":
-            pin_unet_host = False
-            num_workers = 1
+            raise AssertionError(
+                f"CpuArtifactCompiler cannot compile for GPU target device {target_device}. "
+                f"Use GpuArtifactCompiler for GPU/Resident compilation."
+            )
 
         patch_count = len(getattr(patcher, "patches", {}) or {})
         if patch_count == 0:
@@ -275,8 +310,7 @@ class CpuArtifactCompiler:
                 _pin_module_tensors(patcher.model)
             return {"status": "noop", "patch_count": 0}
 
-        if target_device.type == "cpu":
-            num_workers = cls._resolve_worker_count(num_workers, patch_count)
+        num_workers = cls._resolve_worker_count(num_workers, patch_count)
 
         logging.info(f"[CpuArtifactCompiler] Compiling {patch_count} patches on device {target_device} across {num_workers} worker threads.")
 
@@ -350,7 +384,10 @@ class CpuArtifactCompiler:
             break
 
         if target_device.type != "cpu":
-            pin_unet_host = False
+            raise AssertionError(
+                f"CpuArtifactCompiler cannot compile for GPU target device {target_device}. "
+                f"Use GpuArtifactCompiler for GPU/Resident compilation."
+            )
 
         patch_count = len(compiled_patches)
         if patch_count == 0:
@@ -445,7 +482,10 @@ class CpuArtifactCompiler:
                 break
 
         if target_device.type != "cpu":
-            pin_unet_host = False
+            raise AssertionError(
+                f"CpuArtifactCompiler cannot compile for GPU target device {target_device}. "
+                f"Use GpuArtifactCompiler for GPU/Resident compilation."
+            )
 
         patch_count = len(compiled_patches)
         if patch_count == 0:

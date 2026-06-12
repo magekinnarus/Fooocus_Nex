@@ -133,6 +133,7 @@ These are evidence tools, not closure gates:
 
 ```powershell
 .\venv\Scripts\python.exe tools\bench_sdxl_pinned_residency_matrix.py
+.\venv\Scripts\python.exe tools\bench_sdxl_resident_lora_lifecycle.py --placement both
 .\venv\Scripts\python.exe tools\bench_headless_gguf_txt2img.py
 .\venv\Scripts\python.exe tools\bench_flux_fill_fp8_streaming.py
 ```
