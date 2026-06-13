@@ -789,12 +789,21 @@ class FluxFillInpaintStage(PipelineStage):
             inpaint_mask = context.image_input_result.get('inpaint_mask')
             ctx = prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask)
 
+        prompt_text = _resolve_inpaint_prompt(task_state)
+        prompt_cache_path = None
+        if prompt_text:
+            prompt_cache_path = objr_engine.prepare_flux_fill_prompt_conditioning_cache_path(
+                prompt_text,
+                cache_mode=getattr(task_state, 'flux_fill_prompt_cache', 'temp'),
+                next_route_family='inpaint',
+                progress=False,
+            )
+
         active_session = objr_engine.ensure_active_flux_fill_session(
             conditioning=getattr(task_state, 'flux_fill_conditioning', None),
             progress=False,
         )
 
-        prompt_text = _resolve_inpaint_prompt(task_state)
         stitcher = InpaintPipeline()
         output_images: list[np.ndarray] = []
         img_paths: list[str] = []
@@ -828,6 +837,7 @@ class FluxFillInpaintStage(PipelineStage):
                     ctx.bb_image,
                     ctx.bb_mask,
                     prompt=prompt_text,
+                    conditioning_cache_path=prompt_cache_path,
                     seed=seed,
                     steps=int(task_state.steps),
                     sampler=task_state.sampler_name,

@@ -578,6 +578,7 @@ def generate_flux_fill_prompt_conditioning_cache(
     *,
     cache_mode: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
     t5_variant: str | None = None,
+    next_route_family: str | None = None,
     progress: bool = True,
 ) -> str:
     prompt_text = str(prompt or "").strip()
@@ -594,7 +595,7 @@ def generate_flux_fill_prompt_conditioning_cache(
         return str(output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    keep_resident = should_keep_flux_fill_text_encoder_resident()
+    keep_resident = should_keep_flux_fill_text_encoder_resident(next_route_family=next_route_family)
     try:
         if not keep_resident:
             _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_cache_preflight")
@@ -609,6 +610,37 @@ def generate_flux_fill_prompt_conditioning_cache(
     finally:
         if not keep_resident:
             _cleanup_flux_prompt_conditioning_host_memory("flux_prompt_conditioning_cache_postflight")
+
+
+def prepare_flux_fill_prompt_conditioning_cache_path(
+    prompt: str,
+    *,
+    cache_mode: str | None = FLUX_FILL_PROMPT_CACHE_TEMP,
+    t5_variant: str | None = None,
+    next_route_family: str | None = None,
+    progress: bool = True,
+) -> str:
+    prompt_text = str(prompt or "").strip()
+    if prompt_text == "":
+        raise ValueError("Flux Fill prompt conditioning requires a non-empty prompt.")
+
+    session = get_active_flux_fill_session()
+    if session is not None and session.started:
+        keep_resident = should_keep_flux_fill_text_encoder_resident(
+            next_route_family=next_route_family
+        )
+        if not keep_resident and getattr(session.config, "runtime_posture", None) == "streaming":
+            end_active_flux_fill_session(
+                reason=f"flux_prompt_conditioning_refresh:{next_route_family}"
+            )
+
+    return generate_flux_fill_prompt_conditioning_cache(
+        prompt_text,
+        cache_mode=cache_mode,
+        t5_variant=t5_variant,
+        next_route_family=next_route_family,
+        progress=progress,
+    )
 
 
 def generate_flux_fill_prompt_conditioning(
@@ -743,10 +775,12 @@ def resolve_flux_fill_asset_paths(
         else:
             raise
 
+    keep_vae_resident = _component_is_gpu_resident(getattr(policy_plan, "vae", None))
     if selected_model_variant != getattr(policy_plan, "model_variant", None):
         runtime_family = "gguf"
         streaming_profile = None
         resident_load_strategy = None
+        keep_vae_resident = False
 
     conditioning_asset_id = None
     if conditioning_cache_path:
@@ -769,7 +803,7 @@ def resolve_flux_fill_asset_paths(
         "runtime_posture": runtime_posture,
         "streaming_profile": streaming_profile,
         "resident_load_strategy": resident_load_strategy,
-        "keep_vae_resident": _component_is_gpu_resident(getattr(policy_plan, "vae", None)),
+        "keep_vae_resident": keep_vae_resident,
         "fallback_model_variant": fallback_model_variant,
         "fallback_engaged": bool(fallback_engaged),
         "fallback_reason": str(fallback_reason) if fallback_reason is not None else "",
@@ -1254,13 +1288,23 @@ def remove_object_flux_fill(
     flux_mask = prepare_flux_fill_mask(np.asarray(mask), grow=int(mask_dilate), blur=int(mask_blur))
     selected_mode = _select_flux_fill_mode(np.asarray(image), mode)
     selected_blend_mode = normalize_flux_fill_blend_mode(blend_mode)
-    active_session = get_active_flux_fill_session()
 
+    prompt_cache_path = None
+    if str(prompt or "").strip():
+        prompt_cache_path = prepare_flux_fill_prompt_conditioning_cache_path(
+            str(prompt or ""),
+            cache_mode=prompt_cache,
+            next_route_family="removal",
+            progress=progress,
+        )
+
+    active_session = get_active_flux_fill_session()
     if active_session is not None:
         result = active_session.generate_removal(
             HWC3(image),
             flux_mask,
             prompt=prompt,
+            conditioning_cache_path=prompt_cache_path,
             seed=int(seed),
             steps=int(steps),
             sampler=sampler,
@@ -1273,14 +1317,6 @@ def remove_object_flux_fill(
             progress=progress,
         )
         return HWC3(np.asarray(result.output_image))
-
-    prompt_cache_path = None
-    if str(prompt or "").strip():
-        prompt_cache_path = generate_flux_fill_prompt_conditioning_cache(
-            str(prompt or ""),
-            cache_mode=prompt_cache,
-            progress=progress,
-        )
 
     asset_paths = resolve_flux_fill_asset_paths(
         tier=tier,

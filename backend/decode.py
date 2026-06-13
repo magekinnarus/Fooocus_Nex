@@ -140,9 +140,7 @@ def decode_latent(vae, latent, tiled=False, tile_size=64):
     memory_used = _decode_memory_required(latent, dtype)
 
     try:
-        device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
+        resources.soft_empty_cache(force=True)
 
         force_full_load = _should_force_fp32_vae_decode(vae)
         resources.prepare_models_for_stage(

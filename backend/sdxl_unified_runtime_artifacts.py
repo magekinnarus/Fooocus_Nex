@@ -137,7 +137,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
         )
 
     def _load_structural_controlnet(self, cn_type: str) -> Any:
-        from backend import loader
+        from backend import loader, resources
 
         model_path = (self.config.controlnet_paths or {}).get(cn_type)
         if not model_path:
@@ -147,30 +147,22 @@ class UnifiedSDXLRuntimeArtifactMixin:
             if self.config.controlnet_quality:
                 loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
             return controlnet
-        try:
-            import modules.default_pipeline as default_pipeline
-        except Exception:
-            default_pipeline = None
 
-        if default_pipeline is not None:
-            controlnet = default_pipeline.loaded_ControlNets.get(model_path)
-            if controlnet is None and not getattr(self, "_structural_controlnets_prefetched", False):
-                requested_paths = [
-                    path for path in dict.fromkeys((self.config.controlnet_paths or {}).values()) if path
-                ]
-                if requested_paths:
-                    try:
-                        default_pipeline.refresh_controlnets(requested_paths)
-                    except Exception:
-                        logging.debug("Falling back to runtime-local structural ControlNet loading.", exc_info=True)
-                self._structural_controlnets_prefetched = True
-                controlnet = default_pipeline.loaded_ControlNets.get(model_path)
-            if controlnet is not None:
-                if self.config.controlnet_quality:
-                    loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
-                self._loaded_controlnets[model_path] = controlnet
-                self._borrowed_controlnet_paths.add(model_path)
-                return controlnet
+        controlnet = resources.query_loaded_controlnet(model_path)
+        if controlnet is None and not getattr(self, "_structural_controlnets_prefetched", False):
+            requested_paths = [
+                path for path in dict.fromkeys((self.config.controlnet_paths or {}).values()) if path
+            ]
+            if requested_paths:
+                resources.trigger_refresh_controlnets(requested_paths)
+            self._structural_controlnets_prefetched = True
+            controlnet = resources.query_loaded_controlnet(model_path)
+        if controlnet is not None:
+            if self.config.controlnet_quality:
+                loader.patch_controlnet_for_quality(controlnet, self.config.controlnet_quality)
+            self._loaded_controlnets[model_path] = controlnet
+            self._borrowed_controlnet_paths.add(model_path)
+            return controlnet
 
         core = self._load_structural_runtime_modules()
         controlnet = core.load_controlnet(model_path)

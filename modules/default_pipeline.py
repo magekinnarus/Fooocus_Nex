@@ -88,6 +88,13 @@ def refresh_controlnets(model_paths):
     return
 
 
+# Register ControlNet residency and cache provider callbacks with backend resources manager
+resources.register_controlnet_residency_handler(lambda mode: apply_controlnet_residency(mode))
+resources.register_loaded_controlnets_provider(lambda path: loaded_ControlNets.get(path))
+resources.register_refresh_controlnets_callback(lambda paths: refresh_controlnets(paths))
+
+
+
 @torch.inference_mode()
 def assert_model_integrity():
     if model_base.unet_with_lora is None:

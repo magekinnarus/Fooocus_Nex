@@ -76,6 +76,38 @@ class ResourcesConfig:
 
 config = ResourcesConfig()
 
+# Provider callbacks for legacy ControlNet caching and residency management to prevent circular imports from modules
+_CONTROLNET_RESIDENCY_HANDLER = None
+_LOADED_CONTROLNETS_PROVIDER = None
+_REFRESH_CONTROLNETS_CALLBACK = None
+
+def register_controlnet_residency_handler(handler):
+    global _CONTROLNET_RESIDENCY_HANDLER
+    _CONTROLNET_RESIDENCY_HANDLER = handler
+
+def register_loaded_controlnets_provider(provider):
+    global _LOADED_CONTROLNETS_PROVIDER
+    _LOADED_CONTROLNETS_PROVIDER = provider
+
+def register_refresh_controlnets_callback(callback):
+    global _REFRESH_CONTROLNETS_CALLBACK
+    _REFRESH_CONTROLNETS_CALLBACK = callback
+
+def query_loaded_controlnet(model_path):
+    if _LOADED_CONTROLNETS_PROVIDER is not None:
+        try:
+            return _LOADED_CONTROLNETS_PROVIDER(model_path)
+        except Exception:
+            pass
+    return None
+
+def trigger_refresh_controlnets(model_paths):
+    if _REFRESH_CONTROLNETS_CALLBACK is not None:
+        try:
+            _REFRESH_CONTROLNETS_CALLBACK(model_paths)
+        except Exception:
+            pass
+
 # Determine VRAM State
 vram_state = VRAMState.NORMAL_VRAM
 set_vram_to = VRAMState.NORMAL_VRAM
@@ -160,8 +192,11 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
     profile, or T5 policy; those remain owned upstream.
     """
     if policy is None:
-        from modules import default_pipeline
-        policy = getattr(default_pipeline.model_base, 'sdxl_execution_policy', None)
+        from backend import sdxl_runtime_policy
+        policy = sdxl_runtime_policy.resolve_sdxl_execution_policy(
+            architecture="sdxl",
+            base_model_name=None,
+        )
     
     # Defaults
     dev = torch.device("cpu")
@@ -293,6 +328,11 @@ def prepare_models_for_stage(
         phase_name,
         len(models),
     )
+    try:
+        from backend import process_transition
+        process_transition.log_stage_telemetry(stage_label, target_phase)
+    except Exception:
+        pass
     return load_models_gpu(
         models,
         memory_required=memory_required,
@@ -366,10 +406,10 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
     controlnet_action = _eviction_mode_for_resource(plan, 'controlnet', aggressive=aggressive)
     if controlnet_action is not None:
         try:
-            import modules.default_pipeline as default_pipeline
-            action = default_pipeline.apply_controlnet_residency(controlnet_action)
-            if _has_residency_effect(action):
-                actions['controlnet'] = action
+            if _CONTROLNET_RESIDENCY_HANDLER is not None:
+                action = _CONTROLNET_RESIDENCY_HANDLER(controlnet_action)
+                if _has_residency_effect(action):
+                    actions['controlnet'] = action
         except Exception:
             logging.debug('ControlNet residency cleanup failed.', exc_info=True)
 

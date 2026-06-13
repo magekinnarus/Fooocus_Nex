@@ -31,7 +31,7 @@ class EnumAction(argparse.Action):
         setattr(namespace, self.dest, value)
 
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(conflict_handler="resolve")
 
 parser.add_argument("--listen", type=str, default="127.0.0.1", metavar="IP", nargs="?", const="0.0.0.0")
 parser.add_argument("--port", type=int, default=8188)

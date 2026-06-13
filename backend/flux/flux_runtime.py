@@ -790,7 +790,7 @@ class FluxFillPipeline:
             "latent": _tensor_summary(latent),
             "elapsed": elapsed,
             "latent_format": "processed" if apply_latent_format else "raw_vae",
-            "resident_vae": not owned_vae,
+            "resident_vae": not owned_vae and not (cleanup_vae if cleanup_vae is not None else owned_vae),
             "cleanup_vae": bool(cleanup_vae if cleanup_vae is not None else owned_vae),
         }
         return latent.detach().cpu(), summary
@@ -1145,14 +1145,22 @@ class FluxFillPipeline:
                     "Injected Flux denoise_mask shape does not match latent shape: "
                     f"{list(denoise_mask.shape)} vs {list(source_latent.shape)}."
                 )
+            should_cleanup = cleanup_vae if cleanup_vae is not None else (vae is None)
+            if vae is not None and should_cleanup:
+                try:
+                    vae.patcher.detach()
+                finally:
+                    resources.soft_empty_cache()
+                vae = None
+
             timings["encode_source_latent"] = 0.0
             debug_summary["stages"]["encode_source_latent"] = {
                 "stage": "encode_source_latent",
                 "latent": _tensor_summary(source_latent),
                 "elapsed": 0.0,
                 "latent_format": "processed",
-                "resident_vae": vae is not None,
-                "cleanup_vae": False,
+                "resident_vae": vae is not None and not should_cleanup,
+                "cleanup_vae": should_cleanup,
                 "source": "injected_latent_source",
             }
             timings["encode_concat_latent"] = 0.0
@@ -1185,14 +1193,16 @@ class FluxFillPipeline:
                     resources.soft_empty_cache()
 
             stage_start = time.perf_counter()
-            source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae, cleanup_vae=False if vae is not None else cleanup_vae)
+            source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae, cleanup_vae=False)
             timings["encode_source_latent"] = time.perf_counter() - stage_start
             debug_summary["stages"]["encode_source_latent"] = source_latent_summary
 
             stage_start = time.perf_counter()
-            concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels, vae=vae, cleanup_vae=False if vae is not None else cleanup_vae)
+            concat_latent, concat_latent_summary = self.encode_concat_latent(concat_pixels, vae=vae, cleanup_vae=cleanup_vae)
             timings["encode_concat_latent"] = time.perf_counter() - stage_start
             debug_summary["stages"]["encode_concat_latent"] = concat_latent_summary
+            if cleanup_vae:
+                vae = None
 
             if tuple(source_latent.shape) != tuple(concat_latent.shape):
                 raise FluxFillValidationError(f"source_latent shape {list(source_latent.shape)} does not match concat_latent shape {list(concat_latent.shape)}.")

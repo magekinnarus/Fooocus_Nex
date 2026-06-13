@@ -267,3 +267,47 @@ def describe_process_key(key: ProcessKey | None) -> str:
         f"class={key.process_class} "
         f"identity={key.authoritative_identity!r}"
     )
+
+
+def log_stage_telemetry(
+    stage_name: str,
+    target_phase: str | None = None,
+    *,
+    prefetch_count: int | None = None,
+    posture_override: str | None = None,
+) -> None:
+    import torch
+    import logging
+    if posture_override is not None:
+        posture = str(posture_override)
+    else:
+        active_key = get_active_process_key()
+        posture = "Unknown"
+        if active_key is not None:
+            p_class = str(active_key.process_class or "").lower()
+            res_class = str(active_key.residency_class or "").lower()
+            if "streaming" in p_class or "streaming" in res_class:
+                posture = "Streaming"
+            else:
+                posture = "Resident"
+
+    free_vram_bytes = 0.0
+    cached_vram_bytes = 0.0
+    try:
+        if torch.cuda.is_available():
+            device = torch.cuda.current_device()
+            free_vram_bytes = float(torch.cuda.mem_get_info(device)[0])
+            cached_vram_bytes = float(torch.cuda.memory_reserved(device))
+    except Exception:
+        pass
+
+    if prefetch_count is None:
+        prefetch_count = 0
+
+    logging.info(
+        f"[Nex-Telemetry] Stage Switch: stage={stage_name} | "
+        f"posture={posture} | "
+        f"free_vram={free_vram_bytes / (1024*1024):.1f}MB | "
+        f"cached_vram={cached_vram_bytes / (1024*1024):.1f}MB | "
+        f"prefetch_queue={prefetch_count}"
+    )

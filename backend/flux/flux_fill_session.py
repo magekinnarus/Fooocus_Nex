@@ -46,7 +46,7 @@ class FluxPromptConditioningCache:
                 "source": "explicit_payload",
             }
 
-        if prompt_text and self.resolve_conditioning is not None:
+        if prompt_text and self.resolve_conditioning is not None and conditioning_cache_path is None:
             cache_key = f"prompt::{prompt_text}"
             cached = self._cache.get(cache_key)
             if cached is not None:

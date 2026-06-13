@@ -450,6 +450,12 @@ def decode_flux_fill_latent(
     owned_vae = vae is None
     decode_start = time.perf_counter()
     try:
+        try:
+            from backend import process_transition
+            posture = "Resident" if str(config.runtime_posture or "").strip().lower() == "resident" else "Streaming"
+            process_transition.log_stage_telemetry("vae_decode", posture_override=posture)
+        except Exception:
+            pass
         if vae is None:
             vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
         original_argv = list(sys.argv)
@@ -661,6 +667,12 @@ def denoise_flux_fill_latent(
         raise FluxFillValidationError("latent_source.denoise_mask must be a tensor.")
 
     from backend import resources, sampling
+    try:
+        from backend import process_transition
+        posture = "Resident" if str(config.runtime_posture or "").strip().lower() == "resident" else "Streaming"
+        process_transition.log_stage_telemetry("denoise", posture_override=posture)
+    except Exception:
+        pass
 
     device = torch.device(load_device or config.device) if (load_device or config.device) else resources.get_torch_device()
     offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
@@ -775,8 +787,12 @@ def denoise_flux_fill_latent(
         timings["denoise_wall"] = time.perf_counter() - denoise_start
         timings["denoise_cpu_proc"] = time.process_time() - denoise_cpu_start
         metadata["native_unet_runtime_after_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
-        if streaming_scheduler is not None and hasattr(streaming_scheduler, "snapshot"):
-            metadata["streaming_scheduler"] = streaming_scheduler.snapshot()
+        active_scheduler = getattr(unet_patcher, "model_options", {}).get("flux_fill", {}).get("streaming_scheduler")
+        if active_scheduler is not None:
+            if hasattr(active_scheduler, "snapshot"):
+                metadata["streaming_scheduler"] = active_scheduler.snapshot()
+            if hasattr(active_scheduler, "reset_run"):
+                active_scheduler.reset_run(clear_prefetched=True)
         should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
         metadata["cleanup_unet"] = bool(should_cleanup)
         if should_cleanup:
@@ -812,6 +828,12 @@ def denoise_flux_fill_precomputed_latent(
     denoise_input.validate()
 
     from backend import resources, sampling
+    try:
+        from backend import process_transition
+        posture = "Resident" if str(config.runtime_posture or "").strip().lower() == "resident" else "Streaming"
+        process_transition.log_stage_telemetry("denoise", posture_override=posture)
+    except Exception:
+        pass
 
     device = torch.device(load_device or config.device) if (load_device or config.device) else resources.get_torch_device()
     offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
@@ -918,8 +940,12 @@ def denoise_flux_fill_precomputed_latent(
         timings["denoise_wall"] = time.perf_counter() - denoise_start
         timings["denoise_cpu_proc"] = time.process_time() - denoise_cpu_start
         metadata["native_unet_runtime_after_denoise"] = _snapshot_module_runtime(getattr(unet_patcher, "model", None))
-        if streaming_scheduler is not None and hasattr(streaming_scheduler, "snapshot"):
-            metadata["streaming_scheduler"] = streaming_scheduler.snapshot()
+        active_scheduler = getattr(unet_patcher, "model_options", {}).get("flux_fill", {}).get("streaming_scheduler")
+        if active_scheduler is not None:
+            if hasattr(active_scheduler, "snapshot"):
+                metadata["streaming_scheduler"] = active_scheduler.snapshot()
+            if hasattr(active_scheduler, "reset_run"):
+                active_scheduler.reset_run(clear_prefetched=True)
         should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
         metadata["cleanup_unet"] = bool(should_cleanup)
         if should_cleanup:
