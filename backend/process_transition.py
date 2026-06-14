@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Optional
 
+from modules.route_intent import resolve_route_intent
+
 
 PROCESS_FAMILY_SDXL = "sdxl"
 PROCESS_FAMILY_FLUX_FILL = "flux_fill"
@@ -136,6 +138,9 @@ class SharedProcessRegistry:
     def __init__(self) -> None:
         self._lock = RLock()
         self._active_key: ProcessKey | None = None
+        self._active_family: str | None = None
+        self._active_route_owner: str | None = None
+        self._safe_to_retain: bool = False
 
     def get_active_key(self) -> ProcessKey | None:
         with self._lock:
@@ -145,11 +150,61 @@ class SharedProcessRegistry:
         normalized = key.normalized() if key is not None else None
         with self._lock:
             self._active_key = normalized
+            if normalized is not None:
+                self._active_family = normalized.family
+                self._active_route_owner = None
+                self._safe_to_retain = False
+            else:
+                self._active_family = None
+                self._active_route_owner = None
+                self._safe_to_retain = False
             return self._active_key
 
     def clear_active_key(self) -> None:
         with self._lock:
             self._active_key = None
+            self._active_family = None
+            self._active_route_owner = None
+            self._safe_to_retain = False
+
+    def get_active_family(self) -> str | None:
+        with self._lock:
+            return self._active_family
+
+    def set_active_family(self, family: str | None) -> None:
+        with self._lock:
+            self._active_family = family
+
+    def get_active_route_owner(self) -> str | None:
+        with self._lock:
+            return self._active_route_owner
+
+    def set_active_route_owner(self, route_owner: str | None) -> None:
+        with self._lock:
+            self._active_route_owner = route_owner
+
+    def is_safe_to_retain(self) -> bool:
+        with self._lock:
+            return self._safe_to_retain
+
+    def set_safe_to_retain(self, safe: bool) -> None:
+        with self._lock:
+            self._safe_to_retain = safe
+
+    def set_active_runtime(self, family: str | None, key: ProcessKey | None, route_owner: str | None, safe_to_retain: bool = False) -> None:
+        normalized = key.normalized() if key is not None else None
+        with self._lock:
+            self._active_family = family
+            self._active_key = normalized
+            self._active_route_owner = route_owner
+            self._safe_to_retain = safe_to_retain
+
+    def clear_active_runtime(self) -> None:
+        with self._lock:
+            self._active_key = None
+            self._active_family = None
+            self._active_route_owner = None
+            self._safe_to_retain = False
 
     def evaluate_transition(self, requested_key: ProcessKey) -> ProcessTransitionDecision:
         requested = requested_key.normalized()
@@ -227,6 +282,38 @@ def set_active_process_key(key: ProcessKey | None) -> ProcessKey | None:
 
 def clear_active_process_key() -> None:
     _DEFAULT_REGISTRY.clear_active_key()
+
+
+def get_active_family() -> str | None:
+    return _DEFAULT_REGISTRY.get_active_family()
+
+
+def set_active_family(family: str | None) -> None:
+    _DEFAULT_REGISTRY.set_active_family(family)
+
+
+def get_active_route_owner() -> str | None:
+    return _DEFAULT_REGISTRY.get_active_route_owner()
+
+
+def set_active_route_owner(route_owner: str | None) -> None:
+    _DEFAULT_REGISTRY.set_active_route_owner(route_owner)
+
+
+def is_safe_to_retain() -> bool:
+    return _DEFAULT_REGISTRY.is_safe_to_retain()
+
+
+def set_safe_to_retain(safe: bool) -> None:
+    _DEFAULT_REGISTRY.set_safe_to_retain(safe)
+
+
+def set_active_runtime(family: str | None, key: ProcessKey | None, route_owner: str | None, safe_to_retain: bool = False) -> None:
+    _DEFAULT_REGISTRY.set_active_runtime(family, key, route_owner, safe_to_retain)
+
+
+def clear_active_runtime() -> None:
+    _DEFAULT_REGISTRY.clear_active_runtime()
 
 
 def evaluate_process_transition(requested_key: ProcessKey) -> ProcessTransitionDecision:
@@ -311,3 +398,198 @@ def log_stage_telemetry(
         f"cached_vram={cached_vram_bytes / (1024*1024):.1f}MB | "
         f"prefetch_queue={prefetch_count}"
     )
+
+
+def resolve_preflight_additional_loras(task_state) -> list:
+    additional_loras = []
+    route_intent = resolve_route_intent(task_state)
+
+    # 1. Inpaint / Outpaint patch LoRA
+    try:
+        from modules import flags, config
+        is_outpaint = route_intent.wants_outpaint
+        is_inpaint = route_intent.wants_inpaint
+        use_flux_fill_inpaint = route_intent.wants_flux_inpaint
+
+        if (is_outpaint or is_inpaint) and not use_flux_fill_inpaint:
+            engine = getattr(task_state, 'outpaint_engine', 'None') if is_outpaint else getattr(task_state, 'inpaint_engine', 'None')
+            engine = flags.normalize_inpaint_engine_version(engine, default=flags.INPAINT_ENGINE_NONE)
+            if engine != flags.INPAINT_ENGINE_NONE:
+                inpaint_patch_model_path = config.downloading_inpaint_models(engine)
+                additional_loras.append((inpaint_patch_model_path, 1.0))
+    except Exception:
+        pass
+
+    # 2. FaceID LoRA
+    try:
+        from modules import flags, model_registry
+
+        contextual_tasks = task_state.get_cn_tasks_for_channel(flags.cn_contextual)
+        if len(contextual_tasks.get(flags.cn_faceid, [])) > 0:
+            faceid_lora_path = model_registry.ensure_asset('contextual.faceid.lora')
+            additional_loras.append((faceid_lora_path, 1.0))
+    except Exception:
+        pass
+
+    return additional_loras
+
+
+def resolve_sdxl_process_key(task_state) -> ProcessKey | None:
+    from modules.pipeline.inference import resolve_unified_sdxl_process_key
+
+    return resolve_unified_sdxl_process_key(
+        task_state,
+        loras=getattr(task_state, 'loras', []) or [],
+        base_model_additional_loras=getattr(task_state, 'base_model_additional_loras', []) or [],
+    )
+
+
+def resolve_flux_fill_process_key(
+    task_state,
+    *,
+    route_family: str | None = None,
+    selected_engine: str | None = None,
+) -> ProcessKey | None:
+    try:
+        import modules.objr_engine as objr_engine
+
+        if selected_engine is None:
+            selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+        if str(route_family or '').strip().lower() == 'flux_fill':
+            selected_engine = objr_engine.OBJR_ENGINE_FLUX_FILL
+        if selected_engine != objr_engine.OBJR_ENGINE_FLUX_FILL:
+            return None
+
+        asset_paths = objr_engine.resolve_flux_fill_asset_paths(
+            conditioning=getattr(task_state, 'flux_fill_conditioning', None),
+            progress=False,
+        )
+        return build_process_key(
+            family=PROCESS_FAMILY_FLUX_FILL,
+            process_class=PROCESS_CLASS_FLUX_FILL,
+            authoritative_identity=tuple(sorted(asset_paths.items())),
+            route_family='flux_fill',
+        )
+    except Exception:
+        return None
+
+
+def resolve_requested_process_key(task_state, route) -> ProcessKey | None:
+    import modules.objr_engine as objr_engine
+
+    selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+    expects_flux_process = route.family == 'flux_fill' or selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL
+    if expects_flux_process:
+        return resolve_flux_fill_process_key(
+            task_state,
+            route_family=route.family,
+            selected_engine=selected_engine,
+        )
+    if getattr(task_state.sdxl_execution_policy, 'enabled', False):
+        return resolve_sdxl_process_key(task_state)
+    return None
+
+
+def release_process_boundary(current_key: ProcessKey | None, requested_key: ProcessKey | None) -> Any:
+    if current_key is None or requested_key is None:
+        return None
+
+    if current_key.family == PROCESS_FAMILY_SDXL:
+        import backend.resources as resources
+        import modules.default_pipeline as default_pipeline
+
+        current_model_name = getattr(current_key, 'authoritative_identity', (None,))[0] if getattr(current_key, 'authoritative_identity', None) else None
+        next_model_name = getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None
+
+        resources.prepare_for_checkpoint_switch(
+            current_model=current_model_name,
+            next_model=next_model_name,
+            release_callback=None,
+            notes={
+                'reason': 'route_transition',
+                'current_process_key': describe_process_key(current_key),
+                'next_process_key': describe_process_key(requested_key),
+            },
+        )
+
+        return default_pipeline.release_sdxl_runtime_state(
+            current_process_key=current_key,
+            next_process_key=requested_key,
+            current_model_name=current_model_name,
+            next_model_name=next_model_name,
+            reason='route_transition',
+            hard_reset=False,
+        )
+
+    if current_key.family == PROCESS_FAMILY_FLUX_FILL:
+        import modules.objr_engine as objr_engine
+
+        return objr_engine.end_active_flux_fill_session(reason='route_transition')
+
+    return None
+
+
+def apply_process_transition_gate(requested_key: ProcessKey | None) -> ProcessTransitionDecision | None:
+    if requested_key is None:
+        return None
+
+    current_key = get_active_process_key()
+    decision = evaluate_process_transition(requested_key)
+    if decision.reset_required:
+        release_process_boundary(current_key, requested_key)
+        clear_active_runtime()
+    return decision
+
+
+def sync_route_process_activation(route, task_state, requested_process_key: ProcessKey | None) -> Any:
+    if route.family == "flux_fill":
+        from modules.pipeline.routes import sync_flux_fill_route_session
+        sync_result = sync_flux_fill_route_session(route, task_state, progress=False)
+
+        import modules.objr_engine as objr_engine
+
+        if (
+            requested_process_key is not None
+            and requested_process_key.family == PROCESS_FAMILY_FLUX_FILL
+            and objr_engine.has_active_flux_fill_session()
+        ):
+            hardware = objr_engine.inspect_flux_fill_hardware()
+            safe_to_retain = (hardware.runtime_posture == "resident")
+
+            set_active_runtime(
+                family=PROCESS_FAMILY_FLUX_FILL,
+                key=requested_process_key,
+                route_owner=route.route_id,
+                safe_to_retain=safe_to_retain
+            )
+        else:
+            clear_active_runtime()
+        return sync_result
+
+    elif route.family == "sdxl" or getattr(task_state.sdxl_execution_policy, "enabled", False):
+        if requested_process_key is not None and requested_process_key.family == PROCESS_FAMILY_SDXL:
+            policy = getattr(task_state, 'sdxl_execution_policy', None)
+            execution_mode = getattr(policy, 'execution_mode', None)
+            safe_to_retain = (execution_mode == 'resident')
+
+            set_active_runtime(
+                family=PROCESS_FAMILY_SDXL,
+                key=requested_process_key,
+                route_owner=route.route_id,
+                safe_to_retain=safe_to_retain
+            )
+        else:
+            clear_active_runtime()
+        return None
+
+    else:
+        clear_active_runtime()
+        return None
+
+
+def reconcile_runtime_state(route, task_state) -> ProcessTransitionDecision | None:
+    task_state.base_model_additional_loras = resolve_preflight_additional_loras(task_state)
+    requested_process_key = resolve_requested_process_key(task_state, route)
+    decision = apply_process_transition_gate(requested_process_key)
+    sync_route_process_activation(route, task_state, requested_process_key)
+    return decision

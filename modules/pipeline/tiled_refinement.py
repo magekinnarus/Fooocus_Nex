@@ -155,7 +155,14 @@ def _register_active_unified_sdxl_process(task_state) -> None:
 
     active_process_key = resolve_unified_sdxl_process_key(task_state)
     if active_process_key is not None:
-        process_transition.set_active_process_key(active_process_key)
+        policy = getattr(task_state, 'sdxl_execution_policy', None)
+        execution_mode = getattr(policy, 'execution_mode', None)
+        process_transition.set_active_runtime(
+            family=process_transition.PROCESS_FAMILY_SDXL,
+            key=active_process_key,
+            route_owner=getattr(task_state, 'runtime_route_id', None) or 'super_upscale',
+            safe_to_retain=(execution_mode == 'resident'),
+        )
 
 
 def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, progressbar_callback=None, prompt_task=None):

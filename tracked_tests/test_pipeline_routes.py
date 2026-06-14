@@ -89,3 +89,35 @@ def test_build_generation_route_maps_upscale_family():
 
     assert route.route_id == 'super_upscale'
     assert describe_route(route) == ['image_input_prepare', 'prompt_encode', 'upscale']
+
+
+def test_build_generation_route_ignores_stale_inpaint_mix_without_live_controlnet_tasks():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='ip',
+        mixing_image_prompt_and_inpaint=True,
+        inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        inpaint_mask_image=np.zeros((8, 8), dtype=np.uint8),
+    )
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'txt2img'
+    assert describe_route(route) == ['prompt_encode', 'diffusion_batch']
+
+
+def test_build_generation_route_does_not_add_image_input_stages_for_stale_txt2img_checkbox_state():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='txt2img',
+        mixing_image_prompt_and_inpaint=True,
+        inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        inpaint_mask_image=np.zeros((8, 8), dtype=np.uint8),
+        uov_method='upscale',
+        uov_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+    )
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'txt2img'
+    assert describe_route(route) == ['prompt_encode', 'diffusion_batch']

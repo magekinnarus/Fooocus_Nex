@@ -8,6 +8,7 @@ import urllib.parse
 
 import modules.async_worker as worker
 import modules.flags as flags
+from modules.route_intent import normalize_flux_fill_inpaint_route, resolve_route_intent
 import numpy as np
 from PIL import Image
 
@@ -84,80 +85,23 @@ def _normalize_objr_engine_name(value) -> str:
 
 
 def _is_flux_fill_inpaint_route(value) -> bool:
-    normalized = _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
-    return normalized == "flux"
+    return normalize_flux_fill_inpaint_route(value) == "flux"
 
 
 def _is_upscale_request(state) -> bool:
-    route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
-    if route_id != "":
-        return route_id in {"upscale", "super_upscale"}
-    if not bool(getattr(state, "input_image_checkbox", False)):
-        return False
-    if _normalize_text(getattr(state, "current_tab", "")).lower() != "uov":
-        return False
-    if getattr(state, "uov_input_image", None) is None:
-        return False
-    method = _normalize_text(getattr(state, "uov_method", "")).lower()
-    if method == "" or method == flags.disabled.casefold():
-        return False
-    return "upscale" in method
+    return resolve_route_intent(state, prefer_runtime_route=True).wants_upscale
 
 
 def _has_outpaint_request(state) -> bool:
-    route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
-    if route_id != "":
-        return route_id == "outpaint"
-    if not bool(getattr(state, "input_image_checkbox", False)):
-        return False
-    mixed_cn_outpaint_workflow = _normalize_text(getattr(state, "current_tab", "")).lower() == "ip" and bool(
-        getattr(state, "mixing_image_prompt_and_outpaint", False)
-    )
-    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and getattr(state, "outpaint_input_image", None) is not None and (
-        bool(getattr(state, "outpaint_step2_checkbox", False))
-        or bool(getattr(state, "outpaint_selections", []))
-        or getattr(state, "outpaint_mask_image", None) is not None
-    )
-    return (
-        _normalize_text(getattr(state, "current_tab", "")).lower() == "outpaint"
-        or has_mixed_outpaint_request
-    ) and getattr(state, "outpaint_input_image", None) is not None
+    return resolve_route_intent(state, prefer_runtime_route=True).wants_outpaint
 
 
 def _has_inpaint_request(state) -> bool:
-    route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
-    if route_id != "":
-        return route_id in {"inpaint", "flux_inpaint"}
-    if not bool(getattr(state, "input_image_checkbox", False)):
-        return False
-    mixed_cn_inpaint_workflow = _normalize_text(getattr(state, "current_tab", "")).lower() == "ip" and bool(
-        getattr(state, "mixing_image_prompt_and_inpaint", False)
-    )
-    mixed_cn_outpaint_workflow = _normalize_text(getattr(state, "current_tab", "")).lower() == "ip" and bool(
-        getattr(state, "mixing_image_prompt_and_outpaint", False)
-    )
-    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and getattr(state, "outpaint_input_image", None) is not None and (
-        bool(getattr(state, "outpaint_step2_checkbox", False))
-        or bool(getattr(state, "outpaint_selections", []))
-        or getattr(state, "outpaint_mask_image", None) is not None
-    )
-    has_mixed_inpaint_request = mixed_cn_inpaint_workflow and getattr(state, "inpaint_input_image", None) is not None
-    return (
-        _normalize_text(getattr(state, "current_tab", "")).lower() == "inpaint"
-        or (has_mixed_inpaint_request and not has_mixed_outpaint_request)
-    ) and getattr(state, "inpaint_input_image", None) is not None
+    return resolve_route_intent(state, prefer_runtime_route=True).wants_inpaint
 
 
 def _is_removal_request(state) -> bool:
-    route_id = _normalize_text(getattr(state, "runtime_route_id", "")).lower()
-    if route_id != "":
-        return route_id == "removal"
-    if _normalize_text(getattr(state, "current_tab", "")).lower() != "remove":
-        return False
-    goals = set(getattr(state, "goals", []) or [])
-    remove_bg_enabled = bool(getattr(state, "remove_bg_enabled", False) or (flags.remove_bg in goals))
-    remove_obj_enabled = bool(getattr(state, "remove_obj_enabled", False) or (flags.remove_obj in goals))
-    return bool(getattr(state, "input_image_checkbox", False)) and (remove_bg_enabled or remove_obj_enabled)
+    return resolve_route_intent(state, prefer_runtime_route=True).wants_removal
 
 
 def _resolve_task_display_fields(state) -> dict:

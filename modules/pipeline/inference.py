@@ -448,7 +448,19 @@ def _run_unified_sdxl_task(
         if active_process_key is not None:
             from backend import process_transition
 
-            process_transition.set_active_process_key(active_process_key)
+            policy = getattr(task_state, 'sdxl_execution_policy', None)
+            execution_mode = getattr(policy, 'execution_mode', None)
+            process_transition.set_active_runtime(
+                family=process_transition.PROCESS_FAMILY_SDXL,
+                key=active_process_key,
+                route_owner=(
+                    getattr(task_state, 'runtime_route_id', None)
+                    or getattr(task_state, 'runtime_route_family', None)
+                    or getattr(active_process_key, 'route_family', None)
+                    or 'sdxl'
+                ),
+                safe_to_retain=(execution_mode == 'resident'),
+            )
 
         preview_transform = None
         if not getattr(task_state, 'disable_preview', False):

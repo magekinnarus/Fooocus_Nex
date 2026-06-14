@@ -10,6 +10,7 @@ from backend import conditioning
 from backend import environment_profile as environment_profiles
 from backend import sdxl_runtime_policy
 import modules.flags as flags
+from modules.route_intent import resolve_route_intent
 from modules.pipeline.stage_runtime import (
     PipelineResourceRequirement,
     PipelineRoute,
@@ -31,71 +32,24 @@ def _estimated_megapixels(task_state) -> float:
 
 
 def _expects_controlnet_extension(task_state) -> bool:
-    if not getattr(task_state, 'input_image_checkbox', False):
-        return False
-    if task_state.current_tab == 'ip':
-        return True
-    if getattr(task_state, 'mixing_image_prompt_and_inpaint', False):
-        return True
-    if getattr(task_state, 'mixing_image_prompt_and_outpaint', False):
-        return True
-    return any(len(tasks) > 0 for tasks in task_state.cn_tasks.values())
+    return resolve_route_intent(task_state).expects_controlnet
 
 
 def _has_outpaint_request(task_state) -> bool:
-    if not getattr(task_state, 'input_image_checkbox', False):
-        return False
-    mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
-    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (
-        getattr(task_state, 'outpaint_step2_checkbox', False)
-        or bool(getattr(task_state, 'outpaint_selections', []))
-        or getattr(task_state, 'outpaint_mask_image', None) is not None
-    )
-    return (task_state.current_tab == 'outpaint' or has_mixed_outpaint_request) and task_state.outpaint_input_image is not None
+    return resolve_route_intent(task_state).wants_outpaint
 
 
 def _has_inpaint_request(task_state) -> bool:
-    if not getattr(task_state, 'input_image_checkbox', False):
-        return False
-    mixed_cn_inpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_inpaint', False)
-    mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
-    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (
-        getattr(task_state, 'outpaint_step2_checkbox', False)
-        or bool(getattr(task_state, 'outpaint_selections', []))
-        or getattr(task_state, 'outpaint_mask_image', None) is not None
-    )
-    has_mixed_inpaint_request = mixed_cn_inpaint_workflow and task_state.inpaint_input_image is not None
-    return (
-        task_state.current_tab == 'inpaint'
-        or (has_mixed_inpaint_request and not has_mixed_outpaint_request)
-    ) and task_state.inpaint_input_image is not None
+    intent = resolve_route_intent(task_state)
+    return intent.wants_inpaint and not intent.wants_flux_inpaint
 
 
 def _is_flux_fill_inpaint_request(task_state) -> bool:
-    if not getattr(task_state, 'input_image_checkbox', False):
-        return False
-    if task_state.current_tab != 'inpaint' or task_state.inpaint_input_image is None:
-        return False
-
-    try:
-        import modules.objr_engine as objr_engine
-
-        return objr_engine.normalize_flux_fill_inpaint_route(getattr(task_state, 'inpaint_route', None)) == objr_engine.FLUX_FILL_INPAINT_ROUTE_FLUX
-    except Exception:
-        return False
+    return resolve_route_intent(task_state).wants_flux_inpaint
 
 
 def _is_upscale_request(task_state) -> bool:
-    if not getattr(task_state, 'input_image_checkbox', False):
-        return False
-    if task_state.current_tab != 'uov':
-        return False
-    if task_state.uov_input_image is None:
-        return False
-    method = str(getattr(task_state, 'uov_method', '') or '').lower()
-    if method == flags.disabled.casefold():
-        return False
-    return 'upscale' in method
+    return resolve_route_intent(task_state).wants_upscale
 
 
 
@@ -1097,9 +1051,10 @@ class RemovalStage(PipelineStage):
 
 
 def build_generation_route(task_state) -> PipelineRoute:
-    expects_controlnet = _expects_controlnet_extension(task_state)
+    intent = resolve_route_intent(task_state)
+    expects_controlnet = intent.expects_controlnet
 
-    if task_state.input_image_checkbox and (flags.remove_bg in task_state.goals or flags.remove_obj in task_state.goals):
+    if intent.wants_removal:
         return PipelineRoute(
             route_id='removal',
             family='removal',
@@ -1107,7 +1062,7 @@ def build_generation_route(task_state) -> PipelineRoute:
             stages=[RemovalStage()],
         )
 
-    if _is_upscale_request(task_state):
+    if intent.wants_upscale:
         route_id = 'super_upscale' if 'super-upscale' in str(task_state.uov_method).lower() else 'upscale'
         return PipelineRoute(
             route_id=route_id,
@@ -1116,7 +1071,7 @@ def build_generation_route(task_state) -> PipelineRoute:
             stages=[ImageInputPreparationStage(), PromptEncodingStage(), UpscaleStage()],
         )
 
-    if _has_outpaint_request(task_state):
+    if intent.wants_outpaint:
         stages: list[PipelineStage] = [ImageInputPreparationStage(), ControlNetSupportLoadStage(), OutpaintPreparationStage(), PromptEncodingStage()]
         if expects_controlnet:
             stages.extend([StructuralControlNetStage(), ContextualControlNetStage()])
@@ -1128,7 +1083,7 @@ def build_generation_route(task_state) -> PipelineRoute:
             stages=stages,
         )
 
-    if _is_flux_fill_inpaint_request(task_state):
+    if intent.wants_flux_inpaint:
         stages = [ImageInputPreparationStage(), FluxFillInpaintStage()]
         return PipelineRoute(
             route_id='flux_inpaint',
@@ -1137,7 +1092,7 @@ def build_generation_route(task_state) -> PipelineRoute:
             stages=stages,
         )
 
-    if _has_inpaint_request(task_state):
+    if intent.wants_inpaint:
         stages = [ImageInputPreparationStage(), ControlNetSupportLoadStage(), InpaintPreparationStage(), PromptEncodingStage()]
         if expects_controlnet:
             stages.extend([StructuralControlNetStage(), ContextualControlNetStage()])
@@ -1150,9 +1105,9 @@ def build_generation_route(task_state) -> PipelineRoute:
         )
 
     stages = []
-    if task_state.input_image_checkbox:
+    if intent.expects_controlnet:
         stages.append(ImageInputPreparationStage())
-    if task_state.input_image_checkbox:
+    if intent.expects_controlnet:
         stages.append(ControlNetSupportLoadStage())
     stages.append(PromptEncodingStage())
     if expects_controlnet:

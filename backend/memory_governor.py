@@ -21,6 +21,7 @@ from typing import Any, Deque, Dict, Optional
 
 from backend import environment_profile as environment_profiles
 from backend import sdxl_runtime_policy
+from modules.route_intent import resolve_route_intent
 
 import psutil
 
@@ -83,15 +84,7 @@ def _task_expects_controlnet(task) -> bool:
     if task is None:
         return True
     try:
-        if getattr(task, 'current_tab', None) == 'ip':
-            return True
-        if getattr(task, 'mixing_image_prompt_and_inpaint', False):
-            return True
-        if getattr(task, 'mixing_image_prompt_and_outpaint', False):
-            return True
-        cn_tasks = getattr(task, 'cn_tasks', {}) or {}
-        if isinstance(cn_tasks, dict):
-            return any(len(tasks) > 0 for tasks in cn_tasks.values())
+        return resolve_route_intent(task).expects_controlnet
     except Exception:
         return True
     return False

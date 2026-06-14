@@ -717,6 +717,9 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         if model is None:
             return False
 
+        if hasattr(model, "_patched_marker"):
+            delattr(model, "_patched_marker")
+
         clean_source = getattr(model, "_nex_clean_unet_source", None)
         if clean_source is not None:
             start_r = time.perf_counter()
@@ -754,6 +757,10 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         model = getattr(clip_patcher, "model", None)
         if model is None:
             return
+
+        if hasattr(model, "_patched_marker"):
+            delattr(model, "_patched_marker")
+
         clean_clip = getattr(model, "_nex_clean_clip_source", None)
         if clean_clip is not None:
             with torch.no_grad():

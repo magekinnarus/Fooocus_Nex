@@ -63,10 +63,30 @@ def test_txt2img_does_not_keep_controlnet_warm_on_constrained_profiles(restore_p
     assert diffusion_plan.mode_for('controlnet') == 'evictable'
     assert decode_plan.mode_for('controlnet') == 'evictable'
 
-    controlnet_task = SimpleNamespace(current_tab='ip', cn_tasks={})
+    controlnet_task = SimpleNamespace(current_tab='ip', input_image_checkbox=True, cn_tasks={'canny': [[1, 2, 3]]})
     controlnet_plan = memory_governor.plan_for_task(task=controlnet_task, phase=memory_governor.MemoryPhase.DECODE)
 
     assert controlnet_plan.mode_for('controlnet') == 'warm'
+
+
+def test_stale_inpaint_mix_checkbox_does_not_keep_controlnet_warm_without_live_ip_route(restore_profile):
+    low_vram_profile = environment_profile.resolve_environment_profile(
+        override=environment_profile.PROFILE_LOCAL_LOW_VRAM,
+        total_ram_mb=16384,
+        total_vram_mb=4096,
+        is_colab=False,
+    )
+    memory_governor.configure_environment(low_vram_profile)
+
+    stale_task = SimpleNamespace(
+        current_tab='txt2img',
+        input_image_checkbox=True,
+        mixing_image_prompt_and_inpaint=True,
+        cn_tasks={},
+    )
+    diffusion_plan = memory_governor.plan_for_task(task=stale_task, phase=memory_governor.MemoryPhase.DIFFUSION)
+
+    assert diffusion_plan.mode_for('controlnet') == 'evictable'
 
 def test_cleanup_memory_ignores_zero_count_support_actions(monkeypatch, restore_profile):
     low_vram_profile = environment_profile.resolve_environment_profile(

@@ -9,6 +9,7 @@ import backend.ip_adapter as contextual_ip_adapter
 import backend.preprocessors as structural_preprocessors
 import backend.pulid_runtime as pulid_runtime
 import backend.resources as resources
+from modules.route_intent import resolve_route_intent
 from modules.util import (HWC3, resize_image, get_image_shape_ceil, set_image_shape_ceil, 
                           get_shape_ceil, resample_image, erode_or_dilate)
 from modules.upscaler import perform_upscale
@@ -410,29 +411,15 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         'eva_clip_path': None,
     }
     skip_prompt_processing = False
-    try:
-        from modules.objr_engine import is_flux_fill_inpaint_route
-
-        use_flux_fill_inpaint = task_state.current_tab == 'inpaint' and is_flux_fill_inpaint_route(getattr(task_state, 'inpaint_route', None))
-    except Exception:
-        use_flux_fill_inpaint = False
+    intent = resolve_route_intent(task_state)
+    use_flux_fill_inpaint = intent.wants_flux_inpaint
 
     # UoV handling
-    if task_state.current_tab == 'uov' \
-            and task_state.uov_method != flags.disabled.casefold() and task_state.uov_input_image is not None:
+    if intent.wants_upscale:
         skip_prompt_processing = prepare_upscale(task_state, progressbar_callback)
 
-    mixed_cn_inpaint_workflow = task_state.current_tab == 'ip' and task_state.mixing_image_prompt_and_inpaint
-    mixed_cn_outpaint_workflow = task_state.current_tab == 'ip' and getattr(task_state, 'mixing_image_prompt_and_outpaint', False)
-    has_mixed_outpaint_request = mixed_cn_outpaint_workflow and task_state.outpaint_input_image is not None and (
-        getattr(task_state, 'outpaint_step2_checkbox', False)
-        or bool(getattr(task_state, 'outpaint_selections', []))
-        or getattr(task_state, 'outpaint_mask_image', None) is not None
-    )
-    has_mixed_inpaint_request = mixed_cn_inpaint_workflow and task_state.inpaint_input_image is not None
-
     # Outpaint UI Parsing & setup
-    if (task_state.current_tab == 'outpaint' or has_mixed_outpaint_request) and task_state.outpaint_input_image is not None:
+    if intent.wants_outpaint and task_state.outpaint_input_image is not None:
         if isinstance(task_state.outpaint_input_image, dict):
             if 'background' in task_state.outpaint_input_image:
                 outpaint_image = HWC3(mask_proc.ensure_numpy(task_state.outpaint_input_image['background']))
@@ -461,8 +448,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
         task_state.goals.append('outpaint')
 
     # Inpaint UI Parsing & setup
-    elif (task_state.current_tab == 'inpaint' or (has_mixed_inpaint_request and not has_mixed_outpaint_request)) \
-            and task_state.inpaint_input_image is not None:
+    elif intent.wants_inpaint and task_state.inpaint_input_image is not None:
         if isinstance(task_state.inpaint_input_image, dict):
             if 'background' in task_state.inpaint_input_image:
                 inpaint_image = mask_proc.ensure_numpy(task_state.inpaint_input_image['background'])
@@ -516,7 +502,7 @@ def apply_image_input(task_state: 'TaskState', base_model_additional_loras, prog
                 inpaint_patch_model_path = None
 
     # ControlNet handling
-    if task_state.current_tab == 'ip' or task_state.mixing_image_prompt_and_inpaint or getattr(task_state, 'mixing_image_prompt_and_outpaint', False):
+    if intent.expects_controlnet:
         task_state.goals.append('cn')
         if progressbar_callback:
             progressbar_callback(task_state, 1, 'Downloading control models ...')
