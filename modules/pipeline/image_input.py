@@ -572,9 +572,9 @@ def load_controlnet_support_models(image_input_result=None):
     controlnet_paths = image_input_result.get('controlnet_paths') or {}
     requested_controlnets = [path for path in dict.fromkeys(controlnet_paths.values()) if path]
     if requested_controlnets:
-        import modules.default_pipeline as default_pipeline
+        from backend import resources
 
-        default_pipeline.refresh_controlnets(requested_controlnets)
+        resources.trigger_refresh_controlnets(requested_controlnets)
 
     contextual_assets = image_input_result.get('contextual_assets') or {}
     for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():

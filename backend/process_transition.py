@@ -496,15 +496,23 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
 
     if current_key.family == PROCESS_FAMILY_SDXL:
         import backend.resources as resources
-        import modules.default_pipeline as default_pipeline
+        from backend import sdxl_unified_runtime
 
         current_model_name = getattr(current_key, 'authoritative_identity', (None,))[0] if getattr(current_key, 'authoritative_identity', None) else None
         next_model_name = getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None
 
+        def _release_callback():
+            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
+            try:
+                from backend import conditioning
+                conditioning.clear_prompt_conditioning_cache()
+            except Exception:
+                pass
+
         resources.prepare_for_checkpoint_switch(
             current_model=current_model_name,
             next_model=next_model_name,
-            release_callback=None,
+            release_callback=_release_callback,
             notes={
                 'reason': 'route_transition',
                 'current_process_key': describe_process_key(current_key),
@@ -512,14 +520,32 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
             },
         )
 
-        return default_pipeline.release_sdxl_runtime_state(
-            current_process_key=current_key,
-            next_process_key=requested_key,
-            current_model_name=current_model_name,
-            next_model_name=next_model_name,
-            reason='route_transition',
-            hard_reset=False,
-        )
+        released = False
+        import sys
+        if 'modules.default_pipeline' in sys.modules:
+            try:
+                import modules.default_pipeline as default_pipeline
+                default_pipeline.release_sdxl_runtime_state(
+                    current_process_key=current_key,
+                    next_process_key=requested_key,
+                    current_model_name=current_model_name,
+                    next_model_name=next_model_name,
+                    reason='route_transition',
+                    hard_reset=False,
+                )
+                released = True
+            except Exception:
+                pass
+        else:
+            released = True
+
+        return {
+            'released': released,
+            'reason': 'route_transition',
+            'hard_reset': False,
+            'current_process_key': current_key,
+            'next_process_key': requested_key,
+        }
 
     if current_key.family == PROCESS_FAMILY_FLUX_FILL:
         import modules.objr_engine as objr_engine

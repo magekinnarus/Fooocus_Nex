@@ -22,7 +22,61 @@ final_unet = None
 final_clip = None
 final_vae = None
 
-loaded_ControlNets = {}
+class ControlNetDict(dict):
+    @property
+    def _registry(self):
+        from backend import controlnet_registry
+        return controlnet_registry._LOADED_CONTROLNETS
+
+    def __getitem__(self, key):
+        return self._registry[key]
+
+    def __setitem__(self, key, value):
+        self._registry[key] = value
+
+    def __delitem__(self, key):
+        del self._registry[key]
+
+    def __contains__(self, key):
+        return key in self._registry
+
+    def __len__(self):
+        return len(self._registry)
+
+    def __iter__(self):
+        return iter(self._registry)
+
+    def keys(self):
+        return self._registry.keys()
+
+    def values(self):
+        return self._registry.values()
+
+    def items(self):
+        return self._registry.items()
+
+    def get(self, key, default=None):
+        return self._registry.get(key, default)
+
+    def pop(self, key, default=None):
+        return self._registry.pop(key, default)
+
+    def clear(self):
+        self._registry.clear()
+
+    def update(self, *args, **kwargs):
+        self._registry.update(*args, **kwargs)
+
+    def setdefault(self, key, default=None):
+        return self._registry.setdefault(key, default)
+
+    def popitem(self):
+        return self._registry.popitem()
+
+    def copy(self):
+        return self._registry.copy()
+
+loaded_ControlNets = ControlNetDict()
 
 
 def _should_skip_eager_pipeline_preload() -> bool:
@@ -53,12 +107,10 @@ def _destroy_controlnet(model):
 
 
 def apply_controlnet_residency(mode='offload'):
-    global loaded_ControlNets
-
     actions = {'mode': mode, 'count': len(loaded_ControlNets)}
     if mode == 'destroy':
         stale = list(loaded_ControlNets.values())
-        loaded_ControlNets = {}
+        loaded_ControlNets.clear()
         for model in stale:
             _destroy_controlnet(model)
     else:
@@ -70,7 +122,6 @@ def apply_controlnet_residency(mode='offload'):
 @torch.no_grad()
 @torch.inference_mode()
 def refresh_controlnets(model_paths):
-    global loaded_ControlNets
     cache = {}
     requested_paths = {p for p in model_paths if p is not None}
     stale_paths = [p for p in loaded_ControlNets.keys() if p not in requested_paths]
@@ -84,14 +135,13 @@ def refresh_controlnets(model_paths):
                 cache[p] = loaded_ControlNets[p]
             else:
                 cache[p] = core.load_controlnet(p)
-    loaded_ControlNets = cache
+    loaded_ControlNets.clear()
+    loaded_ControlNets.update(cache)
     return
 
 
-# Register ControlNet residency and cache provider callbacks with backend resources manager
-resources.register_controlnet_residency_handler(lambda mode: apply_controlnet_residency(mode))
-resources.register_loaded_controlnets_provider(lambda path: loaded_ControlNets.get(path))
-resources.register_refresh_controlnets_callback(lambda paths: refresh_controlnets(paths))
+# W02.5 Purge: ControlNet residency, cache provider, and refresh callbacks are no longer registered at import time.
+# Production queries/refreshes delegate directly to the backend.controlnet_registry.
 
 
 
@@ -455,9 +505,9 @@ def release_sdxl_runtime_state(
     def _release_cached_sdxl_state():
         global final_unet, final_clip, final_vae
         try:
-            from backend import sdxl_unified_runtime
-
+            from backend import sdxl_unified_runtime, conditioning
             sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
+            conditioning.clear_prompt_conditioning_cache()
         except Exception:
             pass
 
@@ -531,7 +581,12 @@ def refresh_everything(base_model_name, loras,
 
     if refresh_state == current_state and final_unet is not None:
         _apply_sdxl_policy_to_model_base(sdxl_policy)
-        process_transition.set_active_process_key(current_state['sdxl_process_key'])
+        process_transition.set_active_runtime(
+            family=process_transition.PROCESS_FAMILY_SDXL,
+            key=current_state['sdxl_process_key'],
+            route_owner='sdxl',
+            safe_to_retain=False,
+        )
         return
 
     print(f'[Nex-Pipeline] Reconciling model state (LoRAs: {len(loras)} slots, Additional: {len(base_model_additional_loras)} slots)')
@@ -559,23 +614,17 @@ def refresh_everything(base_model_name, loras,
     clear_all_caches()
 
     refresh_state = current_state
-    process_transition.set_active_process_key(refresh_state['sdxl_process_key'])
+    process_transition.set_active_runtime(
+        family=process_transition.PROCESS_FAMILY_SDXL,
+        key=refresh_state['sdxl_process_key'],
+        route_owner='sdxl',
+        safe_to_retain=False,
+    )
     return
 
 
-if _should_skip_eager_pipeline_preload():
-    print('[Startup] Skipping eager default SDXL preload for the active memory/profile route policy.')
-else:
-    try:
-        refresh_everything(
-            base_model_name=modules.config.default_base_model_name,
-            loras=get_enabled_loras(modules.config.default_loras),
-            vae_name=modules.config.default_vae,
-            clip_name=modules.config.default_clip
-        )
-    except Exception as e:
-        print(f'[Nex Warning] Failed to load default model at startup: {e}')
-        print('[Nex Warning] The UI will launch without a model. Select one from Advanced > Models.')
+# Startup preloading is skipped to enforce the Nex Universal Clean Slate Policy.
+print('[Startup] Skipping eager default SDXL preload for the active memory/profile route policy.')
 
 
 
