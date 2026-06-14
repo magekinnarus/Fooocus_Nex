@@ -1249,13 +1249,14 @@ class FluxFillPipeline:
             debug_summary["stages"]["verify_c_concat"] = {"stage": "verify_c_concat", "enabled": False}
 
         stage_start = time.perf_counter()
+        is_streaming = (str(self.config.runtime_posture or "").strip().lower() == "streaming")
         denoise_result, denoise_summary, samples = self.denoise(
             latent_source,
             empty_conditioning=empty_conditioning,
             unet_patcher=unet_patcher,
             callback=callback,
             disable_pbar=disable_pbar,
-            cleanup_unet=owns_unet,
+            cleanup_unet=owns_unet or is_streaming,
         )
         timings["denoise"] = time.perf_counter() - stage_start
         debug_summary["stages"]["denoise"] = denoise_summary

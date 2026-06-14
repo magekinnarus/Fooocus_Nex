@@ -395,3 +395,42 @@ def prepare_models_for_stage(
 
 def load_model_gpu(model):
     return load_models_gpu([model])
+
+def teardown_runtime_family(family: str, reason: str = None) -> None:
+    logging.info(f"[Nex-Residency] Explicit teardown requested for runtime family: {family} (Reason: {reason})")
+    
+    # 1. Clear the active process registry if it matches the family
+    try:
+        from backend import process_transition
+        active_key = process_transition.get_active_process_key()
+        if active_key is not None and active_key.family == family:
+            process_transition.clear_active_process_key()
+    except Exception:
+        logging.debug(f"Failed to clear process registry for family {family}", exc_info=True)
+        
+    # 2. Clear components cache for SDXL if family is SDXL
+    if family == "sdxl":
+        try:
+            from backend import sdxl_unified_runtime
+            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache(teardown=True)
+        except Exception:
+            logging.debug("Failed to clear SDXL component cache during teardown", exc_info=True)
+    elif family == "flux_fill":
+        try:
+            import modules.objr_engine as objr_engine
+            objr_engine.end_active_flux_fill_session(reason=reason or "explicit_teardown")
+        except Exception:
+            logging.debug("Failed to end active Flux Fill session during teardown", exc_info=True)
+
+    # 3. Offload all weights from GPU
+    unload_all_models()
+    soft_empty_cache(force=True)
+
+def teardown_active_runtime(reason: str = None) -> None:
+    try:
+        from backend import process_transition
+        active_key = process_transition.get_active_process_key()
+        if active_key is not None:
+            teardown_runtime_family(active_key.family, reason=reason)
+    except Exception:
+        logging.debug("Failed to resolve active runtime family for teardown", exc_info=True)

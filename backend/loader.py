@@ -704,14 +704,18 @@ def load_sdxl_checkpoint(
 
     if isinstance(ckpt_path, str) and ckpt_path.lower().endswith(".safetensors"):
         if external_vae_source is not None:
-            logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
-            vae = load_vae(
-                external_vae_source,
-                load_device=vae_load_device,
-                offload_device=vae_offload_device,
-                latent_format=latent_formats.SDXL(),
-            )
-            gc.collect()
+            if isinstance(external_vae_source, VAE):
+                logging.info("Reusing preloaded external SDXL VAE instance...")
+                vae = external_vae_source
+            else:
+                logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
+                vae = load_vae(
+                    external_vae_source,
+                    load_device=vae_load_device,
+                    offload_device=vae_offload_device,
+                    latent_format=latent_formats.SDXL(),
+                )
+                gc.collect()
         else:
             logging.info("Extracting VAE from safetensors checkpoint...")
             vae_sd = _extract_prefixed_safetensors_state_dict(
@@ -775,14 +779,18 @@ def load_sdxl_checkpoint(
 
     # VAE (fp32 default)
     if external_vae_source is not None:
-        logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
-        vae = load_vae(
-            external_vae_source,
-            load_device=vae_load_device,
-            offload_device=vae_offload_device,
-            latent_format=latent_formats.SDXL(),
-        )
-        gc.collect()
+        if isinstance(external_vae_source, VAE):
+            logging.info("Reusing preloaded external SDXL VAE instance...")
+            vae = external_vae_source
+        else:
+            logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
+            vae = load_vae(
+                external_vae_source,
+                load_device=vae_load_device,
+                offload_device=vae_offload_device,
+                latent_format=latent_formats.SDXL(),
+            )
+            gc.collect()
     else:
         logging.info("Extracting VAE...")
         vae_sd = {}

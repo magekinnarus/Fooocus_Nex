@@ -177,6 +177,7 @@ def clear_preprocessor_metrics() -> None:
 
 _SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str | None, str], SharedSDXLBaseComponents] = OrderedDict()
 _SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT = 1
+_SHARED_SDXL_VAE_CACHE: dict[tuple[str, str, str], Any] = {}
 _SHARED_SDXL_COMPILED_UNET_CACHE: OrderedDict[
     tuple[str, str, str, tuple[str, ...], bool],
     SharedSDXLCompiledUnetComponents,
@@ -206,7 +207,7 @@ def _release_shared_sdxl_compiled_unet(entry: SharedSDXLCompiledUnetComponents) 
     _detach_cached_component(entry.unet)
 
 
-def clear_unified_sdxl_runtime_component_cache() -> None:
+def clear_unified_sdxl_runtime_component_cache(teardown: bool = False) -> None:
     try:
         from backend import sdxl_streaming_runtime
 
@@ -219,6 +220,10 @@ def clear_unified_sdxl_runtime_component_cache() -> None:
     while _SHARED_SDXL_COMPILED_UNET_CACHE:
         _, entry = _SHARED_SDXL_COMPILED_UNET_CACHE.popitem(last=False)
         _release_shared_sdxl_compiled_unet(entry)
+    if teardown:
+        for vae_cache_key, vae_instance in list(_SHARED_SDXL_VAE_CACHE.items()):
+            _detach_cached_component(vae_instance)
+        _SHARED_SDXL_VAE_CACHE.clear()
     clear_parsed_lora_adapter_cache()
     clear_preprocessor_metrics()
     try:
@@ -350,6 +355,21 @@ class UnifiedSDXLRuntime(
 
         if shared_base is None:
             cuda_device = resources.get_torch_device()
+            if vae_path:
+                vae_cache_key = (vae_path, str(cuda_device), str(cuda_device))
+                vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+                if vae_to_use is None:
+                    from backend import latent_formats
+                    vae_to_use = loader.load_vae(
+                        vae_path,
+                        load_device=cuda_device,
+                        offload_device=cuda_device,
+                        latent_format=latent_formats.SDXL(),
+                    )
+                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+            else:
+                vae_to_use = None
+
             # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
             # until process-aware teardown releases them for a real model/process transition.
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
@@ -361,7 +381,7 @@ class UnifiedSDXLRuntime(
                 clip_offload_device=cpu_device,
                 vae_load_device=cuda_device,
                 vae_offload_device=cuda_device,
-                vae_source=vae_path,
+                vae_source=vae_to_use,
             )
 
             shared_base = SharedSDXLBaseComponents(

@@ -185,7 +185,10 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         retain_warm = should_retain_sdxl_warm_state(task_state)
 
         # Pre-flight cleanup: Clear everything to maximize tile headroom if we shouldn't retain.
-        resources.cleanup_memory('tiled_refine_preflight', unload_models=not retain_warm, force_cache=True, trim_host=True, target_phase=resources.MemoryPhase.TILED_REFINE)
+        if not retain_warm:
+            resources.teardown_active_runtime("upscale_preflight")
+        else:
+            resources.cleanup_memory('tiled_refine_preflight', unload_models=False, force_cache=True, trim_host=True, target_phase=resources.MemoryPhase.TILED_REFINE)
         
         min_overlap = getattr(task_state, 'upscale_refinement_tile_overlap', 128)
         bucket, nx, ny, overlap_w, overlap_h = select_tile_resolution(W, H, min_overlap)
@@ -339,6 +342,9 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
         result = stitch_tiles(refined_tiles, (H, W, C), bucket_w, bucket_h)
         
         # Final sweep: Leave the GPU clean if not retaining warm state
-        resources.cleanup_memory('tiled_refine_finalize', unload_models=not retain_warm, force_cache=True, target_phase=resources.MemoryPhase.FINALIZE)
+        if not retain_warm:
+            resources.teardown_active_runtime("upscale_finalization")
+        else:
+            resources.cleanup_memory('tiled_refine_finalize', unload_models=False, force_cache=True, target_phase=resources.MemoryPhase.FINALIZE)
         
         return result

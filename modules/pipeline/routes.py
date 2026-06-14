@@ -1029,6 +1029,13 @@ class RemovalStage(PipelineStage):
                     flux_disable_pbar=True,
                 )
                 objr_engine.unload_model()
+                if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL:
+                    try:
+                        hardware = objr_engine.inspect_flux_fill_hardware()
+                        if hardware.runtime_posture != objr_engine.FLUX_FILL_RUNTIME_POSTURE_RESIDENT:
+                            resources.teardown_active_runtime("flux_fill_removal_stage_completion")
+                    except Exception:
+                        pass
                 persisted_res_path = _save_logged_output(
                     context,
                     res_path,

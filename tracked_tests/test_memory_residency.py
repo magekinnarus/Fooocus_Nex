@@ -107,12 +107,12 @@ def test_cleanup_memory_ignores_zero_count_support_actions(monkeypatch, restore_
     monkeypatch.setattr(resources, '_try_malloc_trim', lambda: False)
     monkeypatch.setattr(resources.gc, 'collect', lambda: None)
 
-    import modules.default_pipeline as default_pipeline
+    from backend import controlnet_registry
     from backend.preprocessors import runtime as preprocessor_runtime
     import backend.ip_adapter as ip_adapter
     import backend.pulid_runtime as pulid_runtime
 
-    monkeypatch.setattr(default_pipeline, 'apply_controlnet_residency', lambda mode: {'mode': mode, 'count': 0})
+    monkeypatch.setattr(controlnet_registry, 'apply_controlnet_residency', lambda mode: {'mode': mode, 'count': 0})
     monkeypatch.setattr(preprocessor_runtime, 'apply_residency_policy', lambda mode: {'mode': mode, 'count': 0})
     monkeypatch.setattr(
         ip_adapter,
@@ -157,13 +157,13 @@ def test_cleanup_memory_dispatches_residency_handlers_by_target_phase(monkeypatc
     monkeypatch.setattr(resources, '_try_malloc_trim', lambda: False)
     monkeypatch.setattr(resources.gc, 'collect', lambda: None)
 
-    import modules.default_pipeline as default_pipeline
+    from backend import controlnet_registry
     from backend.preprocessors import runtime as preprocessor_runtime
     import backend.ip_adapter as ip_adapter
     import backend.pulid_runtime as pulid_runtime
 
     monkeypatch.setattr(
-        default_pipeline,
+        controlnet_registry,
         'apply_controlnet_residency',
         lambda mode: calls.append(('controlnet', mode)) or {'mode': mode},
     )

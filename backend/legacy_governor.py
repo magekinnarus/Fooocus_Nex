@@ -418,13 +418,6 @@ def loaded_model_state():
 
 def unload_all_models():
     free_memory(1e30, get_torch_device())
-    try:
-        from backend import process_transition
-        active_key = process_transition.get_active_process_key()
-        if active_key is not None and active_key.family == process_transition.PROCESS_FAMILY_SDXL:
-            process_transition.clear_active_process_key()
-    except Exception:
-        logging.debug('Failed to clear SDXL process registry during unload_all_models.', exc_info=True)
 
 def eject_model(model_patcher):
     model_patcher.detach()

@@ -34,6 +34,7 @@ from backend.sdxl_unified_runtime import (
     SharedSDXLBaseComponents,
     SharedSDXLCompiledUnetComponents,
     _SHARED_SDXL_BASE_COMPONENT_CACHE,
+    _SHARED_SDXL_VAE_CACHE,
     _detach_cached_component,
     _release_shared_sdxl_base_components,
 )
@@ -90,6 +91,21 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         self._base_component_cache_hit = shared_base is not None
 
         if shared_base is None:
+            if vae_path:
+                vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
+                vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+                if vae_to_use is None:
+                    from backend import latent_formats
+                    vae_to_use = loader.load_vae(
+                        vae_path,
+                        load_device=cpu_device,
+                        offload_device=cpu_device,
+                        latent_format=latent_formats.SDXL(),
+                    )
+                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+            else:
+                vae_to_use = None
+
             # CPU-authoritative UNet & VAE loading for streaming runtime
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
                 checkpoint_path,
@@ -100,7 +116,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
                 clip_offload_device=cpu_device,
                 vae_load_device=cpu_device,
                 vae_offload_device=cpu_device,
-                vae_source=vae_path,
+                vae_source=vae_to_use,
             )
 
             shared_base = SharedSDXLBaseComponents(

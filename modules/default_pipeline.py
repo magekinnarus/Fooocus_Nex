@@ -506,7 +506,8 @@ def release_sdxl_runtime_state(
         global final_unet, final_clip, final_vae
         try:
             from backend import sdxl_unified_runtime, conditioning
-            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
+            teardown = (next_process_key is None or next_process_key.family != process_transition.PROCESS_FAMILY_SDXL)
+            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache(teardown=teardown)
             conditioning.clear_prompt_conditioning_cache()
         except Exception:
             pass

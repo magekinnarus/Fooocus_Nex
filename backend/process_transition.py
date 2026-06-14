@@ -502,7 +502,8 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
         next_model_name = getattr(requested_key, 'authoritative_identity', (None,))[0] if getattr(requested_key, 'authoritative_identity', None) else None
 
         def _release_callback():
-            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
+            teardown = (requested_key is None or requested_key.family != PROCESS_FAMILY_SDXL)
+            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache(teardown=teardown)
             try:
                 from backend import conditioning
                 conditioning.clear_prompt_conditioning_cache()

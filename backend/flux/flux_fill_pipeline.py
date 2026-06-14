@@ -793,7 +793,8 @@ def denoise_flux_fill_latent(
                 metadata["streaming_scheduler"] = active_scheduler.snapshot()
             if hasattr(active_scheduler, "reset_run"):
                 active_scheduler.reset_run(clear_prefetched=True)
-        should_cleanup = cleanup_unet if cleanup_unet is not None else owned_unet
+        is_streaming = (str(config.runtime_posture or "").strip().lower() == "streaming")
+        should_cleanup = cleanup_unet if cleanup_unet is not None else (owned_unet or is_streaming)
         metadata["cleanup_unet"] = bool(should_cleanup)
         if should_cleanup:
             _cleanup_model_patcher(unet_patcher, cleanup=should_cleanup)
@@ -984,6 +985,10 @@ def run_flux_fill(
     config.validate_static(require_existing_assets=True)
     cache = empty_conditioning if empty_conditioning is not None else load_flux_empty_conditioning_cache(config.conditioning_cache_path)
 
+    is_streaming = (str(config.runtime_posture or "").strip().lower() == "streaming")
+    effective_cleanup_vae = cleanup_vae if cleanup_vae is not None else (vae is None or is_streaming)
+    effective_cleanup_unet = cleanup_unet if cleanup_unet is not None else (unet_patcher is None or is_streaming)
+
     latent_source = prepare_flux_fill_latent_source(
         image,
         mask,
@@ -992,7 +997,7 @@ def run_flux_fill(
         load_device=config.device,
         offload_device=None,
         vae=vae,
-        cleanup_vae=cleanup_vae,
+        cleanup_vae=effective_cleanup_vae,
     )
     denoise_result = denoise_flux_fill_latent(
         config,
@@ -1001,7 +1006,7 @@ def run_flux_fill(
         load_device=config.device,
         offload_device=None,
         unet_patcher=unet_patcher,
-        cleanup_unet=cleanup_unet,
+        cleanup_unet=effective_cleanup_unet,
         callback=callback,
         disable_pbar=disable_pbar,
     )
@@ -1015,7 +1020,7 @@ def run_flux_fill(
         load_device=config.device,
         offload_device=None,
         vae=vae,
-        cleanup_vae=cleanup_vae,
+        cleanup_vae=effective_cleanup_vae,
     )
 
     output_image = decoded.stitched_image if decoded.stitched_image is not None else decoded.bb_image

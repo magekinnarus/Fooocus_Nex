@@ -168,7 +168,7 @@ def perform_upscale(img, model_name=None, scale_override=None, retain_warm=False
     # Aggressive memory reclamation after the heavy GAN pass
     model.cpu()
     if not retain_warm:
-        resources.unload_all_models()
+        resources.teardown_active_runtime("upscaler_completion")
     gc.collect()
     resources.soft_empty_cache()
 
