@@ -121,3 +121,68 @@ def test_build_generation_route_does_not_add_image_input_stages_for_stale_txt2im
 
     assert route.route_id == 'txt2img'
     assert describe_route(route) == ['prompt_encode', 'diffusion_batch']
+
+
+def test_build_generation_route_outpaint_no_controlnet_when_checkbox_off():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='outpaint',
+        outpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        mixing_image_prompt_and_outpaint=False,
+    )
+    task_state.add_cn_task(flags.cn_canny, [np.zeros((8, 8, 3), dtype=np.uint8), 1.0, 1.0])
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'outpaint'
+    assert 'structural_controlnet' not in describe_route(route)
+    assert 'contextual_controlnet' not in describe_route(route)
+
+
+def test_build_generation_route_outpaint_with_controlnet_when_checkbox_on():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='outpaint',
+        outpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        mixing_image_prompt_and_outpaint=True,
+    )
+    task_state.add_cn_task(flags.cn_canny, [np.zeros((8, 8, 3), dtype=np.uint8), 1.0, 1.0])
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'outpaint'
+    assert 'structural_controlnet' in describe_route(route)
+    assert 'contextual_controlnet' in describe_route(route)
+
+
+def test_build_generation_route_inpaint_no_controlnet_when_checkbox_off():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='inpaint',
+        inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        mixing_image_prompt_and_inpaint=False,
+    )
+    task_state.add_cn_task(flags.cn_canny, [np.zeros((8, 8, 3), dtype=np.uint8), 1.0, 1.0])
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'inpaint'
+    assert 'structural_controlnet' not in describe_route(route)
+    assert 'contextual_controlnet' not in describe_route(route)
+
+
+def test_build_generation_route_inpaint_with_controlnet_when_checkbox_on():
+    task_state = TaskState(
+        input_image_checkbox=True,
+        current_tab='inpaint',
+        inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
+        mixing_image_prompt_and_inpaint=True,
+    )
+    task_state.add_cn_task(flags.cn_canny, [np.zeros((8, 8, 3), dtype=np.uint8), 1.0, 1.0])
+
+    route = build_generation_route(task_state)
+
+    assert route.route_id == 'inpaint'
+    assert 'structural_controlnet' in describe_route(route)
+    assert 'contextual_controlnet' in describe_route(route)
+

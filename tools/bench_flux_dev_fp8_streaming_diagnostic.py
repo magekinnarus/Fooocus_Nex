@@ -34,6 +34,7 @@ from backend.flux.flux_fill_pipeline import decode_flux_fill_latent
 from backend.flux.flux_streaming import (
     FluxDirectStreamModelPatcher,
     FluxAsyncLayerPrefetchScheduler,
+    _detach_flux_streaming_scheduler,
     _resolve_streaming_scheduler_policy,
     _pin_module_tensors_for_streaming,
     measure_pinned_module_tensors,
@@ -155,7 +156,7 @@ def load_flux_dev_native_unet_streaming(
         prefetch_scan_ahead=scheduler_policy["prefetch_scan_ahead"],
         bandwidth_limit_mb_s=scheduler_policy["bandwidth_limit_mb_s"],
     )
-    scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None))
+    scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None), device=compute_device)
     flux_options = runtime_patcher.model_options.setdefault("flux_dev", {})
     flux_options["host_pinned_bytes"] = int(max(pinned_bytes, measure_pinned_module_tensors(getattr(runtime_patcher, "model", None))))
     flux_options["non_blocking_supported"] = bool(resources.device_supports_non_blocking(torch.device("cuda"))) if torch.cuda.is_available() else False
@@ -256,9 +257,7 @@ def _summarize_latent_diff(reference: torch.Tensor, candidate: torch.Tensor) -> 
 
 def _cleanup_unet_patcher(unet_patcher: Any) -> None:
     try:
-        scheduler = unet_patcher.model_options.get("flux_dev", {}).get("streaming_scheduler")
-        if scheduler is not None and hasattr(scheduler, "detach"):
-            scheduler.detach()
+        _detach_flux_streaming_scheduler(getattr(unet_patcher, "model_options", None))
     except Exception:
         pass
     try:

@@ -67,6 +67,7 @@ from backend.flux.flux_fill_loader import (
 )
 from backend.flux.flux_streaming import (
     FluxDirectStreamModelPatcher,
+    _detach_flux_streaming_scheduler,
     _clamp_int,
     _resolve_streaming_scheduler_policy,
     load_flux_fill_native_unet_streaming,
@@ -265,10 +266,7 @@ def _cleanup_model_patcher(model_patcher: Any, *, cleanup: bool = True) -> None:
     if not cleanup:
         return
     try:
-        flux_options = getattr(model_patcher, "model_options", {}).get("flux_fill", {})
-        scheduler = flux_options.get("streaming_scheduler")
-        if scheduler is not None and hasattr(scheduler, "detach"):
-            scheduler.detach()
+        _detach_flux_streaming_scheduler(getattr(model_patcher, "model_options", None))
     except Exception:
         pass
     try:

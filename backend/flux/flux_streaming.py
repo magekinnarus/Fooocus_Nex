@@ -17,6 +17,30 @@ if TYPE_CHECKING:
     from backend.flux.flux_fill_pipeline import FluxFillConditioningPayloads
 
 
+def _detach_flux_streaming_scheduler(model_options: Any) -> None:
+    if not isinstance(model_options, dict):
+        return
+
+    detached_scheduler_ids: set[int] = set()
+    for options_key in ("flux_fill", "flux_dev", "flux"):
+        options = model_options.get(options_key, {})
+        if not isinstance(options, dict):
+            continue
+        scheduler = options.get("streaming_scheduler", None)
+        if scheduler is None:
+            continue
+        scheduler_id = id(scheduler)
+        if scheduler_id in detached_scheduler_ids:
+            continue
+        detached_scheduler_ids.add(scheduler_id)
+        detach = getattr(scheduler, "detach", None)
+        if callable(detach):
+            try:
+                detach()
+            except Exception:
+                pass
+
+
 class FluxDirectStreamModelPatcher(backend_patching.NexModelPatcher):
     """Treat a pinned CPU-host UNet as the source artifact and skip generic reload work."""
 
@@ -51,6 +75,9 @@ class FluxDirectStreamModelPatcher(backend_patching.NexModelPatcher):
         self.model.model_lowvram = False
         self.model.model_loaded_weight_memory = 0
         self.model.lowvram_patch_counter = 0
+
+        # Flux-owned scheduler cleanup stays local to the streaming runtime seam.
+        _detach_flux_streaming_scheduler(getattr(self, "model_options", None))
         return self.model
 
 
@@ -220,7 +247,7 @@ def load_flux_fill_native_unet_streaming(
         prefetch_scan_ahead=scheduler_policy["prefetch_scan_ahead"],
         bandwidth_limit_mb_s=scheduler_policy["bandwidth_limit_mb_s"],
     )
-    scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None))
+    scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None), device=compute_device)
     flux_options = runtime_patcher.model_options.setdefault("flux_fill", {})
     flux_options["host_pinned_bytes"] = int(max(pinned_bytes, measure_pinned_module_tensors(getattr(runtime_patcher, "model", None))))
     flux_options["non_blocking_supported"] = bool(resources.device_supports_non_blocking(torch.device("cuda"))) if torch.cuda.is_available() else False
@@ -299,7 +326,7 @@ class FluxAsyncLayerPrefetchScheduler:
         self._stats: dict[str, Any] = {}
         self.reset_run(clear_prefetched=True)
 
-    def attach(self, model: Any) -> int:
+    def attach(self, model: Any, device: torch.device | None = None) -> int:
         self.detach()
         diffusion_model = getattr(model, "diffusion_model", model)
         ordered: list[Any] = []
@@ -324,6 +351,21 @@ class FluxAsyncLayerPrefetchScheduler:
             self._hooks.append(module.register_forward_pre_hook(self._build_prefetch_hook(index)))
 
         self._stats["module_count"] = len(ordered)
+
+        # Eagerly allocate streams when device is specified and has CUDA capability
+        if device is not None and self.is_enabled_for(device):
+            device_key = self._device_key(device)
+            if device_key not in self._streams:
+                try:
+                    self._streams[device_key] = [
+                        torch.cuda.Stream(device=device, priority=0),
+                        torch.cuda.Stream(device=device, priority=0),
+                    ]
+                except Exception as e:
+                    import logging
+                    logging.warning(
+                        f"[Nex-Streaming] Failed to eagerly allocate CUDA streams on {device}: {e}"
+                    )
         return len(ordered)
 
     def detach(self) -> None:
@@ -347,6 +389,7 @@ class FluxAsyncLayerPrefetchScheduler:
         self._ordered_modules = []
         self._module_indices = {}
         self._module_names = {}
+        self._streams.clear()
         self.reset_run(clear_prefetched=True)
 
     def reset_run(self, *, clear_prefetched: bool = True) -> None:
@@ -425,8 +468,16 @@ class FluxAsyncLayerPrefetchScheduler:
         device_key = self._device_key(device)
         streams = self._streams.get(device_key)
         if streams is None:
-            streams = [torch.cuda.Stream(device=device, priority=0), torch.cuda.Stream(device=device, priority=0)]
-            self._streams[device_key] = streams
+            try:
+                streams = [torch.cuda.Stream(device=device, priority=0), torch.cuda.Stream(device=device, priority=0)]
+                self._streams[device_key] = streams
+            except Exception as e:
+                import logging
+                logging.warning(
+                    f"[Nex-Streaming] Failed to lazily create CUDA streams on {device}: {e}. "
+                    f"Falling back to default stream."
+                )
+                return None
         return streams[int(module_index) % len(streams)]
 
     def stream_for_module(self, module: Any, *, device: torch.device):

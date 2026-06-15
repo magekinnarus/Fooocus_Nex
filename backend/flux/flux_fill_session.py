@@ -157,14 +157,32 @@ class FluxFillSession:
     def _release_vae(self) -> None:
         if self.vae is None:
             return
-        try:
-            resources.eject_model(self.vae.patcher)
-        except Exception:
-            detach = getattr(self.vae.patcher, "detach", None)
-            if callable(detach):
-                detach()
-        finally:
-            self.vae = None
+        vae_patcher = getattr(self.vae, "patcher", None)
+        if vae_patcher is not None:
+            try:
+                resources.eject_model(vae_patcher)
+            except Exception:
+                detach = getattr(vae_patcher, "detach", None)
+                if callable(detach):
+                    detach()
+            try:
+                if getattr(vae_patcher, "can_runtime_release", lambda: False)():
+                    vae_patcher.release_weights_to_meta()
+            except Exception:
+                pass
+        else:
+            try:
+                resources.eject_model(self.vae)
+            except Exception:
+                detach = getattr(self.vae, "detach", None)
+                if callable(detach):
+                    detach()
+            try:
+                if getattr(self.vae, "can_runtime_release", lambda: False)():
+                    self.vae.release_weights_to_meta()
+            except Exception:
+                pass
+        self.vae = None
 
     def _clear_latent_source_cache(self) -> None:
         self.latent_source_fingerprint = None
@@ -467,6 +485,11 @@ class FluxFillSession:
                 detach = getattr(self.unet_patcher, "detach", None)
                 if callable(detach):
                     detach()
+            try:
+                if getattr(self.unet_patcher, "can_runtime_release", lambda: False)():
+                    self.unet_patcher.release_weights_to_meta()
+            except Exception:
+                pass
             finally:
                 self.unet_patcher = None
 

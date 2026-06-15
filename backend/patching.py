@@ -697,18 +697,14 @@ class NexModelPatcher:
             return self.model.model_loaded_weight_memory - current_used
 
     def detach(self, unpatch_all=True):
-        if self.can_runtime_release() and unpatch_all:
-            current_device = self.current_loaded_device()
-            current_device_type = getattr(current_device, "type", None)
-            unpatch_target = self.load_device if current_device_type in ("meta", "cpu") else current_device
-            self.model_patches_to(self.load_device)
-            self.unpatch_model(unpatch_target, unpatch_weights=True)
-            self._release_runtime_weights()
-            return self.model
         self.model_patches_to(self.offload_device)
         if unpatch_all:
             self.unpatch_model(self.offload_device, unpatch_weights=unpatch_all)
         return self.model
+
+    def release_weights_to_meta(self) -> bool:
+        """Explicitly release model weights to meta device (reclaiming host/GPU memory)."""
+        return self._release_runtime_weights()
 
     def current_loaded_device(self):
         return self.model.device

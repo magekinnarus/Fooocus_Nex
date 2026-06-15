@@ -504,6 +504,9 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         setattr(model, "_nex_streaming_unet_compile_metrics", dict(compile_metrics))
 
     def _restore_clean_streaming_unet_shell(self) -> bool:
+        if self.unet is not None:
+            self.unet.unpatch_model(unpatch_weights=True)
+            self._clear_patcher_artifacts(self.unet)
         runtime_reload = getattr(self.unet, "runtime_reload", None)
         if not callable(runtime_reload):
             return False

@@ -194,6 +194,8 @@ def _detach_cached_component(component: Any) -> None:
     if callable(detach):
         try:
             detach()
+            if getattr(patcher, "can_runtime_release", lambda: False)():
+                patcher.release_weights_to_meta()
         except Exception:
             logging.debug("Failed to detach cached SDXL component during cache cleanup.", exc_info=True)
 
@@ -227,7 +229,10 @@ def _resolve_shared_sdxl_vae_path() -> str | None:
         candidate = get_file_from_folder_list(_SHARED_SDXL_VAE_FILENAME, config.path_vae)
     except Exception:
         return None
-    return candidate if os.path.isfile(candidate) else None
+    # Check size to prevent resolving to corrupted/empty 0-byte placeholder files
+    if os.path.isfile(candidate) and os.path.getsize(candidate) > 10 * 1024 * 1024:
+        return candidate
+    return None
 
 
 def _load_shared_sdxl_vae_for_device(
@@ -246,20 +251,42 @@ def _load_shared_sdxl_vae_for_device(
             offload_device=offload_device,
             latent_format=latent_formats.SDXL(),
         )
-    except Exception:
+    except Exception as e:
         if allow_default_fallback and _looks_like_shared_sdxl_vae_asset(vae_path):
             logging.warning(
-                "Failed to load shared default SDXL VAE from %s; falling back to checkpoint VAE.",
+                "Failed to load shared default SDXL VAE from %s; falling back to checkpoint VAE. Error: %s",
                 vae_path,
-                exc_info=True,
+                str(e),
             )
             return None
         raise
 
 
 def _release_shared_sdxl_base_components(entry: SharedSDXLBaseComponents, teardown: bool = False) -> None:
-    _detach_cached_component(entry.unet)
-    _detach_cached_component(entry.clip)
+    if entry.unet is not None:
+        _detach_cached_component(entry.unet)
+        # Discard compile metrics/signature and clean source snapshots from model to avoid CPU memory leak on eviction
+        model = getattr(entry.unet, "model", None)
+        if model is not None:
+            if hasattr(model, "_nex_clean_unet_source"):
+                model._nex_clean_unet_source = None
+                logging.info("[UnifiedSDXLRuntime] Discarded clean UNet source snapshot from memory on release.")
+            if hasattr(model, "_nex_resident_compile_metrics"):
+                delattr(model, "_nex_resident_compile_metrics")
+            if hasattr(model, "_nex_resident_lora_signature"):
+                delattr(model, "_nex_resident_lora_signature")
+            if hasattr(model, "_nex_resident_scheduler"):
+                delattr(model, "_nex_resident_scheduler")
+
+    if entry.clip is not None:
+        _detach_cached_component(entry.clip)
+        clip_patcher = getattr(entry.clip, "patcher", entry.clip)
+        clip_model = getattr(clip_patcher, "model", None) if clip_patcher is not None else None
+        if clip_model is not None:
+            if hasattr(clip_model, "_nex_clean_clip_source"):
+                clip_model._nex_clean_clip_source = None
+                logging.info("[UnifiedSDXLRuntime] Discarded clean CLIP source snapshot from memory on release.")
+
     if teardown or not any(entry.vae is v for v in _SHARED_SDXL_VAE_CACHE.values()):
         _detach_cached_component(entry.vae)
 

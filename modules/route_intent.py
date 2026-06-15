@@ -127,11 +127,16 @@ def resolve_route_intent(state, *, prefer_runtime_route: bool = False) -> RouteI
         getattr(state, "inpaint_route", None)
     ) == "flux"
 
-    expects_controlnet = input_image_active and (
-        has_controlnet_tasks
-        or mixed_inpaint_request
-        or mixed_outpaint_request
-    )
+    expects_controlnet = False
+    if input_image_active:
+        if wants_outpaint:
+            expects_controlnet = has_controlnet_tasks and bool(getattr(state, "mixing_image_prompt_and_outpaint", False))
+        elif wants_inpaint:
+            expects_controlnet = has_controlnet_tasks and bool(getattr(state, "mixing_image_prompt_and_inpaint", False))
+        elif wants_removal or wants_upscale:
+            expects_controlnet = False
+        else:
+            expects_controlnet = has_controlnet_tasks
 
     route_id = "txt2img"
     route_family = "txt2img"
