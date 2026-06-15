@@ -503,7 +503,12 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
 
         def _release_callback():
             teardown = (requested_key is None or requested_key.family != PROCESS_FAMILY_SDXL)
-            sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache(teardown=teardown)
+            try:
+                sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache(teardown=teardown)
+            except TypeError as exc:
+                if "unexpected keyword argument 'teardown'" not in str(exc):
+                    raise
+                sdxl_unified_runtime.clear_unified_sdxl_runtime_component_cache()
             try:
                 from backend import conditioning
                 conditioning.clear_prompt_conditioning_cache()

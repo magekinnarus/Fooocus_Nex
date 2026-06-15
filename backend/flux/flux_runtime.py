@@ -44,6 +44,13 @@ _SDXL_BUCKETS: tuple[tuple[int, int], ...] = tuple(
 )
 
 
+def _soft_empty_cache_force() -> None:
+    try:
+        resources.soft_empty_cache(force=True)
+    except TypeError:
+        resources.soft_empty_cache()
+
+
 def _normalize_flux_fill_mode(mode: str | None) -> str:
     value = str(mode or FLUX_FILL_GLASS_DEFAULT_MODE).strip().lower()
     if value in FLUX_FILL_GLASS_MODES:
@@ -1187,10 +1194,7 @@ class FluxFillPipeline:
             if vae is None or unet_patcher is None:
                 import gc as _gc
                 _gc.collect()
-                try:
-                    resources.soft_empty_cache(force=True)
-                except TypeError:
-                    resources.soft_empty_cache()
+                _soft_empty_cache_force()
 
             stage_start = time.perf_counter()
             source_latent, source_latent_summary = self.encode_source_latent(source_pixels, vae=vae, cleanup_vae=False)
@@ -1260,6 +1264,16 @@ class FluxFillPipeline:
         )
         timings["denoise"] = time.perf_counter() - stage_start
         debug_summary["stages"]["denoise"] = denoise_summary
+
+        if is_streaming and unet_patcher is not None:
+            if hasattr(unet_patcher, "detach") and callable(unet_patcher.detach):
+                try:
+                    unet_patcher.detach()
+                except Exception:
+                    pass
+            import gc as _gc
+            _gc.collect()
+            _soft_empty_cache_force()
 
         stage_start = time.perf_counter()
         decoded, decode_summary = self.decode(samples, vae=vae, cleanup_vae=cleanup_vae if vae is not None else None)

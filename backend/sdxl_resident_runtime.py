@@ -38,7 +38,13 @@ from backend.sdxl_unified_runtime import (
     UnifiedSDXLPreparedInputs,
     UnifiedSDXLDenoiseResult,
     _SHARED_SDXL_BASE_COMPONENT_CACHE,
+    _SHARED_SDXL_VAE_CACHE,
+    _is_default_shared_sdxl_vae_selection,
+    _load_shared_sdxl_vae_for_device,
     _release_shared_sdxl_base_components,
+    _resolve_shared_sdxl_vae_path,
+    _looks_like_shared_sdxl_vae_asset,
+    _soft_empty_cache_force,
     SharedSDXLBaseComponents,
     _get_lora_file_hash,
     _PARSED_LORA_ADAPTER_CACHE,
@@ -124,6 +130,23 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
 
         if shared_base is None:
             cuda_device = resources.get_torch_device()
+            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
+            if vae_path and allow_default_vae_fallback:
+                vae_cache_key = (vae_path, str(cuda_device), str(cuda_device))
+                vae_source = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+                if vae_source is None:
+                    vae_source = _load_shared_sdxl_vae_for_device(
+                        vae_path,
+                        load_device=cuda_device,
+                        offload_device=cuda_device,
+                        allow_default_fallback=allow_default_vae_fallback,
+                    )
+                    if vae_source is not None:
+                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_source
+            elif vae_path:
+                vae_source = vae_path
+            else:
+                vae_source = None
             # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
             # until process-aware teardown releases them for a real model/process transition.
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
@@ -135,7 +158,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 clip_offload_device=cpu_device,
                 vae_load_device=cuda_device,
                 vae_offload_device=cuda_device,
-                vae_source=vae_path,
+                vae_source=vae_source,
             )
 
             shared_base = SharedSDXLBaseComponents(
@@ -439,7 +462,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         callback: Any = None,
         disable_pbar: bool = True,
     ) -> UnifiedSDXLDenoiseResult:
-        resources.soft_empty_cache(force=True)
+        _soft_empty_cache_force()
         self.load_components()
         self._validate_prepared_inputs(prepared_inputs)
         self.prepared_inputs = prepared_inputs
@@ -784,6 +807,12 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
 
     def _require_optional_vae_path(self) -> str | None:
         value = str(self.config.vae_path or "").strip()
+        if _is_default_shared_sdxl_vae_selection(value):
+            return _resolve_shared_sdxl_vae_path()
+        if _looks_like_shared_sdxl_vae_asset(value) and not os.path.isfile(value):
+            resolved = _resolve_shared_sdxl_vae_path()
+            if resolved is not None:
+                return resolved
         return value or None
 
     def _execution_class_label(self) -> str:

@@ -36,7 +36,10 @@ from backend.sdxl_unified_runtime import (
     _SHARED_SDXL_BASE_COMPONENT_CACHE,
     _SHARED_SDXL_VAE_CACHE,
     _detach_cached_component,
+    _is_default_shared_sdxl_vae_selection,
+    _load_shared_sdxl_vae_for_device,
     _release_shared_sdxl_base_components,
+    _soft_empty_cache_force,
 )
 
 
@@ -91,18 +94,19 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         self._base_component_cache_hit = shared_base is not None
 
         if shared_base is None:
+            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
             if vae_path:
                 vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
                 vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
                 if vae_to_use is None:
-                    from backend import latent_formats
-                    vae_to_use = loader.load_vae(
+                    vae_to_use = _load_shared_sdxl_vae_for_device(
                         vae_path,
                         load_device=cpu_device,
                         offload_device=cpu_device,
-                        latent_format=latent_formats.SDXL(),
+                        allow_default_fallback=allow_default_vae_fallback,
                     )
-                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+                    if vae_to_use is not None:
+                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
             else:
                 vae_to_use = None
 
@@ -276,7 +280,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         callback: Any = None,
         disable_pbar: bool = True,
     ) -> UnifiedSDXLDenoiseResult:
-        resources.soft_empty_cache(force=True)
+        _soft_empty_cache_force()
         self.load_components()
         self._validate_prepared_inputs(prepared_inputs)
         self.prepared_inputs = prepared_inputs
@@ -345,8 +349,9 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         decode_device = self._execution_device()
         self._park_compiled_unet_before_decode()
 
-        # Streaming always detaches VAE and flushes cache opportunistically
-        resources.soft_empty_cache(force=True)
+        # Enforce explicit decode-stage memory separation: reclaim UNet memory
+        gc.collect()
+        _soft_empty_cache_force()
 
         attach_start = time.perf_counter()
         self._attach_vae(decode_device)
@@ -368,7 +373,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
                 images = self._compose_decoded_images(decoded_patch)
         finally:
             self._detach_component(getattr(self.vae, "patcher", None))
-            resources.soft_empty_cache(force=True)
+            _soft_empty_cache_force()
             self._attached_payload = None
             self._transition_execution_state(
                 self.prepared_inputs,
@@ -405,7 +410,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
         self._prepare_metrics = {}
         self._checkpoint_fingerprint = None
         gc.collect()
-        resources.soft_empty_cache(force=True)
+        _soft_empty_cache_force()
 
     def _park_compiled_unet_before_decode(self) -> None:
         if self._park_streaming_compiled_unet_shell():

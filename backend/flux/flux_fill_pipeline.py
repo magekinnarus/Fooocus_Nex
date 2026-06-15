@@ -281,6 +281,13 @@ def _cleanup_model_patcher(model_patcher: Any, *, cleanup: bool = True) -> None:
             detach()
 
 
+def _soft_empty_cache_force(resources_module: Any) -> None:
+    try:
+        resources_module.soft_empty_cache(force=True)
+    except TypeError:
+        resources_module.soft_empty_cache()
+
+
 @dataclasses.dataclass
 class SimpleFluxFillContext:
     image: np.ndarray
@@ -456,8 +463,19 @@ def decode_flux_fill_latent(
             process_transition.log_stage_telemetry("vae_decode", posture_override=posture)
         except Exception:
             pass
+        from backend import resources
+        import gc
+        gc.collect()
+        _soft_empty_cache_force(resources)
+
         if vae is None:
             vae = load_flux_ae(ae_path, load_device=load_device, offload_device=offload_device)
+        else:
+            patcher = getattr(vae, "patcher", None)
+            patch_model = getattr(patcher, "patch_model", None)
+            if callable(patch_model):
+                load_dev = load_device or resources.get_torch_device()
+                patch_model(device_to=load_dev)
         original_argv = list(sys.argv)
         try:
             sys.argv = [original_argv[0]]

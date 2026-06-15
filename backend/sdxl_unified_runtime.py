@@ -178,6 +178,7 @@ def clear_preprocessor_metrics() -> None:
 _SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str | None, str], SharedSDXLBaseComponents] = OrderedDict()
 _SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT = 1
 _SHARED_SDXL_VAE_CACHE: dict[tuple[str, str, str], Any] = {}
+_SHARED_SDXL_VAE_FILENAME = "sdxl_vae.safetensors"
 _SHARED_SDXL_COMPILED_UNET_CACHE: OrderedDict[
     tuple[str, str, str, tuple[str, ...], bool],
     SharedSDXLCompiledUnetComponents,
@@ -197,10 +198,70 @@ def _detach_cached_component(component: Any) -> None:
             logging.debug("Failed to detach cached SDXL component during cache cleanup.", exc_info=True)
 
 
-def _release_shared_sdxl_base_components(entry: SharedSDXLBaseComponents) -> None:
+def _soft_empty_cache_force() -> None:
+    try:
+        resources.soft_empty_cache(force=True)
+    except TypeError:
+        resources.soft_empty_cache()
+
+
+def _is_default_shared_sdxl_vae_selection(value: Any) -> bool:
+    import modules.flags as flags
+
+    normalized = str(value or "").strip()
+    return normalized in {"", flags.default_vae, "Default (model)"}
+
+
+def _looks_like_shared_sdxl_vae_asset(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = str(value).replace("\\", "/").rstrip("/").lower()
+    return os.path.basename(normalized) == _SHARED_SDXL_VAE_FILENAME
+
+
+def _resolve_shared_sdxl_vae_path() -> str | None:
+    import modules.config as config
+    from modules.util import get_file_from_folder_list
+
+    try:
+        candidate = get_file_from_folder_list(_SHARED_SDXL_VAE_FILENAME, config.path_vae)
+    except Exception:
+        return None
+    return candidate if os.path.isfile(candidate) else None
+
+
+def _load_shared_sdxl_vae_for_device(
+    vae_path: str,
+    *,
+    load_device: torch.device,
+    offload_device: torch.device,
+    allow_default_fallback: bool = False,
+) -> Any | None:
+    from ldm_patched.modules import latent_formats
+
+    try:
+        return loader.load_vae(
+            vae_path,
+            load_device=load_device,
+            offload_device=offload_device,
+            latent_format=latent_formats.SDXL(),
+        )
+    except Exception:
+        if allow_default_fallback and _looks_like_shared_sdxl_vae_asset(vae_path):
+            logging.warning(
+                "Failed to load shared default SDXL VAE from %s; falling back to checkpoint VAE.",
+                vae_path,
+                exc_info=True,
+            )
+            return None
+        raise
+
+
+def _release_shared_sdxl_base_components(entry: SharedSDXLBaseComponents, teardown: bool = False) -> None:
     _detach_cached_component(entry.unet)
     _detach_cached_component(entry.clip)
-    _detach_cached_component(entry.vae)
+    if teardown or not any(entry.vae is v for v in _SHARED_SDXL_VAE_CACHE.values()):
+        _detach_cached_component(entry.vae)
 
 
 def _release_shared_sdxl_compiled_unet(entry: SharedSDXLCompiledUnetComponents) -> None:
@@ -216,7 +277,7 @@ def clear_unified_sdxl_runtime_component_cache(teardown: bool = False) -> None:
         logging.debug("Failed to clear streaming SDXL runtime cache during unified cache reset.", exc_info=True)
     while _SHARED_SDXL_BASE_COMPONENT_CACHE:
         _, entry = _SHARED_SDXL_BASE_COMPONENT_CACHE.popitem(last=False)
-        _release_shared_sdxl_base_components(entry)
+        _release_shared_sdxl_base_components(entry, teardown=teardown)
     while _SHARED_SDXL_COMPILED_UNET_CACHE:
         _, entry = _SHARED_SDXL_COMPILED_UNET_CACHE.popitem(last=False)
         _release_shared_sdxl_compiled_unet(entry)
@@ -233,7 +294,7 @@ def clear_unified_sdxl_runtime_component_cache(teardown: bool = False) -> None:
         pass
     clear_spatial_latent_cache()
     gc.collect()
-    resources.soft_empty_cache(force=True)
+    _soft_empty_cache_force()
 
 
 def _config_targets_resident_runtime(config: UnifiedSDXLRuntimeConfig | None) -> bool:
@@ -355,18 +416,19 @@ class UnifiedSDXLRuntime(
 
         if shared_base is None:
             cuda_device = resources.get_torch_device()
+            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
             if vae_path:
                 vae_cache_key = (vae_path, str(cuda_device), str(cuda_device))
                 vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
                 if vae_to_use is None:
-                    from backend import latent_formats
-                    vae_to_use = loader.load_vae(
+                    vae_to_use = _load_shared_sdxl_vae_for_device(
                         vae_path,
                         load_device=cuda_device,
                         offload_device=cuda_device,
-                        latent_format=latent_formats.SDXL(),
+                        allow_default_fallback=allow_default_vae_fallback,
                     )
-                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+                    if vae_to_use is not None:
+                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
             else:
                 vae_to_use = None
 
@@ -645,7 +707,7 @@ class UnifiedSDXLRuntime(
     ) -> UnifiedSDXLDenoiseResult:
         _ = callback
         _ = disable_pbar
-        resources.soft_empty_cache(force=True)
+        _soft_empty_cache_force()
         self.load_components()
         self._validate_prepared_inputs(prepared_inputs)
         self.prepared_inputs = prepared_inputs
@@ -714,7 +776,7 @@ class UnifiedSDXLRuntime(
         decode_device = self._execution_device()
         self._park_compiled_unet_before_decode()
         if not self._is_vae_resident():
-            resources.soft_empty_cache(force=True)
+            _soft_empty_cache_force()
 
         attach_start = time.perf_counter()
         self._attach_vae(decode_device)
@@ -737,7 +799,7 @@ class UnifiedSDXLRuntime(
         finally:
             if not self._is_vae_resident():
                 self._detach_component(getattr(self.vae, "patcher", None))
-                resources.soft_empty_cache(force=True)
+                _soft_empty_cache_force()
             self._attached_payload = None
             self._transition_execution_state(
                 self.prepared_inputs,
@@ -780,7 +842,7 @@ class UnifiedSDXLRuntime(
         self._prepare_metrics = {}
         self._checkpoint_fingerprint = None
         gc.collect()
-        resources.soft_empty_cache(force=True)
+        _soft_empty_cache_force()
 
     def patched_weights_for_block(self, block_id: str) -> Any:
         _ = SDXL_RUNTIME_SURFACE_CONTRACTS["patched_weights_for_block"]
@@ -846,6 +908,12 @@ class UnifiedSDXLRuntime(
 
     def _require_optional_vae_path(self) -> str | None:
         value = str(self.config.vae_path or "").strip()
+        if _is_default_shared_sdxl_vae_selection(value):
+            return _resolve_shared_sdxl_vae_path()
+        if _looks_like_shared_sdxl_vae_asset(value) and not os.path.isfile(value):
+            resolved = _resolve_shared_sdxl_vae_path()
+            if resolved is not None:
+                return resolved
         return value or None
 
     def _execution_device(self) -> torch.device:

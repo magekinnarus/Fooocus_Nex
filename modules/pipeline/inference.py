@@ -168,8 +168,8 @@ def _resolve_unified_checkpoint_path(task_state):
 
 def _resolve_unified_vae_path(task_state):
     vae_name = str(getattr(task_state, 'vae_name', '') or '').strip()
-    if vae_name in {'', flags.default_vae}:
-        return get_file_from_folder_list('sdxl_vae.safetensors', config.path_vae)
+    if vae_name in {'', flags.default_vae, 'Default (model)'}:
+        return flags.default_vae
     return get_file_from_folder_list(vae_name, config.path_vae)
 
 
