@@ -796,6 +796,16 @@ default_vae = get_config_item_or_set_default(
     validator=lambda x: isinstance(x, str),
     expected_type=str
 )
+default_vae = resolve_dropdown_choice(
+    default_vae,
+    [modules.flags.default_vae],
+    folder_paths=path_vae,
+    root_keys=('vae',),
+) or (
+    modules.flags.default_vae
+    if str(default_vae or '').strip() in {'', 'Default (model)', 'Default (Same as model)'}
+    else default_vae
+)
 default_styles = get_config_item_or_set_default(
     key='default_styles',
     default_value=[

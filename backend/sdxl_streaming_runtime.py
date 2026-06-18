@@ -85,31 +85,29 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
 
         cache_key = self._base_component_cache_key(
             checkpoint_path=checkpoint_path,
-            vae_path=vae_path,
             is_resident=False,
         )
+        allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
+        vae_to_use = None
+        if vae_path:
+            vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
+            vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+            if vae_to_use is None:
+                vae_to_use = _load_shared_sdxl_vae_for_device(
+                    vae_path,
+                    load_device=cpu_device,
+                    offload_device=cpu_device,
+                    allow_default_fallback=allow_default_vae_fallback,
+                )
+                if vae_to_use is not None:
+                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+        loaded_vae = vae_to_use
         shared_base = _SHARED_SDXL_BASE_COMPONENT_CACHE.get(cache_key)
         if shared_base is not None:
             _SHARED_SDXL_BASE_COMPONENT_CACHE.move_to_end(cache_key)
         self._base_component_cache_hit = shared_base is not None
 
         if shared_base is None:
-            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
-            if vae_path:
-                vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
-                vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
-                if vae_to_use is None:
-                    vae_to_use = _load_shared_sdxl_vae_for_device(
-                        vae_path,
-                        load_device=cpu_device,
-                        offload_device=cpu_device,
-                        allow_default_fallback=allow_default_vae_fallback,
-                    )
-                    if vae_to_use is not None:
-                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
-            else:
-                vae_to_use = None
-
             # CPU-authoritative UNet & VAE loading for streaming runtime
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
                 checkpoint_path,
@@ -122,16 +120,19 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
                 vae_offload_device=cpu_device,
                 vae_source=vae_to_use,
             )
+            if vae_to_use is None and loaded_vae is not None and allow_default_vae_fallback and vae_path:
+                _SHARED_SDXL_VAE_CACHE[vae_cache_key] = loaded_vae
+                vae_to_use = loaded_vae
 
             shared_base = SharedSDXLBaseComponents(
                 unet=loaded_unet,
                 clip=loaded_clip,
-                vae=loaded_vae,
                 checkpoint_fingerprint=self._fingerprint_source_path(checkpoint_path),
             )
             self._remember_shared_base_components(cache_key, shared_base)
 
-        self.unet, self.clip, self.vae = self._clone_shared_base_components(shared_base)
+        self.unet, self.clip = self._clone_shared_base_components(shared_base)
+        self.vae = self._clone_component_for_runtime(loaded_vae)
         self._compiled_unet_cache_hit = False
 
         if self.unet is not None:

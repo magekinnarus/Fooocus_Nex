@@ -57,7 +57,7 @@ scheduler_list = SCHEDULER_NAMES + [name for name in UI_SCHEDULER_ALIASES if nam
 
 clip_skip_max = 12
 
-default_vae = 'Default (model)'
+default_vae = 'sdxl_vae.safetensors'
 
 
 default_input_image_tab = 'uov_tab'

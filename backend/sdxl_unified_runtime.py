@@ -117,7 +117,6 @@ class SharedSDXLBaseComponents:
 
     unet: Any
     clip: Any
-    vae: Any
     checkpoint_fingerprint: str | None = None
 
 
@@ -175,7 +174,7 @@ def clear_preprocessor_metrics() -> None:
     _PREPROCESSOR_METRICS["contextual_misses"] = 0.0
 
 
-_SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str | None, str], SharedSDXLBaseComponents] = OrderedDict()
+_SHARED_SDXL_BASE_COMPONENT_CACHE: OrderedDict[tuple[str, str], SharedSDXLBaseComponents] = OrderedDict()
 _SHARED_SDXL_BASE_COMPONENT_CACHE_LIMIT = 1
 _SHARED_SDXL_VAE_CACHE: dict[tuple[str, str, str], Any] = {}
 _SHARED_SDXL_VAE_FILENAME = "sdxl_vae.safetensors"
@@ -211,7 +210,7 @@ def _is_default_shared_sdxl_vae_selection(value: Any) -> bool:
     import modules.flags as flags
 
     normalized = str(value or "").strip()
-    return normalized in {"", flags.default_vae, "Default (model)"}
+    return normalized in {"", flags.default_vae, "Default (model)", "Default (Same as model)"}
 
 
 def _looks_like_shared_sdxl_vae_asset(value: str | None) -> bool:
@@ -286,10 +285,6 @@ def _release_shared_sdxl_base_components(entry: SharedSDXLBaseComponents, teardo
             if hasattr(clip_model, "_nex_clean_clip_source"):
                 clip_model._nex_clean_clip_source = None
                 logging.info("[UnifiedSDXLRuntime] Discarded clean CLIP source snapshot from memory on release.")
-
-    if teardown or not any(entry.vae is v for v in _SHARED_SDXL_VAE_CACHE.values()):
-        _detach_cached_component(entry.vae)
-
 
 def _release_shared_sdxl_compiled_unet(entry: SharedSDXLCompiledUnetComponents) -> None:
     _detach_cached_component(entry.unet)
@@ -433,9 +428,23 @@ class UnifiedSDXLRuntime(
         is_resident = True
         cache_key = self._base_component_cache_key(
             checkpoint_path=checkpoint_path,
-            vae_path=vae_path,
             is_resident=is_resident,
         )
+        allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
+        vae_to_use = None
+        if vae_path:
+            vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
+            vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+            if vae_to_use is None:
+                vae_to_use = _load_shared_sdxl_vae_for_device(
+                    vae_path,
+                    load_device=cpu_device,
+                    offload_device=cpu_device,
+                    allow_default_fallback=allow_default_vae_fallback,
+                )
+                if vae_to_use is not None:
+                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
+        loaded_vae = vae_to_use
         shared_base = _SHARED_SDXL_BASE_COMPONENT_CACHE.get(cache_key)
         if shared_base is not None:
             _SHARED_SDXL_BASE_COMPONENT_CACHE.move_to_end(cache_key)
@@ -443,24 +452,8 @@ class UnifiedSDXLRuntime(
 
         if shared_base is None:
             cuda_device = resources.get_torch_device()
-            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
-            if vae_path:
-                vae_cache_key = (vae_path, str(cuda_device), str(cuda_device))
-                vae_to_use = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
-                if vae_to_use is None:
-                    vae_to_use = _load_shared_sdxl_vae_for_device(
-                        vae_path,
-                        load_device=cuda_device,
-                        offload_device=cuda_device,
-                        allow_default_fallback=allow_default_vae_fallback,
-                    )
-                    if vae_to_use is not None:
-                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_to_use
-            else:
-                vae_to_use = None
-
-            # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
-            # until process-aware teardown releases them for a real model/process transition.
+            # Resident SDXL keeps the checkpoint-weight UNet authoritative on GPU.
+            # The shared VAE remains CPU-cached and only attaches when decode work needs it.
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
                 checkpoint_path,
                 load_device=cuda_device,
@@ -468,20 +461,23 @@ class UnifiedSDXLRuntime(
                 unet_dtype=torch.float16,
                 clip_load_device=cpu_device,
                 clip_offload_device=cpu_device,
-                vae_load_device=cuda_device,
-                vae_offload_device=cuda_device,
+                vae_load_device=cpu_device,
+                vae_offload_device=cpu_device,
                 vae_source=vae_to_use,
             )
+            if vae_to_use is None and loaded_vae is not None and allow_default_vae_fallback and vae_path:
+                _SHARED_SDXL_VAE_CACHE[vae_cache_key] = loaded_vae
+                vae_to_use = loaded_vae
 
             shared_base = SharedSDXLBaseComponents(
                 unet=loaded_unet,
                 clip=loaded_clip,
-                vae=loaded_vae,
                 checkpoint_fingerprint=self._fingerprint_source_path(checkpoint_path),
             )
             self._remember_shared_base_components(cache_key, shared_base)
 
-        self.unet, self.clip, self.vae = self._clone_shared_base_components(shared_base)
+        self.unet, self.clip = self._clone_shared_base_components(shared_base)
+        self.vae = self._clone_component_for_runtime(loaded_vae)
         self._compiled_unet_cache_hit = False
 
         if self.unet is not None:
@@ -533,7 +529,7 @@ class UnifiedSDXLRuntime(
         return self._cold_model_load_cpu
 
     def _is_vae_resident(self) -> bool:
-        return True
+        return False
 
     def prepare_inputs(self) -> tuple[UnifiedSDXLPreparedInputs, dict[str, float]]:
         if self.prepared_inputs is not None:
@@ -848,8 +844,9 @@ class UnifiedSDXLRuntime(
         )
         if not is_resident:
             self._detach_component(self.unet)
-            self._detach_component(getattr(self.vae, "patcher", None))
             self._detach_component(getattr(self.clip, "patcher", None))
+        self._detach_component(getattr(self.vae, "patcher", None))
+        _soft_empty_cache_force()
         self._attached_payload = None
         self.execution_state = None
         self.prepared_inputs = None
@@ -934,9 +931,11 @@ class UnifiedSDXLRuntime(
         return policy_exec_class
 
     def _require_optional_vae_path(self) -> str | None:
+        import modules.flags as flags
+
         value = str(self.config.vae_path or "").strip()
         if _is_default_shared_sdxl_vae_selection(value):
-            return _resolve_shared_sdxl_vae_path()
+            return _resolve_shared_sdxl_vae_path() or flags.default_vae
         if _looks_like_shared_sdxl_vae_asset(value) and not os.path.isfile(value):
             resolved = _resolve_shared_sdxl_vae_path()
             if resolved is not None:
@@ -1004,11 +1003,10 @@ class UnifiedSDXLRuntime(
         self,
         *,
         checkpoint_path: str,
-        vae_path: str | None,
         is_resident: bool,
-    ) -> tuple[str, str | None, str]:
+    ) -> tuple[str, str]:
         residency_label = "resident" if is_resident else "cpu"
-        return (checkpoint_path, vae_path, residency_label)
+        return (checkpoint_path, residency_label)
 
     def _clone_component_for_runtime(self, component: Any) -> Any:
         if component is None:
@@ -1021,16 +1019,15 @@ class UnifiedSDXLRuntime(
     def _clone_shared_base_components(
         self,
         shared_base: SharedSDXLBaseComponents,
-    ) -> tuple[Any, Any, Any]:
+    ) -> tuple[Any, Any]:
         return (
             self._clone_component_for_runtime(shared_base.unet),
             self._clone_component_for_runtime(shared_base.clip),
-            self._clone_component_for_runtime(shared_base.vae),
         )
 
     def _remember_shared_base_components(
         self,
-        cache_key: tuple[str, str | None, str],
+        cache_key: tuple[str, str],
         shared_base: SharedSDXLBaseComponents,
     ) -> None:
         _SHARED_SDXL_BASE_COMPONENT_CACHE[cache_key] = shared_base

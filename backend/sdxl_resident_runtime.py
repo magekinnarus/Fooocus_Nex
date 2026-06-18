@@ -120,9 +120,23 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         is_resident = True
         cache_key = self._base_component_cache_key(
             checkpoint_path=checkpoint_path,
-            vae_path=vae_path,
             is_resident=is_resident,
         )
+        allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
+        vae_source = None
+        if vae_path:
+            vae_cache_key = (vae_path, str(cpu_device), str(cpu_device))
+            vae_source = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
+            if vae_source is None:
+                vae_source = _load_shared_sdxl_vae_for_device(
+                    vae_path,
+                    load_device=cpu_device,
+                    offload_device=cpu_device,
+                    allow_default_fallback=allow_default_vae_fallback,
+                )
+                if vae_source is not None:
+                    _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_source
+        loaded_vae = vae_source
         shared_base = _SHARED_SDXL_BASE_COMPONENT_CACHE.get(cache_key)
         if shared_base is not None:
             _SHARED_SDXL_BASE_COMPONENT_CACHE.move_to_end(cache_key)
@@ -130,25 +144,8 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
 
         if shared_base is None:
             cuda_device = resources.get_torch_device()
-            allow_default_vae_fallback = _is_default_shared_sdxl_vae_selection(self.config.vae_path)
-            if vae_path and allow_default_vae_fallback:
-                vae_cache_key = (vae_path, str(cuda_device), str(cuda_device))
-                vae_source = _SHARED_SDXL_VAE_CACHE.get(vae_cache_key)
-                if vae_source is None:
-                    vae_source = _load_shared_sdxl_vae_for_device(
-                        vae_path,
-                        load_device=cuda_device,
-                        offload_device=cuda_device,
-                        allow_default_fallback=allow_default_vae_fallback,
-                    )
-                    if vae_source is not None:
-                        _SHARED_SDXL_VAE_CACHE[vae_cache_key] = vae_source
-            elif vae_path:
-                vae_source = vae_path
-            else:
-                vae_source = None
-            # Resident SDXL keeps the checkpoint-weight UNet and VAE authoritative on GPU
-            # until process-aware teardown releases them for a real model/process transition.
+            # Resident SDXL keeps the checkpoint-weight UNet authoritative on GPU.
+            # The shared VAE remains CPU-cached and only attaches when decode work needs it.
             loaded_unet, loaded_clip, loaded_vae = loader.load_sdxl_checkpoint(
                 checkpoint_path,
                 load_device=cuda_device,
@@ -156,20 +153,23 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 unet_dtype=torch.float16,
                 clip_load_device=cpu_device,
                 clip_offload_device=cpu_device,
-                vae_load_device=cuda_device,
-                vae_offload_device=cuda_device,
+                vae_load_device=cpu_device,
+                vae_offload_device=cpu_device,
                 vae_source=vae_source,
             )
+            if vae_source is None and loaded_vae is not None and allow_default_vae_fallback and vae_path:
+                _SHARED_SDXL_VAE_CACHE[vae_cache_key] = loaded_vae
+                vae_source = loaded_vae
 
             shared_base = SharedSDXLBaseComponents(
                 unet=loaded_unet,
                 clip=loaded_clip,
-                vae=loaded_vae,
                 checkpoint_fingerprint=self._fingerprint_source_path(checkpoint_path),
             )
             self._remember_shared_base_components(cache_key, shared_base)
 
-        self.unet, self.clip, self.vae = self._clone_shared_base_components(shared_base)
+        self.unet, self.clip = self._clone_shared_base_components(shared_base)
+        self.vae = self._clone_component_for_runtime(loaded_vae)
         self._compiled_unet_cache_hit = False
 
         if self.unet is not None:
@@ -221,7 +221,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         return self._cold_model_load_cpu
 
     def _is_vae_resident(self) -> bool:
-        return True
+        return False
 
     def prepare_inputs(self) -> tuple[UnifiedSDXLPreparedInputs, dict[str, float]]:
         if self.prepared_inputs is not None:
@@ -550,6 +550,8 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=tiled)
                 images = self._compose_decoded_images(decoded_patch)
         finally:
+            self._detach_component(getattr(self.vae, "patcher", None))
+            _soft_empty_cache_force()
             self._attached_payload = None
             self._transition_execution_state(
                 self.prepared_inputs,
@@ -563,7 +565,9 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         return images, vae_attach, vae_decode
 
     def close(self) -> None:
-        # Core models (UNet, CLIP, VAE) stay warm, so do not detach/unload them
+        # Keep resident UNet state warm, but release the shared VAE so it does not stay on GPU.
+        self._detach_component(getattr(self.vae, "patcher", None))
+        _soft_empty_cache_force()
         self._attached_payload = None
         self.execution_state = None
         self.prepared_inputs = None
@@ -622,11 +626,15 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             raise RuntimeError("VAE is not loaded.")
         decode_device = self._execution_device()
         self._attach_vae(decode_device)
-        from backend import encode as vae_encode
-        if hasattr(self.vae, "first_stage_model"):
-            self.vae.first_stage_model.to(device=decode_device)
-        res = vae_encode.encode_pixels(self.vae, pixels)
-        return res["samples"]
+        try:
+            from backend import encode as vae_encode
+            if hasattr(self.vae, "first_stage_model"):
+                self.vae.first_stage_model.to(device=decode_device)
+            res = vae_encode.encode_pixels(self.vae, pixels)
+            return res["samples"]
+        finally:
+            self._detach_component(getattr(self.vae, "patcher", None))
+            _soft_empty_cache_force()
 
     def decode_spatial_latents(self, latent: torch.Tensor, tiled: bool = False) -> torch.Tensor:
         """Expose a resident VAE decode seam that tiled refinement and Super-Upscale can adopt."""
@@ -635,13 +643,17 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             raise RuntimeError("VAE is not loaded.")
         decode_device = self._execution_device()
         self._attach_vae(decode_device)
-        from backend import decode as vae_decode
-        if hasattr(self.vae, "first_stage_model"):
-            if vae_decode._should_force_fp32_vae_decode(self.vae):
-                self.vae.first_stage_model.to(device=decode_device, dtype=torch.float32)
-            else:
-                self.vae.first_stage_model.to(device=decode_device)
-        return vae_decode.decode_latent(self.vae, latent, tiled=tiled)
+        try:
+            from backend import decode as vae_decode
+            if hasattr(self.vae, "first_stage_model"):
+                if vae_decode._should_force_fp32_vae_decode(self.vae):
+                    self.vae.first_stage_model.to(device=decode_device, dtype=torch.float32)
+                else:
+                    self.vae.first_stage_model.to(device=decode_device)
+            return vae_decode.decode_latent(self.vae, latent, tiled=tiled)
+        finally:
+            self._detach_component(getattr(self.vae, "patcher", None))
+            _soft_empty_cache_force()
 
     def _encode_spatial_pixels_for_artifacts(self, pixels: torch.Tensor) -> torch.Tensor:
         return self.encode_spatial_pixels(pixels).detach().cpu()
@@ -806,9 +818,11 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         return checkpoint_path
 
     def _require_optional_vae_path(self) -> str | None:
+        import modules.flags as flags
+
         value = str(self.config.vae_path or "").strip()
         if _is_default_shared_sdxl_vae_selection(value):
-            return _resolve_shared_sdxl_vae_path()
+            return _resolve_shared_sdxl_vae_path() or flags.default_vae
         if _looks_like_shared_sdxl_vae_asset(value) and not os.path.isfile(value):
             resolved = _resolve_shared_sdxl_vae_path()
             if resolved is not None:
@@ -881,11 +895,10 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         self,
         *,
         checkpoint_path: str,
-        vae_path: str | None,
         is_resident: bool,
-    ) -> tuple[str, str | None, str]:
+    ) -> tuple[str, str]:
         residency_label = "resident" if is_resident else "cpu"
-        return (checkpoint_path, vae_path, residency_label)
+        return (checkpoint_path, residency_label)
 
     def _clone_component_for_runtime(self, component: Any) -> Any:
         if component is None:
@@ -898,16 +911,15 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
     def _clone_shared_base_components(
         self,
         shared_base: SharedSDXLBaseComponents,
-    ) -> tuple[Any, Any, Any]:
+    ) -> tuple[Any, Any]:
         return (
             self._clone_component_for_runtime(shared_base.unet),
             self._clone_component_for_runtime(shared_base.clip),
-            self._clone_component_for_runtime(shared_base.vae),
         )
 
     def _remember_shared_base_components(
         self,
-        cache_key: tuple[str, str | None, str],
+        cache_key: tuple[str, str],
         shared_base: SharedSDXLBaseComponents,
     ) -> None:
         _SHARED_SDXL_BASE_COMPONENT_CACHE[cache_key] = shared_base

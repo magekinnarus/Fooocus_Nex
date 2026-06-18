@@ -252,7 +252,6 @@ def resolve_sdxl_process_key(
     else:
         identity = [
             str(base_model_name or ''),
-            str(vae_name or ''),
             str(clip_name or ''),
         ]
 

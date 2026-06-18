@@ -66,7 +66,16 @@ class UnifiedSDXLRuntimeArtifactMixin:
     def _encode_spatial_pixels_for_artifacts(self, pixels: torch.Tensor) -> torch.Tensor:
         if self.vae is None:
             raise RuntimeError("Unified SDXL runtime requires a loaded VAE before encoding spatial artifacts.")
-        return self.vae.encode(pixels)["samples"].detach().cpu()
+        decode_device = self._execution_device()
+        self._attach_vae(decode_device)
+        try:
+            if hasattr(self.vae, "first_stage_model"):
+                self.vae.first_stage_model.to(device=decode_device)
+            return self.vae.encode(pixels)["samples"].detach().cpu()
+        finally:
+            self._detach_component(getattr(self.vae, "patcher", None))
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _normalize_structural_task_shape(self, task: Any) -> tuple[Any, float, float]:
         if not isinstance(task, (list, tuple)) or len(task) < 3:
