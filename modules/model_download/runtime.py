@@ -25,10 +25,15 @@ def download_file(
     headers: Iterable[tuple[str, str]] = (),
     prefer_aria2: bool = True,
 ) -> str:
-    os.makedirs(model_dir, exist_ok=True)
-
     if not file_name:
         file_name = os.path.basename(urlparse(url).path)
+    else:
+        file_name = file_name.replace('\\', '/')
+        if '/' in file_name:
+            sub_dir, file_name = file_name.rsplit('/', 1)
+            model_dir = os.path.join(model_dir, sub_dir.replace('/', os.sep))
+
+    os.makedirs(model_dir, exist_ok=True)
 
     destination = os.path.abspath(os.path.join(model_dir, file_name))
     if os.path.exists(destination):

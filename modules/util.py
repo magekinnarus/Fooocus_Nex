@@ -366,12 +366,22 @@ def get_file_from_folder_list(name, folders):
     if not isinstance(folders, list):
         folders = [folders]
 
+    name_norm = str(name).replace('\\', '/').replace('/', os.sep)
+
     for folder in folders:
-        filename = os.path.abspath(os.path.realpath(os.path.join(folder, name)))
+        filename = os.path.abspath(os.path.realpath(os.path.join(folder, name_norm)))
         if os.path.isfile(filename):
             return filename
 
-    return os.path.abspath(os.path.realpath(os.path.join(folders[0], name)))
+    # Fallback search for sdxl_vae.safetensors under sdxl/ if searched directly
+    if name_norm.lower() == 'sdxl_vae.safetensors':
+        for folder in folders:
+            fallback_name = os.path.join('sdxl', name_norm)
+            filename = os.path.abspath(os.path.realpath(os.path.join(folder, fallback_name)))
+            if os.path.isfile(filename):
+                return filename
+
+    return os.path.abspath(os.path.realpath(os.path.join(folders[0], name_norm)))
 
 
 def get_enabled_loras(loras: list, remove_none=True) -> list:

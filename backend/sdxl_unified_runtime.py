@@ -224,13 +224,19 @@ def _resolve_shared_sdxl_vae_path() -> str | None:
     import modules.config as config
     from modules.util import get_file_from_folder_list
 
-    try:
-        candidate = get_file_from_folder_list(_SHARED_SDXL_VAE_FILENAME, config.path_vae)
-    except Exception:
-        return None
-    # Check size to prevent resolving to corrupted/empty 0-byte placeholder files
-    if os.path.isfile(candidate) and os.path.getsize(candidate) > 10 * 1024 * 1024:
-        return candidate
+    names = (
+        _SHARED_SDXL_VAE_FILENAME,
+        f"sdxl/{_SHARED_SDXL_VAE_FILENAME}",
+        f"sdxl\\{_SHARED_SDXL_VAE_FILENAME}"
+    )
+    for name in names:
+        try:
+            candidate = get_file_from_folder_list(name, config.path_vae)
+            # Check size to prevent resolving to corrupted/empty 0-byte placeholder files
+            if os.path.isfile(candidate) and os.path.getsize(candidate) > 10 * 1024 * 1024:
+                return candidate
+        except Exception:
+            pass
     return None
 
 

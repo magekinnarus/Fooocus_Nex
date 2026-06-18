@@ -27,6 +27,9 @@
     "checkpoint_downloads": {
         "beretMixReal_v110.safetensors": "https://huggingface.co/Old-Fisherman/Fooocus_Nex/resolve/main/checkpoints/sdxl/beretMixReal_v110.safetensors"
     },
+    "vae_downloads": {
+        "sdxl/sdxl_vae.safetensors": "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors"
+    },
     "default_styles": [
         "Dj Illustrious",
         "Dj Hyperrealism"

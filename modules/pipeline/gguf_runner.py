@@ -489,7 +489,10 @@ class GGUFPipelineRunner:
         )
         vae_name = task_state.vae_name
         if not vae_name or vae_name == 'Default (Same as model)':
-            vae_path = self._find_existing_file('sdxl_vae.safetensors', modules.config.path_vae)
+            from backend.sdxl_unified_runtime import _resolve_shared_sdxl_vae_path
+            vae_path = _resolve_shared_sdxl_vae_path()
+            if vae_path is None:
+                vae_path = self._find_existing_file('sdxl_vae.safetensors', modules.config.path_vae)
             if vae_path is None:
                 raise RuntimeError("Could not find default SDXL VAE (sdxl_vae.safetensors)")
         else:
@@ -560,7 +563,8 @@ class GGUFPipelineRunner:
         if isinstance(name, str) and os.path.isfile(name):
             return name
 
-        candidate = util.get_file_from_folder_list(name, folders)
+        normalized_name = str(name).replace('\\', '/').replace('/', os.sep)
+        candidate = util.get_file_from_folder_list(normalized_name, folders)
         if isinstance(candidate, str) and os.path.isfile(candidate):
             return candidate
         return None

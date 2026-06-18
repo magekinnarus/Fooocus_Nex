@@ -541,7 +541,7 @@ def get_preferred_asset_root_path(key, *, file_name=None, relative_path=None):
     if not persistent_names:
         return roots[0]
 
-    candidate_name = file_name or os.path.basename(str(relative_path or '')).strip()
+    candidate_name = os.path.basename(str(file_name or relative_path or '')).strip()
     normalized_name = str(candidate_name or '').strip().lower()
     if normalized_name and normalized_name in persistent_names:
         return roots[0]
