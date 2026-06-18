@@ -665,17 +665,25 @@
                 item.dataset.compareSlot = compareBadge;
             }
 
-            // Standard img with draggable=true for Fooocus slots
+            // Standard img (NOT draggable=true directly to prevent browser drag feedback lag on huge source images)
             const imgEl = document.createElement('img');
             imgEl.src = img.url;
             imgEl.alt = img.name;
-            imgEl.draggable = true;
+            imgEl.draggable = false;
             imgEl.loading = 'lazy';
             imgEl.decoding = 'async';
             imgEl.title = 'Drag to slots';
 
+            // Make the wrapper container draggable to allow dragging the small rendered thumbnail
+            // rather than the high-resolution source image, preventing browser freeze/drag cancels.
+            item.draggable = true;
+
             // Critical for dragging into Gradio slots: set absolute URL in dataTransfer
-            imgEl.addEventListener('dragstart', (e) => {
+            item.addEventListener('dragstart', (e) => {
+                if (e.target.closest('.item-actions') || e.target.tagName === 'BUTTON') {
+                    e.preventDefault();
+                    return;
+                }
                 activeImageDragCount += 1;
                 scheduleDragGuardReset();
                 const absoluteUrl = window.location.origin + img.url;
@@ -692,7 +700,7 @@
                 e.dataTransfer.setData('fooocus/staging-internal', 'true'); // Flag to prevent self-drop
                 console.log('[Staging] Drag start:', absoluteUrl);
             });
-            imgEl.addEventListener('dragend', () => {
+            item.addEventListener('dragend', () => {
                 finalizeImageDrag();
             });
 

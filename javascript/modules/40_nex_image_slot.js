@@ -120,9 +120,9 @@
                 '      <button type="button" class="nex-slot__clear" hidden>Remove</button>',
                 '    </div>',
                 '  </div>',
-                '  <div class="nex-slot__drop" tabindex="0">',
+                '  <div class="nex-slot__drop" tabindex="0" draggable="true">',
                 `    <div class="nex-slot__placeholder">${this.placeholder}</div>`,
-                '    <img class="nex-slot__img" alt="">',
+                '    <img class="nex-slot__img" alt="" draggable="false">',
                 '  </div>',
                 '  <input class="nex-slot__input" type="file" accept="image/*" hidden>',
                 '</div>'
@@ -142,6 +142,33 @@
                     event.preventDefault();
                     this.fileInput.click();
                 }
+            });
+
+            this.dropZone.addEventListener('dragstart', (event) => {
+                if (!this.dropZone.classList.contains('has-image')) {
+                    event.preventDefault();
+                    return;
+                }
+                const src = this.previewImage.currentSrc || this.previewImage.src;
+                if (!src) {
+                    event.preventDefault();
+                    return;
+                }
+                const absoluteUrl = this.toAbsoluteUrl(src);
+                event.dataTransfer.setData('text/plain', absoluteUrl);
+                event.dataTransfer.setData('text/uri-list', absoluteUrl);
+                
+                const workspaceId = this.getFieldValue(this.workspaceFieldId);
+                const pathValue = this.getFieldValue(this.pathFieldId);
+                const payload = JSON.stringify({
+                    kind: 'nex-image-source',
+                    sourceKind: 'slot',
+                    absoluteUrl: absoluteUrl,
+                    workspaceId: workspaceId,
+                    pathValue: pathValue,
+                });
+                event.dataTransfer.setData('application/json', payload);
+                console.log('[Slot] Drag start:', absoluteUrl);
             });
 
             this.fileInput.addEventListener('change', () => {
@@ -509,6 +536,8 @@
                 return (
                     url.pathname.startsWith('/staging_api/image/') ||
                     url.pathname.startsWith('/image_api/image/') ||
+                    url.pathname.startsWith('/runtime_surface_api/preview_image') ||
+                    url.pathname.startsWith('/runtime_surface_api/completed_image/') ||
                     url.pathname.startsWith('/file=')
                 );
             } catch (error) {

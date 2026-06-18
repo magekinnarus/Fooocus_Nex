@@ -1,3 +1,5 @@
+import sys
+
 import ldm_patched.modules.args_parser as args_parser
 
 args_parser.parser.add_argument("--share", action='store_true', help="Set whether to share on Gradio.")
@@ -79,7 +81,10 @@ args_parser.parser.set_defaults(
     port=None
 )
 
-args_parser.args = args_parser.parser.parse_args()
+if "pytest" in sys.modules or any("pytest" in str(arg).lower() for arg in sys.argv[:1]):
+    args_parser.args, _ = args_parser.parser.parse_known_args()
+else:
+    args_parser.args = args_parser.parser.parse_args()
 
 # (Disable by default because of issues like https://github.com/lllyasviel/Fooocus/issues/724)
 args_parser.args.always_offload_from_vram = not args_parser.args.disable_offload_from_vram

@@ -71,9 +71,9 @@ def prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask):
 
     inpaint = InpaintPipeline()
     if input_image is not None and context_mask is not None:
-        ctx = inpaint.prepare(image=input_image, mask=context_mask, extend_factor=1.2)
+        ctx = inpaint.prepare(image=input_image, mask=context_mask, extend_factor=1.2, generate_blend_mask=False)
     else:
-        ctx = inpaint.prepare(image=inpaint_image, mask=inpaint_mask, extend_factor=1.2)
+        ctx = inpaint.prepare(image=inpaint_image, mask=inpaint_mask, extend_factor=1.2, generate_blend_mask=False)
 
     if bb_img_data is not None:
         # Flux Inpaint reuses the SDXL bucket selected by prepare() so BB edits
@@ -136,7 +136,8 @@ def apply_outpaint_inference_setup(task_state, inpaint_image, inpaint_mask,
         image=inpaint_image,
         mask=inpaint_mask,
         outpaint_direction=outpaint_direction,
-        extend_factor=1.2
+        extend_factor=1.2,
+        generate_blend_mask=False
     )
     
     # --- Resolved BB Image and BB Mask Support ---
@@ -227,14 +228,16 @@ def apply_inpaint(task_state, inpaint_image, inpaint_mask,
         ctx = inpaint.prepare(
             image=input_image,
             mask=context_mask,
-            extend_factor=1.2
+            extend_factor=1.2,
+            generate_blend_mask=False
         )
         print(f"[Debug] Context derived from {input_image.shape[1]}x{input_image.shape[0]} image via context mask.")
     else:
         ctx = inpaint.prepare(
             image=inpaint_image,
             mask=inpaint_mask,
-            extend_factor=1.2
+            extend_factor=1.2,
+            generate_blend_mask=False
         )
         print(f"[Debug] Context derived from standard inpaint inputs.")
 

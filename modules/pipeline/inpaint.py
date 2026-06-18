@@ -22,7 +22,7 @@ class InpaintContext:
     bb_mask: np.ndarray              # Cropped mask resized to SDXL resolution
     target_w: int                    # SDXL-snapped width
     target_h: int                    # SDXL-snapped height
-    blend_mask: np.ndarray           # Full-image morphological gradient for stitching
+    blend_mask: np.ndarray | None    # Full-image morphological gradient for stitching
 
 
 class InpaintPipeline:
@@ -152,7 +152,7 @@ class InpaintPipeline:
             x_int16 = np.maximum(maxed, x_int16)
         return np.clip(x_int16, 0, 255).astype(np.uint8)
 
-    def prepare(self, image, mask, extend_factor=1.2, context_mask=None) -> InpaintContext:
+    def prepare(self, image, mask, extend_factor=1.2, context_mask=None, generate_blend_mask=True) -> InpaintContext:
         """Native-AR Bounding Box algorithm for Inpaint."""
         # 1. Find tight bounding box
         # If a context mask is provided, the bounding box is defined by the union of the mask and the context.
@@ -216,7 +216,7 @@ class InpaintPipeline:
         bb_mask = resample_image(bb_mask, target_w, target_h)
 
         # 6. Generate blend mask in full-image coordinates for stitch-back.
-        blend_mask = self._morphological_open(mask)
+        blend_mask = self._morphological_open(mask) if generate_blend_mask else None
         
         return InpaintContext(
             original_image=image,
@@ -279,7 +279,11 @@ class InpaintPipeline:
         # 3. Apply morphological gradient blend at full-image resolution
         fg = result.astype(np.float32)
         bg = context.original_image.astype(np.float32)
-        w = context.blend_mask[:, :, None].astype(np.float32) / 255.0
+        blend_mask = context.blend_mask
+        if blend_mask is None:
+            blend_mask = self._morphological_open(context.original_mask)
+            context.blend_mask = blend_mask
+        w = blend_mask[:, :, None].astype(np.float32) / 255.0
         w = blending.apply_sin2_curve(w)
         
         y = fg * w + bg * (1.0 - w)

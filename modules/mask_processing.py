@@ -15,6 +15,49 @@ import uuid
 import modules.config
 
 
+# ---------------------------------------------------------------------------
+# In-process image cache
+# Avoids repeated disk I/O + PIL decode of the same large base-image file
+# on every context-mask stroke update or BB-refresh in the Gradio UI.
+# ---------------------------------------------------------------------------
+_IMAGE_CACHE: dict = {}   # filepath -> np.ndarray (RGB)
+_IMAGE_CACHE_MAX = 8      # evict oldest entries when cache grows beyond this
+
+
+def get_cached_image(filepath: str) -> "np.ndarray | None":
+    """Return an RGB numpy array for *filepath*, using a simple in-process cache.
+
+    The first call for a given path decodes the image and stores it. Subsequent
+    calls for the same path return the cached array directly, skipping disk I/O
+    and PIL decoding entirely. This is critical for large images (3k+ px) during rapid
+    UI interactions such as context-mask stroke updates or BB refreshes.
+
+    Cache entries are keyed by the *resolved absolute path* so that renaming or
+    replacing the file will naturally produce a cache miss on the next call.
+    """
+    if not filepath:
+        return None
+    filepath = os.path.abspath(filepath)
+    if filepath in _IMAGE_CACHE:
+        return _IMAGE_CACHE[filepath]
+    img = unpack_gradio_data(filepath)
+    if img is not None:
+        if len(_IMAGE_CACHE) >= _IMAGE_CACHE_MAX:
+            # Evict the entry that was inserted first
+            oldest_key = next(iter(_IMAGE_CACHE))
+            del _IMAGE_CACHE[oldest_key]
+        _IMAGE_CACHE[filepath] = img
+    return img
+
+
+def invalidate_image_cache(filepath: str = None):
+    """Remove a specific path (or clear the entire cache) when a file changes."""
+    if filepath is None:
+        _IMAGE_CACHE.clear()
+    else:
+        _IMAGE_CACHE.pop(os.path.abspath(filepath), None)
+
+
 def rgba_to_black_bg_rgb(x):
     """
     Unlike util.HWC3 which composites transparent pixels over a white background,
@@ -400,6 +443,7 @@ def save_to_png(numpy_img, filepath):
         
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     img.save(filepath)
+    invalidate_image_cache(filepath)
     return filepath
 
 
@@ -497,7 +541,7 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
     if len(directions) == 0:
         return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=mask_workspace_id or ""), gr.update(value=""), gr.update(value=False), gr.update(value="Choose at least one Outpaint direction before preparing.")
 
-    original_image = unpack_gradio_data(resolved_base_path)
+    original_image = get_cached_image(resolved_base_path)
     if original_image is None:
         return gr.update(), gr.update(value=base_workspace_id or ""), gr.update(), gr.update(value=bb_workspace_id or ""), gr.update(value=""), gr.update(value=mask_workspace_id or ""), gr.update(value=""), gr.update(value=False), gr.update(value="Unable to read the current Base Image.")
 
@@ -514,11 +558,13 @@ def prepare_outpaint_step1_assets(base_image_path, base_workspace_id, bb_workspa
         expansion_size=expansion_size,
         pixelate=False
     )
+    # Skip blend-mask morphology during step-1 UI prep; stitch-time compositing owns it.
     ctx = outpaint.prepare(
         image=expanded_image,
         mask=generated_mask,
         outpaint_direction=direction,
-        extend_factor=1.2
+        extend_factor=1.2,
+        generate_blend_mask=False
     )
 
     expanded_filename = f"expanded_canvas_{uuid.uuid4().hex}.png"
@@ -556,11 +602,13 @@ def core_compute_inpaint_step1_context(original_image, context_mask):
     """
     from modules.pipeline.inpaint import InpaintPipeline
     inpaint = InpaintPipeline()
+    # Skip blend-mask morphology during step-1 UI prep; stitch-time compositing owns it.
     ctx = inpaint.prepare(
         image=original_image,
         mask=context_mask,
         context_mask=None,
-        extend_factor=1.2
+        extend_factor=1.2,
+        generate_blend_mask=False
     )
     return ctx
 
@@ -584,7 +632,7 @@ def compute_inpaint_step1_context(base_image_path, base_workspace_id, context_wo
     if not resolved_base_path or not mask_b64:
         return reset_inpaint_prepared_assets()
 
-    original_image = unpack_gradio_data(resolved_base_path)
+    original_image = get_cached_image(resolved_base_path)
     if original_image is None:
         return reset_inpaint_prepared_assets()
 
@@ -631,7 +679,7 @@ def refresh_inpaint_bb_image(base_image_path, base_workspace_id, context_image_p
             gr.update()
         )
 
-    original_image = unpack_gradio_data(resolved_base_path)
+    original_image = get_cached_image(resolved_base_path)
     if original_image is None:
         return (
             gr.update(),

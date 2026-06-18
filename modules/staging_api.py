@@ -195,6 +195,21 @@ def _stage_bytes(staging_dir: str, contents: bytes, source_name: str | None = No
     return filename, filepath
 
 
+def _safe_rooted_file_path(root_dir: str, relative_name: str) -> str:
+    filepath = os.path.abspath(os.path.join(root_dir, str(relative_name or "")))
+    root_dir = os.path.abspath(root_dir)
+    if filepath != root_dir and not filepath.startswith(root_dir + os.sep):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return filepath
+
+
+def _read_local_image_file(filepath: str, *, missing_detail: str) -> bytes:
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=400, detail=missing_detail)
+    with open(filepath, "rb") as f:
+        return f.read()
+
+
 @staging_router.get("/staging_api/images")
 async def list_staging_images():
     """Returns a list of image URLs currently in the staging directory."""
@@ -236,6 +251,8 @@ async def upload_staging_image(
             source_name = file.filename
 
         elif url is not None:
+            parsed_url = urllib.parse.urlparse(url)
+            parsed_path = parsed_url.path or ""
             if url.startswith("data:image"):
                 header, encoded = url.split(",", 1)
                 import base64
@@ -247,7 +264,7 @@ async def upload_staging_image(
                     "image/webp": ".webp",
                 }.get(mime, ".png")
                 source_name = f"staged_upload{extension}"
-            elif "/file=" in url:
+            elif parsed_path.startswith("/file=") or "/file=" in url:
                 filepath = url.split("/file=", 1)[1].split("?")[0]
                 filepath = urllib.parse.unquote(filepath)
                 if os.path.exists(filepath):
@@ -256,6 +273,53 @@ async def upload_staging_image(
                     source_name = os.path.basename(filepath)
                 else:
                     raise HTTPException(status_code=400, detail="Local file not found")
+            elif parsed_path.startswith("/image_api/image/"):
+                parts = parsed_path[len("/image_api/image/"):].split("/")
+                if len(parts) != 2:
+                    raise HTTPException(status_code=400, detail="Invalid workspace image URL")
+                workspace_id = urllib.parse.unquote(parts[0])
+                filename = urllib.parse.unquote(parts[1])
+                from modules.image_api import get_workspace_dir
+                workspace_dir = get_workspace_dir(workspace_id)
+                filepath = _safe_rooted_file_path(workspace_dir, filename)
+                contents = _read_local_image_file(filepath, missing_detail="Workspace file not found")
+                source_name = os.path.basename(filepath)
+            elif parsed_path.startswith("/staging_api/image/"):
+                parts = parsed_path[len("/staging_api/image/"):].split("/")
+                if len(parts) != 1:
+                    raise HTTPException(status_code=400, detail="Invalid staging image URL")
+                filename = urllib.parse.unquote(parts[0])
+                filepath = _safe_rooted_file_path(get_staging_dir(), filename)
+                contents = _read_local_image_file(filepath, missing_detail="Staged file not found")
+                source_name = os.path.basename(filepath)
+            elif parsed_path == "/runtime_surface_api/preview_image":
+                from modules import runtime_surface_state
+                filepath = runtime_surface_state.get_preview_image_path()
+                if filepath and os.path.isfile(filepath):
+                    with open(filepath, "rb") as f:
+                        contents = f.read()
+                    source_name = os.path.basename(filepath)
+                else:
+                    preview_bytes, _, _ = runtime_surface_state.get_preview_image_bytes()
+                    if preview_bytes:
+                        contents = preview_bytes
+                        source_name = "preview.png"
+                    else:
+                        raise HTTPException(status_code=400, detail="Preview image not found")
+            elif parsed_path.startswith("/runtime_surface_api/completed_image/"):
+                parts = parsed_path[len("/runtime_surface_api/completed_image/"):].split("/")
+                if len(parts) != 2:
+                    raise HTTPException(status_code=400, detail="Invalid completed image URL")
+                task_id = urllib.parse.unquote(parts[0])
+                image_index = int(urllib.parse.unquote(parts[1]))
+                from modules import runtime_surface_state
+                filepath = runtime_surface_state.get_completed_image_path(task_id, image_index)
+                if filepath and os.path.isfile(filepath):
+                    with open(filepath, "rb") as f:
+                        contents = f.read()
+                    source_name = os.path.basename(filepath)
+                else:
+                    raise HTTPException(status_code=400, detail="Completed image not found")
             elif url.startswith("file://"):
                 filepath = url.replace("file:///", "").replace("file://", "")
                 filepath = urllib.parse.unquote(filepath)
@@ -287,6 +351,8 @@ async def upload_staging_image(
 
         return JSONResponse(content={"status": "error", "message": "Failed to process image"})
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Staging upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

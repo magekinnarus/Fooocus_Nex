@@ -31,6 +31,12 @@ async def get_runtime_surface_preview_image(
     runtime_surface_state.drain_worker_state()
     _preview_value, preview_revision = runtime_surface_state.get_preview_state()
     preview_headers = {"Cache-Control": "no-store, max-age=0"}
+    if isinstance(_preview_value, str):
+        preview_path = runtime_surface_state.get_preview_image_path()
+        if preview_path is not None:
+            preview_headers["X-Nex-Preview-Revision"] = str(int(preview_revision))
+            return FileResponse(preview_path, headers=preview_headers)
+
     requested_max_width = max(0, int(max_width or 0))
     requested_max_height = max(0, int(max_height or 0))
 
