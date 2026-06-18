@@ -647,12 +647,12 @@ def refresh_files_clicked(current_base_model, current_aspect_ratio, current_vae_
 
 
 def _refresh_model_file_indexes():
-    modules.config.update_files()
     try:
         default_model_manager.refresh_catalog_index(force_refresh=True)
         default_model_manager.refresh_installed_index()
     except Exception as exc:
         print(f'Failed to refresh model index: {exc}')
+    modules.config.update_files()
 
 def _resolve_dropdown_choice(candidate_value, available_choices):
     if candidate_value is None:
@@ -764,6 +764,12 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
     if drop_selector and drop_target:
         if drop_target == 'base_model':
             candidate = _get_installed_dropdown_value(drop_selector, {'checkpoints', 'unet'}, base_choices)
+            if candidate is None or candidate not in base_choices:
+                _refresh_model_file_indexes()
+                base_choices, base_value = _get_base_model_dropdown_state(current_base_model)
+                vae_choices = get_filtered_vae_choices_for_model(base_value)
+                clip_choices = ['None'] + modules.config.get_compatible_clip_choices_for_model(base_value)
+                candidate = _get_installed_dropdown_value(drop_selector, {'checkpoints', 'unet'}, base_choices)
             if candidate and candidate in base_choices:
                 base_value = candidate
                 aspect_ratio_update, vae_update, clip_update, *lora_model_updates = update_model_dependent_choices(
@@ -1134,6 +1140,13 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         refresh_files_output += [preset_selection]
     refresh_files.click(refresh_files_clicked, [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_model_ctrls, refresh_files_output + lora_ctrls,
                         queue=False, show_progress=False)
+    shared.gradio_root.load(
+        refresh_files_clicked,
+        inputs=[base_model, aspect_ratios_selection, vae_model, clip_model] + lora_model_ctrls,
+        outputs=refresh_files_output + lora_ctrls,
+        queue=False,
+        show_progress=False,
+    )
 
     model_browser_drop_outputs = [base_model, aspect_ratios_selection, vae_model, clip_model] + lora_ctrls
     model_browser_apply_data.change(
