@@ -132,6 +132,240 @@ def _load_prefixed_safetensors_into_module(
     return missing_keys, unexpected_keys
 
 
+def _normalize_prefixes(prefixes):
+    if prefixes is None:
+        return None
+    if isinstance(prefixes, (list, tuple, set)):
+        return [str(prefix) for prefix in prefixes]
+    return [str(prefixes)]
+
+
+def _build_prefixed_safetensors_key_map(handle, prefixes=None):
+    key_map = {}
+    prefix_candidates = _normalize_prefixes(prefixes) or [""]
+    for key in handle.keys():
+        for prefix in prefix_candidates:
+            if key.startswith(prefix):
+                key_map[_strip_checkpoint_prefix(key, prefix)] = key
+                break
+    return key_map
+
+
+def _copy_tensor_into_target(target_tensor, source_tensor, *, dtype=None, transpose=False):
+    target_dtype = target_tensor.dtype
+    if dtype is not None and torch.is_floating_point(target_tensor):
+        target_dtype = dtype
+    copy_tensor = source_tensor.t() if transpose else source_tensor
+    copy_tensor = copy_tensor.to(device=target_tensor.device, dtype=target_dtype)
+    target_tensor.copy_(copy_tensor)
+
+
+def _collect_safetensors_matches(handle, prefixes, *, fallback_to_all=False):
+    prefix_candidates = _normalize_prefixes(prefixes) or []
+    raw_keys = list(handle.keys())
+    matches = []
+
+    for key in raw_keys:
+        for prefix in prefix_candidates:
+            if key.startswith(prefix):
+                matches.append((key, _strip_checkpoint_prefix(key, prefix)))
+                break
+
+    if matches or not fallback_to_all:
+        return matches
+
+    return [(key, key) for key in raw_keys]
+
+
+def _stream_load_sdxl_clip_l_into_encoder(
+    source_path,
+    target_encoder,
+    *,
+    prefixes=None,
+    dtype=None,
+):
+    state_entries = target_encoder.transformer.state_dict()
+    loaded_keys = set()
+    unexpected_keys = []
+
+    with safe_open(source_path, framework="pt", device="cpu") as handle:
+        matches = _collect_safetensors_matches(
+            handle,
+            prefixes or clip.CLIP_L_PREFIXES,
+            fallback_to_all=prefixes is None,
+        )
+        for raw_key, normalized_key in matches:
+            target_key = normalized_key.replace("text_model.", "")
+            target_tensor = state_entries.get(target_key)
+            if target_tensor is None:
+                unexpected_keys.append(target_key)
+                continue
+
+            source_tensor = handle.get_tensor(raw_key)
+            _copy_tensor_into_target(target_tensor, source_tensor, dtype=dtype)
+            loaded_keys.add(target_key)
+
+    missing_keys = [key for key in state_entries.keys() if key not in loaded_keys]
+    return missing_keys, unexpected_keys
+
+
+def _stream_load_sdxl_clip_g_into_encoder(
+    source_path,
+    target_encoder,
+    *,
+    prefixes=None,
+    dtype=None,
+):
+    state_entries = target_encoder.transformer.state_dict()
+    loaded_keys = set()
+    unexpected_keys = []
+    projection = getattr(target_encoder, "text_projection", None)
+    logit_scale = getattr(target_encoder, "logit_scale", None)
+
+    with safe_open(source_path, framework="pt", device="cpu") as handle:
+        matches = _collect_safetensors_matches(
+            handle,
+            prefixes or clip.CLIP_G_PREFIXES,
+            fallback_to_all=prefixes is None,
+        )
+        for raw_key, normalized_key in matches:
+            target_key = normalized_key
+            target_key = target_key.replace("transformer.resblocks.", "encoder.layers.")
+            target_key = target_key.replace("ln_1.", "layer_norm1.")
+            target_key = target_key.replace("ln_2.", "layer_norm2.")
+            target_key = target_key.replace("mlp.c_fc.", "mlp.fc1.")
+            target_key = target_key.replace("mlp.c_proj.", "mlp.fc2.")
+            target_key = target_key.replace("attn.out_proj.", "self_attn.out_proj.")
+            target_key = target_key.replace("token_embedding.weight", "embeddings.token_embedding.weight")
+            target_key = target_key.replace("positional_embedding", "embeddings.position_embedding.weight")
+            target_key = target_key.replace("ln_final.", "final_layer_norm.")
+            target_key = target_key.replace("text_model.", "")
+
+            source_tensor = handle.get_tensor(raw_key)
+
+            if "attn.in_proj_weight" in target_key:
+                base = target_key.replace("attn.in_proj_weight", "self_attn.")
+                hidden_size = source_tensor.shape[0] // 3
+                split_targets = (
+                    (base + "q_proj.weight", source_tensor[:hidden_size]),
+                    (base + "k_proj.weight", source_tensor[hidden_size:hidden_size * 2]),
+                    (base + "v_proj.weight", source_tensor[hidden_size * 2:]),
+                )
+                for split_key, split_tensor in split_targets:
+                    target_tensor = state_entries.get(split_key)
+                    if target_tensor is None:
+                        unexpected_keys.append(split_key)
+                        continue
+                    _copy_tensor_into_target(target_tensor, split_tensor, dtype=dtype)
+                    loaded_keys.add(split_key)
+                continue
+
+            if "attn.in_proj_bias" in target_key:
+                base = target_key.replace("attn.in_proj_bias", "self_attn.")
+                hidden_size = source_tensor.shape[0] // 3
+                split_targets = (
+                    (base + "q_proj.bias", source_tensor[:hidden_size]),
+                    (base + "k_proj.bias", source_tensor[hidden_size:hidden_size * 2]),
+                    (base + "v_proj.bias", source_tensor[hidden_size * 2:]),
+                )
+                for split_key, split_tensor in split_targets:
+                    target_tensor = state_entries.get(split_key)
+                    if target_tensor is None:
+                        unexpected_keys.append(split_key)
+                        continue
+                    _copy_tensor_into_target(target_tensor, split_tensor, dtype=dtype)
+                    loaded_keys.add(split_key)
+                continue
+
+            if target_key == "text_projection" and projection is not None:
+                _copy_tensor_into_target(projection.data, source_tensor, dtype=dtype)
+                loaded_keys.add(target_key)
+                continue
+
+            if target_key == "text_projection.weight" and projection is not None:
+                _copy_tensor_into_target(projection.data, source_tensor, dtype=dtype, transpose=True)
+                loaded_keys.add(target_key)
+                continue
+
+            if target_key == "logit_scale" and logit_scale is not None:
+                _copy_tensor_into_target(logit_scale.data, source_tensor, dtype=dtype)
+                loaded_keys.add(target_key)
+                continue
+
+            target_tensor = state_entries.get(target_key)
+            if target_tensor is None:
+                unexpected_keys.append(target_key)
+                continue
+            _copy_tensor_into_target(target_tensor, source_tensor, dtype=dtype)
+            loaded_keys.add(target_key)
+
+    missing_keys = [key for key in state_entries.keys() if key not in loaded_keys]
+    if projection is not None and "text_projection" not in loaded_keys and "text_projection.weight" not in loaded_keys:
+        missing_keys.append("text_projection")
+    if logit_scale is not None and "logit_scale" not in loaded_keys:
+        missing_keys.append("logit_scale")
+    return missing_keys, unexpected_keys
+
+
+def _load_sdxl_clip_source_into_model(
+    target_model,
+    source,
+    *,
+    force_type=None,
+    prefixes=None,
+    dtype=None,
+):
+    if isinstance(source, str) and source.lower().endswith(".safetensors"):
+        if force_type == "l":
+            missing, unexpected = _stream_load_sdxl_clip_l_into_encoder(
+                source,
+                target_model.clip_l,
+                prefixes=prefixes,
+                dtype=dtype,
+            )
+            if missing:
+                logging.debug("SDXL CLIP-L: Missing keys while streaming load: %s", missing)
+            if unexpected:
+                logging.debug("SDXL CLIP-L: Unexpected keys while streaming load: %s", unexpected)
+            return
+        if force_type == "g":
+            missing, unexpected = _stream_load_sdxl_clip_g_into_encoder(
+                source,
+                target_model.clip_g,
+                prefixes=prefixes,
+                dtype=dtype,
+            )
+            if missing:
+                logging.debug("SDXL CLIP-G: Missing keys while streaming load: %s", missing)
+            if unexpected:
+                logging.debug("SDXL CLIP-G: Unexpected keys while streaming load: %s", unexpected)
+            return
+
+    sd = resolve_source(source)
+    if force_type is None:
+        target_model.load_sd(sd)
+    else:
+        target_model.load_sd(sd, force_type=force_type)
+
+
+def _inspect_safetensors_vae_metadata(source_path, *, prefixes=None):
+    with safe_open(source_path, framework="pt", device="cpu") as handle:
+        key_map = _build_prefixed_safetensors_key_map(handle, prefixes=prefixes)
+        decoder_conv_in = None
+        post_quant_conv = None
+        if "decoder.conv_in.weight" in key_map:
+            decoder_conv_in = handle.get_tensor(key_map["decoder.conv_in.weight"])
+        if "post_quant_conv.weight" in key_map:
+            post_quant_conv = handle.get_tensor(key_map["post_quant_conv.weight"])
+        return {
+            "key_count": len(key_map),
+            "decoder_conv_in_shape": None if decoder_conv_in is None else tuple(decoder_conv_in.shape),
+            "post_quant_conv_shape": None if post_quant_conv is None else tuple(post_quant_conv.shape),
+            "has_downsample": "encoder.down.2.downsample.conv.weight" in key_map,
+            "has_upsample": "decoder.up.3.upsample.conv.weight" in key_map,
+        }
+
+
 def _extract_prefixed_state_dict(source, prefixes, *, device=None):
     if isinstance(source, str) and source.lower().endswith(".safetensors"):
         return _extract_prefixed_safetensors_state_dict(source, prefixes, device=device)
@@ -155,11 +389,6 @@ def _module_is_meta(module):
 
 
 def _reload_unet_weights(target_model, source, *, device, dtype=None, prefixes=None):
-    if prefixes is not None:
-        sd = _extract_prefixed_state_dict(source, prefixes, device=device)
-    else:
-        sd = resolve_source(source, device=device)
-
     diffusion_model = target_model.diffusion_model
     if _module_is_meta(diffusion_model) and hasattr(diffusion_model, "to_empty"):
         diffusion_model.to_empty(device=device)
@@ -167,6 +396,28 @@ def _reload_unet_weights(target_model, source, *, device, dtype=None, prefixes=N
         diffusion_model.to(device=device, dtype=dtype)
     else:
         diffusion_model.to(device=device)
+
+    if isinstance(source, str) and source.lower().endswith(".safetensors"):
+        load_prefixes = prefixes if prefixes is not None else [""]
+        missing, unexpected = _load_prefixed_safetensors_into_module(
+            source,
+            load_prefixes,
+            diffusion_model,
+            device=device,
+            dtype=dtype,
+        )
+        if missing:
+            logging.debug("UNet reload: Missing keys while streaming load: %s", missing)
+        if unexpected:
+            logging.debug("UNet reload: Unexpected keys while streaming load: %s", unexpected)
+        gc.collect()
+        return
+
+    if prefixes is not None:
+        sd = _extract_prefixed_state_dict(source, prefixes, device=device)
+    else:
+        sd = resolve_source(source, device=device)
+
     diffusion_model.load_state_dict(sd, strict=False)
 
     del sd
@@ -205,39 +456,42 @@ def _reload_sdxl_clip_weights(
         else:
             target_model.to(device=device, dtype=dtype)
 
-    def _resolve_clip_source(source, prefixes):
-        if isinstance(source, str) and prefixes is not None:
-            return _extract_prefixed_safetensors_state_dict(
-                source,
-                prefixes,
-                device=torch.device("cpu"),
-            )
-        return resolve_source(source)
-
-    share_source = (
-        source_l == source_g
-        and prefixes_l == prefixes_g
+    streamable_sources = (
+        isinstance(source_l, str)
+        and source_l.lower().endswith(".safetensors")
+        and isinstance(source_g, str)
+        and source_g.lower().endswith(".safetensors")
     )
-    sd_l = _resolve_clip_source(source_l, prefixes_l)
-    sd_g = sd_l if share_source else _resolve_clip_source(source_g, prefixes_g)
+    if streamable_sources:
+        _load_sdxl_clip_source_into_model(
+            target_model,
+            source_l,
+            force_type="l",
+            prefixes=prefixes_l,
+            dtype=dtype,
+        )
+        _load_sdxl_clip_source_into_model(
+            target_model,
+            source_g,
+            force_type="g",
+            prefixes=prefixes_g,
+            dtype=dtype,
+        )
+        gc.collect()
+        return
+
+    share_source = source_l == source_g and prefixes_l == prefixes_g
+    sd_l = resolve_source(source_l)
+    sd_g = sd_l if share_source else resolve_source(source_g)
 
     try:
         if sd_l is not None:
-            if isinstance(sd_l, dict) and not any(
-                key.startswith("clip") or key.startswith("cond") or "embedders." in key
-                for key in sd_l.keys()
-            ):
-                target_model.load_sd(sd_l, force_type="l")
-            else:
+            if share_source:
                 target_model.load_sd(sd_l)
-        if sd_g is not None:
-            if isinstance(sd_g, dict) and not any(
-                key.startswith("clip") or key.startswith("cond") or "embedders." in key
-                for key in sd_g.keys()
-            ):
-                target_model.load_sd(sd_g, force_type="g")
             else:
-                target_model.load_sd(sd_g)
+                target_model.load_sd(sd_l, force_type="l")
+        if sd_g is not None and not share_source:
+            target_model.load_sd(sd_g, force_type="g")
     finally:
         if not share_source:
             del sd_g
@@ -560,14 +814,22 @@ def load_sdxl_clip(
     load_device = load_device or resources.text_encoder_load_device()
     offload_device = offload_device or resources.text_encoder_offload_device()
 
-    same_source = source_g is source_l
-    if not same_source and isinstance(source_l, str) and isinstance(source_g, str):
-        # The app/runtime path passes the same bundled SDXL CLIP file twice.
-        # Keep this cheap fast path so we do not resolve and load it twice.
-        same_source = source_l == source_g
-
-    sd_l = resolve_source(source_l)
-    sd_g = sd_l if same_source else resolve_source(source_g)
+    streamable_sources = (
+        isinstance(source_l, str)
+        and source_l.lower().endswith(".safetensors")
+        and isinstance(source_g, str)
+        and source_g.lower().endswith(".safetensors")
+    )
+    if streamable_sources:
+        same_source = False
+        sd_l = None
+        sd_g = None
+    else:
+        same_source = source_g is source_l
+        if not same_source and isinstance(source_l, str) and isinstance(source_g, str):
+            same_source = source_l == source_g
+        sd_l = resolve_source(source_l)
+        sd_g = sd_l if same_source else resolve_source(source_g)
     
     # Use Nex implementations
     tokenizer = clip.NexSDXLTokenizer()
@@ -580,19 +842,29 @@ def load_sdxl_clip(
     model = clip.NexSDXLClipModel(device=offload_device, dtype=dtype)
     
     with torch.no_grad():
-        # NexSDXLClipModel.load_sd handles L and G appropriately
-        # If they are different dicts, we load each. 
-        # If they are the same (bundled), it still works.
-        if sd_l is not None:
-            if isinstance(sd_l, dict) and not any(k.startswith("clip") or k.startswith("cond") or "embedders." in k for k in sd_l.keys()):
-                model.load_sd(sd_l, force_type="l")
-            else:
-                model.load_sd(sd_l)
-        if sd_g is not None and sd_g is not sd_l:
-            if isinstance(sd_g, dict) and not any(k.startswith("clip") or k.startswith("cond") or "embedders." in k for k in sd_g.keys()):
+        if streamable_sources:
+            _load_sdxl_clip_source_into_model(
+                model,
+                source_l,
+                force_type="l",
+                prefixes=reload_prefixes_l,
+                dtype=dtype,
+            )
+            _load_sdxl_clip_source_into_model(
+                model,
+                source_g,
+                force_type="g",
+                prefixes=reload_prefixes_g,
+                dtype=dtype,
+            )
+        else:
+            if sd_l is not None:
+                if same_source:
+                    model.load_sd(sd_l)
+                else:
+                    model.load_sd(sd_l, force_type="l")
+            if sd_g is not None and not same_source:
                 model.load_sd(sd_g, force_type="g")
-            else:
-                model.load_sd(sd_g)
     
     clip_container = CLIP(model, tokenizer, load_device, offload_device)
     effective_reload_source_l = (
@@ -615,7 +887,7 @@ def load_sdxl_clip(
     clip_container.patcher.runtime_release_to_meta = False
     return clip_container
 
-def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_format=None):
+def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_format=None, *, prefixes=None):
     """
     Loads VAE/AE (SD15/SDXL/Flux compatible) and returns a clean VAE container.
     """
@@ -639,24 +911,35 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
             latent_format = latent_formats.SD15()
             logging.info(f"VAE: Inferred SD15 latent format from {source}")
 
-    sd = resolve_source(source, device=load_device)
+    streamable_source = isinstance(source, str) and source.lower().endswith(".safetensors")
+    vae_metadata = None
+    if streamable_source:
+        vae_metadata = _inspect_safetensors_vae_metadata(source, prefixes=prefixes)
+        decoder_conv_in_shape = vae_metadata["decoder_conv_in_shape"]
+        post_quant_conv_shape = vae_metadata["post_quant_conv_shape"]
+    else:
+        sd = resolve_source(source, device=load_device)
+        decoder_conv_in_shape = tuple(sd["decoder.conv_in.weight"].shape) if "decoder.conv_in.weight" in sd else None
+        post_quant_conv_shape = tuple(sd["post_quant_conv.weight"].shape) if "post_quant_conv.weight" in sd else None
 
-    if latent_format is None and "decoder.conv_in.weight" in sd:
-        latent_channels = sd["decoder.conv_in.weight"].shape[1]
+    if latent_format is None and decoder_conv_in_shape is not None:
+        latent_channels = decoder_conv_in_shape[1]
         if latent_channels == latent_formats.Flux.latent_channels:
             latent_format = latent_formats.Flux()
             logging.info("VAE: Inferred Flux latent format from 16-channel AE state dict")
 
     # Generic VAE config; derive latent/embed width from the state dict for Flux AE.
     ddconfig = {'double_z': True, 'z_channels': 4, 'resolution': 256, 'in_channels': 3, 'out_ch': 3, 'ch': 128, 'ch_mult': [1, 2, 4, 4], 'num_res_blocks': 2, 'attn_resolutions': [], 'dropout': 0.0}
-    if "decoder.conv_in.weight" in sd:
-        ddconfig["z_channels"] = sd["decoder.conv_in.weight"].shape[1]
-        if 'encoder.down.2.downsample.conv.weight' not in sd and 'decoder.up.3.upsample.conv.weight' not in sd:
+    if decoder_conv_in_shape is not None:
+        ddconfig["z_channels"] = decoder_conv_in_shape[1]
+        has_downsample = vae_metadata["has_downsample"] if vae_metadata is not None else ('encoder.down.2.downsample.conv.weight' in sd)
+        has_upsample = vae_metadata["has_upsample"] if vae_metadata is not None else ('decoder.up.3.upsample.conv.weight' in sd)
+        if not has_downsample and not has_upsample:
             ddconfig['ch_mult'] = [1, 2, 4]
 
-    if "post_quant_conv.weight" in sd:
-        model = AutoencoderKL(ddconfig=ddconfig, embed_dim=sd["post_quant_conv.weight"].shape[1])
-    elif "decoder.conv_in.weight" in sd:
+    if post_quant_conv_shape is not None:
+        model = AutoencoderKL(ddconfig=ddconfig, embed_dim=post_quant_conv_shape[1])
+    elif decoder_conv_in_shape is not None:
         model = AutoencodingEngine(
             regularizer_config={'target': "ldm_patched.ldm.models.autoencoder.DiagonalGaussianRegularizer"},
             encoder_config={'target': "ldm_patched.ldm.modules.diffusionmodules.model.Encoder", 'params': ddconfig},
@@ -665,18 +948,29 @@ def load_vae(source, load_device=None, offload_device=None, dtype=None, latent_f
     else:
         model = AutoencoderKL(ddconfig=ddconfig, embed_dim=4)
 
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-    if missing:
-        logging.debug("VAE: Missing keys while loading: %s", missing)
-    if unexpected:
-        logging.debug("VAE: Unexpected keys while loading: %s", unexpected)
-
     # User Requirement: VAE should be in fp32
     if dtype is None:
         dtype = torch.float32
 
     if dtype is not None:
         model.to(dtype)
+
+    if streamable_source:
+        missing, unexpected = _load_prefixed_safetensors_into_module(
+            source,
+            prefixes or [""],
+            model,
+            device=torch.device("cpu"),
+            dtype=dtype,
+        )
+    else:
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        del sd
+    if missing:
+        logging.debug("VAE: Missing keys while loading: %s", missing)
+    if unexpected:
+        logging.debug("VAE: Unexpected keys while loading: %s", unexpected)
+    gc.collect()
 
     return VAE(model.eval(), load_device, offload_device, latent_format=latent_format)
 
@@ -708,7 +1002,7 @@ def load_sdxl_checkpoint(
                 logging.info("Reusing preloaded external SDXL VAE instance...")
                 vae = external_vae_source
             else:
-                logging.info("Loading external SDXL VAE override instead of checkpoint VAE...")
+                logging.info("Streaming external SDXL VAE override instead of checkpoint VAE...")
                 vae = load_vae(
                     external_vae_source,
                     load_device=vae_load_device,
@@ -717,39 +1011,25 @@ def load_sdxl_checkpoint(
                 )
                 gc.collect()
         else:
-            logging.info("Extracting VAE from safetensors checkpoint...")
-            vae_sd = _extract_prefixed_safetensors_state_dict(
-                ckpt_path,
-                sdxl_def.PREFIXES["vae"],
-                device=torch.device("cpu"),
-            )
-            if len(vae_sd) > 0:
+            logging.info("Streaming VAE from safetensors checkpoint directly into CPU module...")
+            vae_metadata = _inspect_safetensors_vae_metadata(ckpt_path, prefixes=sdxl_def.PREFIXES["vae"])
+            if vae_metadata["key_count"] > 0:
                 vae = load_vae(
-                    vae_sd,
+                    ckpt_path,
                     load_device=vae_load_device,
                     offload_device=vae_offload_device,
                     latent_format=latent_formats.SDXL(),
+                    prefixes=sdxl_def.PREFIXES["vae"],
                 )
             else:
                 logging.warning("SDXL checkpoint is missing embedded VAE weights; continuing without checkpoint VAE.")
                 vae = None
-            del vae_sd
             gc.collect()
 
-        logging.info("Extracting CLIP from safetensors checkpoint...")
-        clip_l_sd = _extract_prefixed_safetensors_state_dict(
-            ckpt_path,
-            sdxl_def.PREFIXES["clip_l"],
-            device=torch.device("cpu"),
-        )
-        clip_g_sd = _extract_prefixed_safetensors_state_dict(
-            ckpt_path,
-            sdxl_def.PREFIXES["clip_g"],
-            device=torch.device("cpu"),
-        )
+        logging.info("Streaming CLIP from safetensors checkpoint directly into CPU module...")
         clip = load_sdxl_clip(
-            clip_l_sd,
-            clip_g_sd,
+            ckpt_path,
+            ckpt_path,
             load_device=clip_load_device,
             offload_device=clip_offload_device,
             dtype=clip_dtype,
@@ -758,8 +1038,6 @@ def load_sdxl_checkpoint(
             reload_prefixes_l=sdxl_def.PREFIXES["clip_l"],
             reload_prefixes_g=sdxl_def.PREFIXES["clip_g"],
         )
-        del clip_l_sd
-        del clip_g_sd
         gc.collect()
 
         logging.info("Extracting UNet from safetensors checkpoint directly to load device...")

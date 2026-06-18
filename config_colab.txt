@@ -3,10 +3,7 @@
     "path_loras": "/content/models/loras/",
     "path_embeddings": "/content/drive/MyDrive/Fooocus_Nex/models/embeddings/",
     "path_vae_approx": "/content/drive/MyDrive/Fooocus_Nex/models/vae_approx/",
-    "path_vae": [
-        "/content/drive/MyDrive/Fooocus_Nex/models/vae/",
-        "/content/models/vae/"
-    ],
+    "path_vae": "/content/models/vae/",
     "path_unet": "/content/models/unet/",
     "path_clip": [
         "/content/drive/MyDrive/Fooocus_Nex/models/clip/",
