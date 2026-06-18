@@ -523,6 +523,7 @@ class StructuralControlNetStage(PipelineStage):
             gc_collect=False,
             target_phase=next_phase,
             notes={'route_id': context.route_id},
+            task=context.task_state,
         )
 
     def describe_resources(self, context: PipelineRouteContext):
@@ -570,6 +571,7 @@ class ContextualControlNetStage(PipelineStage):
             gc_collect=False,
             target_phase=resources.MemoryPhase.DIFFUSION,
             notes={'route_id': context.route_id},
+            task=context.task_state,
         )
 
     def describe_resources(self, context: PipelineRouteContext):

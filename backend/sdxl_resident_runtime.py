@@ -8,9 +8,11 @@ import hashlib
 import logging
 import os
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import torch
+from safetensors import safe_open
 from backend import conditioning, decode, k_diffusion, loader, precision, resources, sampling
 from backend.cpu_compiler import CpuArtifactCompiler, SafeOpenHeaderOnly
 from backend.gpu_compiler import GpuArtifactCompiler
@@ -51,6 +53,92 @@ from backend.sdxl_unified_runtime import (
     _PARSED_LORA_ADAPTER_CACHE_LIMIT,
 )
 
+
+
+class _ResidentLazyWeight:
+    def __init__(
+        self,
+        path: str,
+        key: str,
+        shape: list[int],
+        dtype: str,
+        *,
+        tensor_device: torch.device,
+        load_strategy: str = "safetensors",
+    ) -> None:
+        self.path = path
+        self.key = key
+        self.shape = list(shape)
+        self.dtype = str(dtype)
+        self._tensor_device = torch.device(tensor_device)
+        self._load_strategy = str(load_strategy)
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
+
+    def load(self) -> torch.Tensor:
+        if self._load_strategy == "safetensors":
+            with safe_open(self.path, framework="pt", device=str(self._tensor_device)) as handle:
+                return handle.get_tensor(self.key)
+        try:
+            sd = torch.load(self.path, map_location="cpu", weights_only=True)
+        except Exception:
+            sd = torch.load(self.path, map_location="cpu", weights_only=False)
+        if isinstance(sd, dict) and "state_dict" in sd:
+            sd = sd["state_dict"]
+        tensor = sd.get(self.key) if isinstance(sd, dict) else None
+        if not isinstance(tensor, torch.Tensor):
+            raise KeyError(f"Legacy tensor key {self.key!r} could not be reloaded from {self.path!r}.")
+        return tensor.to(device=self._tensor_device)
+
+    def item(self):
+        return self.load().item()
+
+
+class _ResidentSafeOpenHeaderOnly(dict):
+    def __init__(self, path: str, *, tensor_device: torch.device) -> None:
+        super().__init__()
+        self.path = path
+        self.tensor_device = torch.device(tensor_device)
+        try:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                for key in handle.keys():
+                    try:
+                        slice_view = handle.get_slice(key)
+                        shape = list(slice_view.get_shape())
+                        dtype = str(slice_view.get_dtype())
+                    except Exception:
+                        tensor = handle.get_tensor(key)
+                        shape = list(tensor.shape)
+                        dtype = str(tensor.dtype)
+                    self[key] = _ResidentLazyWeight(
+                        path,
+                        key,
+                        shape,
+                        dtype,
+                        tensor_device=self.tensor_device,
+                        load_strategy="safetensors",
+                    )
+        except Exception:
+            try:
+                sd = torch.load(path, map_location="cpu", weights_only=True)
+            except Exception:
+                sd = torch.load(path, map_location="cpu", weights_only=False)
+            if isinstance(sd, dict) and "state_dict" in sd:
+                sd = sd["state_dict"]
+            for key, tensor in sd.items():
+                if isinstance(tensor, torch.Tensor):
+                    self[key] = _ResidentLazyWeight(
+                        path,
+                        key,
+                        list(tensor.shape),
+                        str(tensor.dtype),
+                        tensor_device=self.tensor_device,
+                        load_strategy="torch_load",
+                    )
+                else:
+                    self[key] = tensor
 
 
 class ResidentSDXLRuntime(UnifiedSDXLRuntime):
@@ -171,6 +259,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         self.unet, self.clip = self._clone_shared_base_components(shared_base)
         self.vae = self._clone_component_for_runtime(loaded_vae)
         self._compiled_unet_cache_hit = False
+        self._discard_legacy_clean_snapshots()
 
         if self.unet is not None:
             self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
@@ -273,7 +362,8 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             # CLIP CPU-only patch, encode, and immediate restore lifecycle
             clip_patcher = getattr(self.clip, "patcher", self.clip)
             if clip_patcher is not None:
-                self._restore_clean_clip_component(clip_patcher)
+                if self._clip_component_needs_restore(clip_patcher):
+                    self._restore_clean_clip_component(clip_patcher)
                 if self._resolved_lora_specs:
                     clip_patch_count = self._apply_lora_specs_to_patcher(
                         clip_patcher,
@@ -281,15 +371,6 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                         target_family="clip",
                     )
                     if clip_patch_count > 0:
-                        # Lazily create clip clean source snapshot in CPU memory
-                        if getattr(clip_patcher.model, "_nex_clean_clip_source", None) is None:
-                            clean_clip = {}
-                            for name, param in clip_patcher.model.named_parameters():
-                                clean_clip[name] = param.detach().to(device=torch.device("cpu"), copy=True)
-                            for name, buf in clip_patcher.model.named_buffers():
-                                clean_clip[name] = buf.detach().to(device=torch.device("cpu"), copy=True)
-                            clip_patcher.model._nex_clean_clip_source = clean_clip
-
                         # Compile CLIP on CPU
                         clip_compile_start = time.perf_counter()
                         clip_compile = CpuArtifactCompiler.compile_patcher(clip_patcher)
@@ -315,7 +396,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             )
 
             # Immediate CLIP unpatch and restore to free backup memory
-            if clip_patcher is not None:
+            if clip_patcher is not None and clip_patch_count > 0:
                 self._restore_clean_clip_component(clip_patcher)
 
         conditioning_encode_wall = time.perf_counter() - encode_start
@@ -388,6 +469,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             unload_models=False,
             force_cache=True,
             target_phase=resources.MemoryPhase.DIFFUSION,
+            task=self._memory_task_hint(),
         )
 
         self.execution_state = GpuAttachedExecutionState(
@@ -594,6 +676,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             unload_models=False,
             force_cache=True,
             target_phase=resources.MemoryPhase.FINALIZE,
+            task=self._memory_task_hint(),
         )
 
     def patched_weights_for_block(self, block_id: str) -> Any:
@@ -685,9 +768,16 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 "unet_compile_metrics": unet_compile,
             }
 
-        # Clear active patched states and restore clean resident components
-        self._restore_clean_unet_component()
-        self._reapply_scheduler_patches()
+        model = getattr(self.unet, "model", None)
+        needs_restore = (
+            getattr(model, "_nex_clean_unet_source", None) is not None
+            or current_unet_signature != ()
+            or current_scheduler != desired_scheduler
+            or bool(getattr(model, "_patched_marker", False))
+        )
+        if needs_restore:
+            self._restore_clean_unet_component()
+            self._reapply_scheduler_patches()
 
         if not self._resolved_lora_specs:
             self._remember_resident_lora_state(self.unet, (), self._default_compile_metrics())
@@ -701,22 +791,6 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 "unet_compile_metrics": self._default_compile_metrics(),
             }
 
-        # Lazily create clean source snapshot on first non-empty apply
-        if getattr(self.unet.model, "_nex_clean_unet_source", None) is None:
-            snap_start = time.perf_counter()
-            snap_device = self._resolve_clean_source_device()
-            clean_source = {}
-            for name, param in self.unet.model.named_parameters():
-                clean_source[name] = param.detach().to(device=snap_device, copy=True)
-            for name, buf in self.unet.model.named_buffers():
-                clean_source[name] = buf.detach().to(device=snap_device, copy=True)
-            self.unet.model._nex_clean_unet_source = clean_source
-            snap_end = time.perf_counter()
-            logging.info(
-                f"[ResidentSDXLRuntime] Lazy clean source snapshot created on {snap_device} "
-                f"in {((snap_end - snap_start) * 1000):.2f} ms"
-            )
-
         self._apply_lora_specs_to_patcher(
             self.unet,
             self.unet.model,
@@ -725,7 +799,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         unet_compile_start = time.perf_counter()
         unet_compile = GpuArtifactCompiler.compile_patcher(
             self.unet,
-            clean_source=self.unet.model._nex_clean_unet_source,
+            clean_source=None,
             target_device=self._execution_device(),
             intermediate_dtype=torch.float16,
         )
@@ -756,8 +830,23 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             delattr(model, "_patched_marker")
 
         clean_source = getattr(model, "_nex_clean_unet_source", None)
+        runtime_reload = getattr(self.unet, "runtime_reload", None)
         if clean_source is not None:
+            model._nex_clean_unet_source = None
+            logging.info("[ResidentSDXLRuntime] Discarded legacy clean UNet snapshot from memory.")
+        if callable(runtime_reload):
             start_r = time.perf_counter()
+            target_device = self.unet.current_loaded_device()
+            if target_device is not None and not isinstance(target_device, torch.device):
+                target_device = torch.device(target_device)
+            runtime_reload(model, target_device)
+            model.device = target_device
+            end_r = time.perf_counter()
+            logging.info(
+                f"[ResidentSDXLRuntime] Reloaded clean UNet weights from source "
+                f"in {((end_r - start_r) * 1000):.2f} ms"
+            )
+        elif clean_source is not None:
             with torch.no_grad():
                 for name, param in model.named_parameters():
                     if name in clean_source:
@@ -765,22 +854,6 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 for name, buf in model.named_buffers():
                     if name in clean_source:
                         buf.copy_(clean_source[name])
-            end_r = time.perf_counter()
-            logging.info(
-                f"[ResidentSDXLRuntime] Restored clean weights from in-memory snapshot "
-                f"in {((end_r - start_r) * 1000):.2f} ms"
-            )
-            
-            # If the desired signature is empty, discard the separate clean-source snapshot
-            if not self._resolved_lora_specs:
-                model._nex_clean_unet_source = None
-                logging.info("[ResidentSDXLRuntime] Discarded clean source snapshot from memory.")
-        else:
-            runtime_reload = getattr(self.unet, "runtime_reload", None)
-            if callable(runtime_reload):
-                target_device = self.unet.current_loaded_device()
-                runtime_reload(model, target_device)
-                model.device = target_device
 
         self._clear_patcher_artifacts(self.unet)
         self._remember_resident_lora_state(self.unet, (), self._default_compile_metrics())
@@ -797,7 +870,11 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             delattr(model, "_patched_marker")
 
         clean_clip = getattr(model, "_nex_clean_clip_source", None)
-        if clean_clip is not None:
+        runtime_reload = getattr(clip_patcher, "runtime_reload", None)
+        if clean_clip is not None and callable(runtime_reload):
+            model._nex_clean_clip_source = None
+            logging.info("[ResidentSDXLRuntime] Discarded legacy clean CLIP snapshot from memory.")
+        elif clean_clip is not None:
             with torch.no_grad():
                 for name, param in model.named_parameters():
                     if name in clean_clip:
@@ -807,6 +884,12 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                         buf.copy_(clean_clip[name])
             model._nex_clean_clip_source = None
             logging.info("[ResidentSDXLRuntime] Discarded clean CLIP snapshot from memory.")
+        if callable(runtime_reload):
+            target_device = getattr(model, "device", None) or torch.device("cpu")
+            if target_device is not None and not isinstance(target_device, torch.device):
+                target_device = torch.device(target_device)
+            runtime_reload(model, target_device)
+            model.device = target_device
 
         self._clear_patcher_artifacts(clip_patcher)
         self._remember_resident_lora_state(clip_patcher, (), self._default_compile_metrics())
@@ -828,6 +911,54 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             if resolved is not None:
                 return resolved
         return value or None
+
+    def _discard_legacy_clean_snapshots(self) -> None:
+        for patcher, attr_name, label in (
+            (self.unet, "_nex_clean_unet_source", "UNet"),
+            (getattr(self.clip, "patcher", self.clip), "_nex_clean_clip_source", "CLIP"),
+        ):
+            model = getattr(patcher, "model", None) if patcher is not None else None
+            if model is None or getattr(model, attr_name, None) is None:
+                continue
+            setattr(model, attr_name, None)
+            logging.info("[ResidentSDXLRuntime] Cleared cached %s clean snapshot during runtime attach.", label)
+
+    def _clip_component_needs_restore(self, clip_patcher: Any) -> bool:
+        if clip_patcher is None:
+            return False
+        model = getattr(clip_patcher, "model", None)
+        if model is None:
+            return False
+        return bool(
+            getattr(model, "_patched_marker", False)
+            or getattr(model, "_nex_clean_clip_source", None) is not None
+            or getattr(clip_patcher, "patches", None)
+        )
+
+    def _memory_task_hint(self):
+        has_controlnet = bool(self.config.structural_tasks or self.config.contextual_tasks or self.config.controlnet_paths)
+        has_source_pixels = self.config.source_pixels is not None or self.config.source_mask is not None
+        current_tab = "txt2img"
+        state = {}
+
+        if self.config.outpaint_direction:
+            current_tab = "outpaint"
+            state["outpaint_input_image"] = object()
+            state["mixing_image_prompt_and_outpaint"] = has_controlnet
+        elif has_source_pixels:
+            current_tab = "inpaint"
+            state["inpaint_input_image"] = object()
+            state["mixing_image_prompt_and_inpaint"] = has_controlnet
+        elif has_controlnet:
+            current_tab = "ip"
+
+        state["current_tab"] = current_tab
+        state["input_image_checkbox"] = has_source_pixels or has_controlnet
+        state["cn_tasks"] = {
+            **{key: list(tasks) for key, tasks in (self.config.structural_tasks or {}).items() if tasks},
+            **{key: list(tasks) for key, tasks in (self.config.contextual_tasks or {}).items() if tasks},
+        }
+        return SimpleNamespace(**state)
 
     def _execution_class_label(self) -> str:
         return str(self.config.execution_class or self.route_label)
@@ -1073,7 +1204,8 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         model_class_name = model.__class__.__name__
 
         for lora_path, strength in self._resolved_lora_specs:
-            cache_key = (lora_path, target_family, model_class_name)
+            materialization_tag = str(self._execution_device()) if target_family == "unet" else "cpu"
+            cache_key = (lora_path, target_family, model_class_name, materialization_tag)
             current_hash = _get_lora_file_hash(lora_path)
             
             cached_entry = _PARSED_LORA_ADAPTER_CACHE.get(cache_key)
@@ -1091,7 +1223,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
 
             if cached_entry is None:
                 start_time = time.perf_counter()
-                header = SafeOpenHeaderOnly(lora_path)
+                header = self._open_lora_header(lora_path, target_family=target_family)
                 patch_dict = backend_lora.load_lora(header, key_map, log_missing=False)
                 self._lora_parse_misses += 1.0
                 self._lora_parse_cold_time += time.perf_counter() - start_time
@@ -1107,6 +1239,14 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             patcher.add_patches(patch_dict, strength)
             patch_count += len(patch_dict)
         return patch_count
+
+    def _open_lora_header(self, lora_path: str, *, target_family: str):
+        if target_family == "unet" and os.path.isfile(lora_path):
+            try:
+                return _ResidentSafeOpenHeaderOnly(lora_path, tensor_device=self._execution_device())
+            except Exception:
+                logging.debug("Falling back to shared LoRA header loader for %s.", lora_path, exc_info=True)
+        return SafeOpenHeaderOnly(lora_path)
 
     def _build_compiled_unet_fingerprint(
         self,
