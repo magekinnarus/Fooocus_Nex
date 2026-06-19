@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Optional
 
+from modules.flux_fill_surface import OBJR_ENGINE_FLUX_FILL, normalize_objr_engine
 from modules.route_intent import resolve_route_intent
 
 
@@ -451,14 +452,14 @@ def resolve_flux_fill_process_key(
     selected_engine: str | None = None,
 ) -> ProcessKey | None:
     try:
-        import modules.objr_engine as objr_engine
-
         if selected_engine is None:
-            selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+            selected_engine = normalize_objr_engine(getattr(task_state, 'objr_engine', None))
         if str(route_family or '').strip().lower() == 'flux_fill':
-            selected_engine = objr_engine.OBJR_ENGINE_FLUX_FILL
-        if selected_engine != objr_engine.OBJR_ENGINE_FLUX_FILL:
+            selected_engine = OBJR_ENGINE_FLUX_FILL
+        if selected_engine != OBJR_ENGINE_FLUX_FILL:
             return None
+
+        import modules.objr_engine as objr_engine
 
         asset_paths = objr_engine.resolve_flux_fill_asset_paths(
             conditioning=getattr(task_state, 'flux_fill_conditioning', None),
@@ -475,10 +476,8 @@ def resolve_flux_fill_process_key(
 
 
 def resolve_requested_process_key(task_state, route) -> ProcessKey | None:
-    import modules.objr_engine as objr_engine
-
-    selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, 'objr_engine', None))
-    expects_flux_process = route.family == 'flux_fill' or selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL
+    selected_engine = normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+    expects_flux_process = route.family == 'flux_fill' or selected_engine == OBJR_ENGINE_FLUX_FILL
     if expects_flux_process:
         return resolve_flux_fill_process_key(
             task_state,

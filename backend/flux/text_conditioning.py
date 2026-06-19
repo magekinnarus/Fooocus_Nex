@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from transformers import T5TokenizerFast
 
 import backend.patching as patching
 from backend import precision
@@ -17,9 +16,6 @@ import ldm_patched.modules.sd1_clip as sd1_clip
 import ldm_patched.modules.utils as comfy_utils
 from backend import resources
 from backend.flux.flux_fill_pipeline import FluxEmptyConditioning, save_flux_empty_conditioning_cache
-from backend.gguf.loader import gguf_clip_loader
-from backend.gguf.ops import GGMLOps
-from backend.gguf.patcher import GGUFModelPatcher
 from ldm_patched.ldm.modules.attention import optimized_attention_for_device
 
 logger = logging.getLogger(__name__)
@@ -38,6 +34,22 @@ def flux_t5_tokenizer_path() -> Path:
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _load_t5_tokenizer_fast():
+    from transformers import T5TokenizerFast
+
+    return T5TokenizerFast
+
+
+def _load_gguf_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    from backend.gguf.loader import gguf_clip_loader
+    from backend.gguf.ops import GGMLOps
+
+    return gguf_clip_loader(str(path)), {
+        "custom_operations": GGMLOps,
+        "_nex_gguf_text_encoder": True,
+    }
 
 
 def _pick_t5_ops(model_options: dict[str, Any] | None) -> Any:
@@ -64,7 +76,8 @@ class FixedLengthT5Tokenizer:
         fixed_length: int = _T5_FIXED_LENGTH,
     ) -> None:
         tokenizer_path = Path(tokenizer_path) if tokenizer_path is not None else flux_t5_tokenizer_path()
-        self.tokenizer = T5TokenizerFast.from_pretrained(str(tokenizer_path))
+        tokenizer_cls = _load_t5_tokenizer_fast()
+        self.tokenizer = tokenizer_cls.from_pretrained(str(tokenizer_path))
         self.fixed_length = int(fixed_length)
         empty = self.tokenizer("")["input_ids"]
         self.start_token = None
@@ -501,7 +514,7 @@ def clear_flux_prompt_text_encoder_cache() -> None:
 
 def _load_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     if path.suffix.lower() == ".gguf":
-        return gguf_clip_loader(str(path)), {"custom_operations": GGMLOps}
+        return _load_gguf_text_encoder_state_dict(path)
     return comfy_utils.load_torch_file(str(path), safe_load=True), {}
 
 
@@ -679,7 +692,11 @@ def load_flux_prompt_text_encoder(
         model_options=model_options,
     )
     tokenizer = FluxTokenizer(embedding_directory=embedding_directory)
-    patcher_cls = GGUFModelPatcher if model_options.get("custom_operations") is GGMLOps else patching.NexModelPatcher
+    patcher_cls = patching.NexModelPatcher
+    if model_options.get("_nex_gguf_text_encoder"):
+        from backend.gguf.patcher import GGUFModelPatcher
+
+        patcher_cls = GGUFModelPatcher
     patcher = patcher_cls(cond_stage_model, load_device=load_device, offload_device=offload_device)
 
     missing, unexpected = cond_stage_model.load_sd(clip_l_sd)

@@ -26,6 +26,11 @@ import modules.ui_components.control_panel as control_panel
 import modules.ui_components.inpaint_panel as inpaint_panel
 import modules.ui_components.outpaint_panel as outpaint_panel
 import modules.ui_components.staging_panel as staging_panel
+from modules.flux_fill_surface import (
+    FLUX_FILL_BLEND_MORPHOLOGICAL,
+    OBJR_ENGINE_DROPDOWN_CHOICES,
+    OBJR_ENGINE_MAT,
+)
 import args_manager
 import copy
 from modules.setup_utils import download_models
@@ -137,11 +142,11 @@ with shared.gradio_root:
                                     remove_bg_enabled = gr.Checkbox(label='Background pass', value=False, elem_id='remove_bg_enabled')
                                     remove_obj_enabled = gr.Checkbox(label='Object pass', value=False, elem_id='remove_obj_enabled')
 
-                                objr_engine = gr.Dropdown(label='Removal Pass', choices=[('MAT512 initial removal pass', 'MAT512 (initial removal pass)'), ('Flux Fill refinement pass', 'Flux Fill (refinement pass)')], value='MAT512 (initial removal pass)')
+                                objr_engine = gr.Dropdown(label='Removal Pass', choices=OBJR_ENGINE_DROPDOWN_CHOICES, value=OBJR_ENGINE_MAT)
                                 remove_prompt = gr.Textbox(placeholder='Optional prompt for the Flux Fill refinement pass. Empty uses the downloaded empty conditioning cache.', elem_id='remove_prompt', label='Remove Prompt', visible=True)
                                 flux_fill_conditioning = gr.Textbox(value='empty', visible=False, elem_id='flux_fill_conditioning', show_label=False, container=False)
                                 flux_fill_prompt_cache = gr.Textbox(value='temp', visible=False, elem_id='flux_fill_prompt_cache', show_label=False, container=False)
-                                objr_blend_mode = gr.Textbox(value='morphological', visible=False, elem_id='objr_blend_mode', show_label=False, container=False)
+                                objr_blend_mode = gr.Textbox(value=FLUX_FILL_BLEND_MORPHOLOGICAL, visible=False, elem_id='objr_blend_mode', show_label=False, container=False)
                                 gr.HTML('* <b>Background pass</b> extracts the person.<br>'
                                         '* <b>Object pass</b> runs MAT512 first, then Flux Fill refinement. Morphological blending is fixed on.')
 

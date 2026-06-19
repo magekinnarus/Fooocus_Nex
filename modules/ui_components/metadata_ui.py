@@ -3,6 +3,7 @@ import gradio as gr
 from pathlib import Path
 import modules.config
 import modules.flags
+from modules.flux_fill_surface import normalize_flux_fill_inpaint_route
 from modules.flags import SAMPLERS
 from modules.util import unquote, get_file_from_folder_list
 import modules.meta_parser
@@ -123,7 +124,6 @@ def get_inpaint_route(key: str, fallback: str | None, source_dict: dict, results
         h = source_dict.get(key, source_dict.get(fallback, default))
         if h == 'empty':
             h = modules.config.default_inpaint_route
-        from modules.objr_engine import normalize_flux_fill_inpaint_route
 
         normalized = normalize_flux_fill_inpaint_route(h)
         results.append(normalized)

@@ -19,7 +19,7 @@ import modules.flags as flags
 import modules.gradio_hijack as grh
 import modules.style_sorter as style_sorter
 import modules.meta_parser
-import modules.objr_engine as objr_engine_module
+from modules.flux_fill_surface import OBJR_ENGINE_FLUX_FILL, OBJR_ENGINE_MAT
 import modules.ui_components.metadata_ui as metadata_ui
 from modules.ui_components.metadata_preview import format_metadata_preview
 import modules.ui_components.settings_panel as settings_panel
@@ -993,7 +993,7 @@ def outpaint_engine_state_change(outpaint_engine_version):
     return gr.update(value=outpaint_engine_version)
 
 def objr_engine_change(objr_engine_value):
-    if str(objr_engine_value or '').strip() in {objr_engine_module.OBJR_ENGINE_MAT, objr_engine_module.OBJR_ENGINE_FLUX_FILL}:
+    if str(objr_engine_value or '').strip() in {OBJR_ENGINE_MAT, OBJR_ENGINE_FLUX_FILL}:
         return gr.update(value=16)
     return gr.update(value=16)
 

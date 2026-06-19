@@ -8,7 +8,14 @@ import urllib.parse
 
 import modules.async_worker as worker
 import modules.flags as flags
-from modules.route_intent import normalize_flux_fill_inpaint_route, resolve_route_intent
+from modules.flux_fill_surface import (
+    FLUX_FILL_INPAINT_ROUTE_FLUX,
+    OBJR_ENGINE_FLUX_FILL,
+    OBJR_ENGINE_MAT,
+    normalize_flux_fill_inpaint_route,
+    normalize_objr_engine,
+)
+from modules.route_intent import resolve_route_intent
 import numpy as np
 from PIL import Image
 
@@ -78,14 +85,17 @@ def _merge_prompt_text(primary: str, secondary: str) -> str:
 
 
 def _normalize_objr_engine_name(value) -> str:
-    normalized = _normalize_text(value).lower().replace("(", "").replace(")", "")
-    if "flux" in normalized:
-        return "Flux Fill (refinement pass)"
-    return "MAT512 (initial removal pass)"
+    try:
+        return normalize_objr_engine(value)
+    except ValueError:
+        normalized = _normalize_text(value).lower().replace("(", "").replace(")", "")
+        if "flux" in normalized:
+            return OBJR_ENGINE_FLUX_FILL
+        return OBJR_ENGINE_MAT
 
 
 def _is_flux_fill_inpaint_route(value) -> bool:
-    return normalize_flux_fill_inpaint_route(value) == "flux"
+    return normalize_flux_fill_inpaint_route(value) == FLUX_FILL_INPAINT_ROUTE_FLUX
 
 
 def _is_upscale_request(state) -> bool:

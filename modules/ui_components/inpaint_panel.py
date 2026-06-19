@@ -1,6 +1,7 @@
 import gradio as gr
 import modules.config
 import modules.flags as flags
+from modules.flux_fill_surface import FLUX_FILL_INPAINT_ROUTE_CHOICES
 
 def build_inpaint_tab():
     """
@@ -22,7 +23,7 @@ def build_inpaint_tab():
     results['inpaint_route'] = gr.Dropdown(
         label='Inpaint Route',
         value=modules.config.default_inpaint_route,
-        choices=[('SDXL Inpaint', 'sdxl'), ('Flux Fill', 'flux')],
+        choices=FLUX_FILL_INPAINT_ROUTE_CHOICES,
         info='Choose the SDXL inpaint pipeline or the Flux Fill route.'
     )
     results['inpaint_strength'] = gr.Slider(

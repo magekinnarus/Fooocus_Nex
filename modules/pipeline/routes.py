@@ -250,11 +250,12 @@ def _build_flux_preview_transform(active_session):
 
 
 def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: bool = False):
+    from modules.flux_fill_surface import OBJR_ENGINE_FLUX_FILL, normalize_objr_engine
     import modules.objr_engine as objr_engine
 
-    selected_engine = objr_engine.normalize_objr_engine(getattr(task_state, "objr_engine", None))
+    selected_engine = normalize_objr_engine(getattr(task_state, "objr_engine", None))
     if route.family == "flux_fill":
-        selected_engine = objr_engine.OBJR_ENGINE_FLUX_FILL
+        selected_engine = OBJR_ENGINE_FLUX_FILL
     try:
         return objr_engine.reconcile_active_flux_fill_session(
             route_family=route.family,
@@ -950,13 +951,14 @@ class RemovalStage(PipelineStage):
 
     def execute(self, context: PipelineRouteContext):
         import modules.bgr_engine as bgr_engine
+        from modules.flux_fill_surface import OBJR_ENGINE_FLUX_FILL, normalize_objr_engine
         import modules.objr_engine as objr_engine
         from backend import resources
         from modules.pipeline.inference import get_sampling_callback
 
         task_state = context.task_state
-        selected_engine = objr_engine.normalize_objr_engine(task_state.objr_engine)
-        use_flux_session = selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL and objr_engine.has_active_flux_fill_session()
+        selected_engine = normalize_objr_engine(task_state.objr_engine)
+        use_flux_session = selected_engine == OBJR_ENGINE_FLUX_FILL and objr_engine.has_active_flux_fill_session()
         resources.begin_memory_phase('removal', notes={'goals': list(task_state.goals)})
         try:
             if context.progressbar_callback is not None:
@@ -1003,7 +1005,7 @@ class RemovalStage(PipelineStage):
                     context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
                 removal_prep_steps = 60 if flags.remove_bg in task_state.goals else 10
                 flux_callback = None
-                if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL:
+                if selected_engine == OBJR_ENGINE_FLUX_FILL:
                     flux_callback = get_sampling_callback(
                         task_state,
                         context.progressbar_callback,
@@ -1031,7 +1033,7 @@ class RemovalStage(PipelineStage):
                     flux_disable_pbar=True,
                 )
                 objr_engine.unload_model()
-                if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL:
+                if selected_engine == OBJR_ENGINE_FLUX_FILL:
                     try:
                         hardware = objr_engine.inspect_flux_fill_hardware()
                         if hardware.runtime_posture != objr_engine.FLUX_FILL_RUNTIME_POSTURE_RESIDENT:
@@ -1041,7 +1043,7 @@ class RemovalStage(PipelineStage):
                 persisted_res_path = _save_logged_output(
                     context,
                     res_path,
-                    'Flux Fill Object Removal' if selected_engine == objr_engine.OBJR_ENGINE_FLUX_FILL else 'Object Removal',
+                    'Flux Fill Object Removal' if selected_engine == OBJR_ENGINE_FLUX_FILL else 'Object Removal',
                     prompt_text=getattr(task_state, 'remove_prompt', ''),
                     negative_prompt=getattr(task_state, 'negative_prompt', ''),
                     seed=getattr(task_state, 'seed', None),

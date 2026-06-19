@@ -1,5 +1,10 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union
+from modules.flux_fill_surface import (
+    FLUX_FILL_BLEND_MORPHOLOGICAL,
+    FLUX_FILL_INPAINT_ROUTE_SDXL,
+    OBJR_ENGINE_MAT,
+)
 import numpy as np
 
 
@@ -43,18 +48,18 @@ class TaskState:
     inpaint_additional_prompt: str = ""
     inpaint_mask_image: Optional[np.ndarray] = None
     inpaint_bb_image: Optional[np.ndarray] = None
-    inpaint_route: str = "sdxl"
+    inpaint_route: str = FLUX_FILL_INPAINT_ROUTE_SDXL
     remove_base_image: Optional[np.ndarray] = None
     remove_prompt: str = ""
     remove_mask_data: str = ""
     remove_bg_enabled: bool = False
     remove_obj_enabled: bool = False
-    objr_engine: str = "MAT512 (initial removal pass)"
+    objr_engine: str = OBJR_ENGINE_MAT
     flux_fill_conditioning: str = "empty"
     flux_fill_prompt_cache: str = "temp"
     objr_mask_dilate: int = 16
     objr_mask_blur: int = 6
-    objr_blend_mode: str = "morphological"
+    objr_blend_mode: str = FLUX_FILL_BLEND_MORPHOLOGICAL
     disable_preview: bool = False
     preview_update_interval: int = 1
     preview_max_side: int = 0

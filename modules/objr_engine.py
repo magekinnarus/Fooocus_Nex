@@ -13,6 +13,20 @@ from typing import Any, List, Tuple
 
 from modules import model_registry
 import modules.config as config
+from modules.flux_fill_surface import (
+    FLUX_FILL_BLEND_ALPHA,
+    FLUX_FILL_BLEND_MORPHOLOGICAL,
+    FLUX_FILL_INPAINT_ROUTE_FLUX,
+    FLUX_FILL_INPAINT_ROUTE_SDXL,
+    OBJR_ENGINE_CHOICES,
+    OBJR_ENGINE_FLUX_FILL,
+    OBJR_ENGINE_MAT,
+    is_flux_fill_inpaint_route,
+    is_flux_fill_route_family,
+    normalize_flux_fill_blend_mode,
+    normalize_flux_fill_inpaint_route,
+    normalize_objr_engine,
+)
 import modules.mask_processing as mask_processing
 from ldm_patched.pfn.architecture.MAT import MAT
 from modules.blending import sin_blend_1d
@@ -26,9 +40,6 @@ from backend.flux.text_conditioning import encode_flux_prompt_conditioning, save
 logger = logging.getLogger(__name__)
 
 _model_instance = None
-OBJR_ENGINE_MAT = "MAT512 (initial removal pass)"
-OBJR_ENGINE_FLUX_FILL = "Flux Fill (refinement pass)"
-OBJR_ENGINE_CHOICES = (OBJR_ENGINE_MAT, OBJR_ENGINE_FLUX_FILL)
 
 FLUX_FILL_TIER_FP8 = "fp8"
 FLUX_FILL_TIER_Q8 = "q8_0"
@@ -49,8 +60,6 @@ FLUX_FILL_T5_FP16_MIN_BUDGET_MB = 24 * 1024
 FLUX_FILL_T5_Q8_MIN_BUDGET_MB = 12 * 1024
 FLUX_FILL_CONDITIONING_EMPTY = "empty"
 FLUX_FILL_CONDITIONING_PROMPT = "prompt"
-FLUX_FILL_INPAINT_ROUTE_SDXL = "sdxl"
-FLUX_FILL_INPAINT_ROUTE_FLUX = "flux"
 FLUX_FILL_CONDITIONING_BY_KIND = {
     FLUX_FILL_CONDITIONING_EMPTY: FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID,
 }
@@ -58,8 +67,6 @@ FLUX_FILL_PROMPT_CACHE_TEMP = "temp"
 FLUX_FILL_PROMPT_CACHE_PERMANENT = "permanent"
 FLUX_FILL_MASK_GROW = 16
 FLUX_FILL_MASK_BLUR = 6
-FLUX_FILL_BLEND_ALPHA = "alpha"
-FLUX_FILL_BLEND_MORPHOLOGICAL = "morphological"
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_FP8: "inpaint.flux_fill.unet.fp8",
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
@@ -147,35 +154,6 @@ class _FluxFillPolicyContext:
     flux_acceleration_class: str | None
     tensor_core_accelerated: bool
     placement_plan: Any
-
-
-def normalize_objr_engine(engine: str | None) -> str:
-    if engine is None or str(engine).strip() == "":
-        return OBJR_ENGINE_MAT
-
-    value = str(engine).strip()
-    if value in OBJR_ENGINE_CHOICES:
-        return value
-
-    aliases = {
-        "mat": OBJR_ENGINE_MAT,
-        "mat local": OBJR_ENGINE_MAT,
-        "mat512": OBJR_ENGINE_MAT,
-        "mat512 initial removal pass": OBJR_ENGINE_MAT,
-        "places_512_fulldata_g.pth": OBJR_ENGINE_MAT,
-        "places512": OBJR_ENGINE_MAT,
-        "flux": OBJR_ENGINE_FLUX_FILL,
-        "flux fill": OBJR_ENGINE_FLUX_FILL,
-        "flux fill colab": OBJR_ENGINE_FLUX_FILL,
-        "flux fill refinement pass": OBJR_ENGINE_FLUX_FILL,
-    }
-    normalized = value.lower().replace("(", "").replace(")", "").strip()
-    if normalized in aliases:
-        return aliases[normalized]
-
-    raise ValueError(f"Unsupported object removal engine: {engine!r}. Expected one of {OBJR_ENGINE_CHOICES}.")
-
-
 def _resolve_flux_fill_profile(profile: Any | None = None) -> tuple[Any | None, Any | None]:
     snapshot = None
     if profile is None:
@@ -492,51 +470,6 @@ def normalize_flux_fill_prompt_cache(cache_mode: str | None) -> str:
     if value in {"permanent", "persist", "persistent"}:
         return FLUX_FILL_PROMPT_CACHE_PERMANENT
     return FLUX_FILL_PROMPT_CACHE_TEMP
-
-
-def normalize_flux_fill_blend_mode(blend_mode: str | None) -> str:
-    value = str(blend_mode or FLUX_FILL_BLEND_MORPHOLOGICAL).strip().lower().replace("-", "_").replace(" ", "_")
-    if value in {"morphological", "morph", "fooocus"}:
-        return FLUX_FILL_BLEND_MORPHOLOGICAL
-    return FLUX_FILL_BLEND_ALPHA
-
-
-def normalize_flux_fill_inpaint_route(route: str | None) -> str:
-    if route is None or str(route).strip() == "":
-        return FLUX_FILL_INPAINT_ROUTE_SDXL
-
-    value = str(route).strip().lower().replace("-", "_").replace(" ", "_")
-    if value in {
-        FLUX_FILL_INPAINT_ROUTE_SDXL,
-        "sdxl_inpaint",
-        "sdxl_inpaint_route",
-        "sdxl_inpaint_model",
-        "sdxl_inpaint_pipeline",
-    }:
-        return FLUX_FILL_INPAINT_ROUTE_SDXL
-    if value in {
-        FLUX_FILL_INPAINT_ROUTE_FLUX,
-        "flux_fill",
-        "flux_fill_inpaint",
-        "flux_fill_route",
-        "flux_inpaint",
-    }:
-        return FLUX_FILL_INPAINT_ROUTE_FLUX
-    raise ValueError(
-        "Unsupported Flux Fill inpaint route: "
-        f"{route!r}. Expected sdxl or flux."
-    )
-
-
-def is_flux_fill_inpaint_route(route: str | None) -> bool:
-    return normalize_flux_fill_inpaint_route(route) == FLUX_FILL_INPAINT_ROUTE_FLUX
-
-
-def is_flux_fill_route_family(route_family: str | None) -> bool:
-    value = str(route_family or "").strip().lower()
-    return value in {"removal", "flux_fill"}
-
-
 def _safe_prompt_slug(prompt: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", prompt.strip().lower()).strip("_")
     return (slug or "prompt")[:48]

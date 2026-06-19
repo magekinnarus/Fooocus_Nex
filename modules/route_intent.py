@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from modules.flux_fill_surface import normalize_flux_fill_inpaint_route
 
 _DISABLED_VALUE = "Disabled"
 _REMOVE_BG_GOAL = "remove_bg"
@@ -22,15 +23,6 @@ def normalize_current_tab(value) -> str:
     if normalized in {"", "generate"}:
         return "txt2img"
     return normalized
-
-
-def normalize_flux_fill_inpaint_route(value) -> str:
-    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in {"", "sdxl", "sdxl_inpaint", "sdxl_inpaint_route", "sdxl_inpaint_model", "sdxl_inpaint_pipeline"}:
-        return "sdxl"
-    if normalized in {"flux", "flux_fill", "flux_fill_inpaint", "flux_fill_route", "flux_inpaint"}:
-        return "flux"
-    return "sdxl"
 
 
 def route_family_for_route_id(route_id: str | None) -> str | None:

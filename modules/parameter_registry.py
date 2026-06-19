@@ -8,6 +8,12 @@ eliminating positional alignment as a failure mode.
 
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, List
+from modules.flux_fill_surface import (
+    FLUX_FILL_BLEND_MORPHOLOGICAL,
+    FLUX_FILL_INPAINT_ROUTE_SDXL,
+    OBJR_ENGINE_MAT,
+    normalize_flux_fill_blend_mode,
+)
 
 @dataclass
 class ParamDef:
@@ -30,10 +36,7 @@ def _normalize_flux_fill_prompt_cache_value(value: Any) -> str:
 
 
 def _normalize_objr_blend_mode_value(value: Any) -> str:
-    normalized = str(value or 'morphological').strip().lower().replace('-', '_').replace(' ', '_')
-    if normalized in {'morphological', 'morph', 'fooocus'}:
-        return 'morphological'
-    return 'morphological'
+    return normalize_flux_fill_blend_mode(value)
 
 # Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
@@ -72,12 +75,12 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('remove_mask_data', 'remove_mask_data', '', str),
     ParamDef('remove_bg_enabled', 'remove_bg_enabled', False, bool),
     ParamDef('remove_obj_enabled', 'remove_obj_enabled', False, bool),
-    ParamDef('objr_engine', 'objr_engine', 'MAT512 (initial removal pass)', str),
+    ParamDef('objr_engine', 'objr_engine', OBJR_ENGINE_MAT, str),
     ParamDef('flux_fill_conditioning', 'flux_fill_conditioning', 'empty', _normalize_flux_fill_conditioning_value),
     ParamDef('flux_fill_prompt_cache', 'flux_fill_prompt_cache', 'temp', _normalize_flux_fill_prompt_cache_value),
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 16, int),
     ParamDef('objr_mask_blur', 'objr_mask_blur', 6, int),
-    ParamDef('objr_blend_mode', 'objr_blend_mode', 'morphological', _normalize_objr_blend_mode_value),
+    ParamDef('objr_blend_mode', 'objr_blend_mode', FLUX_FILL_BLEND_MORPHOLOGICAL, _normalize_objr_blend_mode_value),
     ParamDef('bgr_threshold', 'bgr_threshold', 0.5, float),
     ParamDef('bgr_jit', 'bgr_jit', True, bool),
 
@@ -101,7 +104,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('inpaint_additional_prompt', 'inpaint_additional_prompt', '', str),
     ParamDef('inpaint_mask_image', 'inpaint_mask_image', None),
     ParamDef('inpaint_bb_image', 'inpaint_bb_image', None),
-    ParamDef('inpaint_route', 'inpaint_route', 'sdxl', str),
+    ParamDef('inpaint_route', 'inpaint_route', FLUX_FILL_INPAINT_ROUTE_SDXL, str),
     ParamDef('inpaint_step2_checkbox', 'inpaint_step2_checkbox', False, bool),
     ParamDef('inpaint_engine', 'inpaint_engine', 'None', str),
     ParamDef('inpaint_strength', 'inpaint_strength', 0.5, float),
