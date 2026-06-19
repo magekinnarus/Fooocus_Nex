@@ -238,8 +238,10 @@ class SharedProcessRegistry:
                 curr_id = current.authoritative_identity
                 req_id = requested.authoritative_identity
                 if isinstance(curr_id, tuple) and isinstance(req_id, tuple):
-                    if len(curr_id) >= 3 and len(req_id) >= 3:
-                        if curr_id[:3] == req_id[:3]:
+                    curr_base_len = 1 if getattr(current, 'route_family', None) == 'gguf' else 2
+                    req_base_len = 1 if getattr(requested, 'route_family', None) == 'gguf' else 2
+                    if curr_base_len == req_base_len and len(curr_id) >= curr_base_len and len(req_id) >= req_base_len:
+                        if curr_id[:curr_base_len] == req_id[:req_base_len]:
                             is_same_base_components = True
             
             if is_same_base_components:

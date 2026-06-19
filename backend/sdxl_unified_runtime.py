@@ -1162,12 +1162,9 @@ class UnifiedSDXLRuntime(
         if self.unet is None:
             return
         orig_scheduler = self.config.original_scheduler_name or self.config.scheduler
-        if orig_scheduler in ['lcm', 'tcd']:
+        if orig_scheduler == 'lcm':
             from modules import core as modules_core
             self.unet = modules_core.opModelSamplingDiscrete.patch(self.unet, orig_scheduler, False)[0]
-        elif orig_scheduler == 'edm_playground_v2.5':
-            from modules import core as modules_core
-            self.unet = modules_core.opModelSamplingContinuousEDM.patch(self.unet, orig_scheduler, 120.0, 0.002)[0]
         
         model = getattr(self.unet, "model", None)
         if model is not None:

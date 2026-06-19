@@ -130,15 +130,6 @@ def apply_overrides(task_state):
     task_state.height = height
     return steps, width, height
 
-
-def patch_discrete(unet, scheduler_name):
-    return core.opModelSamplingDiscrete.patch(unet, scheduler_name, False)[0]
-
-
-def patch_edm(unet, scheduler_name):
-    return core.opModelSamplingContinuousEDM.patch(unet, scheduler_name, 120.0, 0.002)[0]
-
-
 def patch_samplers(task_state):
     """
     Returns the scheduler name expected by the sampler layer.
@@ -148,17 +139,10 @@ def patch_samplers(task_state):
     """
     final_scheduler_name = task_state.scheduler_name
 
-    if task_state.scheduler_name in ['lcm', 'tcd']:
+    if task_state.scheduler_name == 'lcm':
         final_scheduler_name = 'sgm_uniform'
 
-    elif task_state.scheduler_name == 'edm_playground_v2.5':
-        final_scheduler_name = 'karras'
-
     return final_scheduler_name
-
-
-
-
 def process_prompt(task_state, base_model_additional_loras, progressbar_callback=None, *, route_context=None, route_family=None, residency_class=None):
     """
     Gathers prompts, styles, and LoRAs. Encodes prompts via CLIP.
