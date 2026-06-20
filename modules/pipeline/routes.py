@@ -353,7 +353,7 @@ class ControlNetSupportLoadStage(PipelineStage):
 
 class InpaintPreparationStage(PipelineStage):
     stage_id = 'inpaint_prepare'
-    phase_name = 'vae_encode'
+    phase_name = 'inpaint_prepare'
 
     def describe_resources(self, context: PipelineRouteContext):
         return _describe_route_resources(
@@ -409,7 +409,7 @@ class InpaintPreparationStage(PipelineStage):
 
 class OutpaintPreparationStage(PipelineStage):
     stage_id = 'outpaint_prepare'
-    phase_name = 'vae_encode'
+    phase_name = 'outpaint_prepare'
 
     def describe_resources(self, context: PipelineRouteContext):
         return _describe_route_resources(

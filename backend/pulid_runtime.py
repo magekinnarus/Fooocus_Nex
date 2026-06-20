@@ -109,22 +109,19 @@ def _detect_faces(face_app, bgr_image):
 @torch.no_grad()
 @torch.inference_mode()
 def preprocess(img, model_path, eva_clip_path, insightface_model_names=None):
-    import hashlib
-
-    entry = contextual_ip_adapter.load_contextual_model(model_path)
-    if entry is None:
-        raise RuntimeError('PuLID model is missing its contextual checkpoint path.')
-
-    cn_type = "pulid"
-    cn_img_hash = hashlib.sha256(img.tobytes()).hexdigest()
-    insightface_model_names_tuple = tuple(insightface_model_names) if insightface_model_names is not None else None
-
-    cache_key = (cn_img_hash, cn_type, model_path, eva_clip_path, None, insightface_model_names_tuple)
-
     try:
         from backend.sdxl_unified_runtime import _PREPROCESSOR_METRICS
     except ImportError:
         _PREPROCESSOR_METRICS = None
+
+    cache_key = contextual_ip_adapter._build_contextual_payload_cache_key(
+        img,
+        cn_type="pulid",
+        model_path=model_path,
+        clip_vision_path=eva_clip_path,
+        ip_negative_path=None,
+        insightface_model_names=insightface_model_names,
+    )
 
     cached_val = contextual_ip_adapter._CONTEXTUAL_PAYLOAD_CACHE.get(cache_key)
     if cached_val is not None:
@@ -137,6 +134,10 @@ def preprocess(img, model_path, eva_clip_path, insightface_model_names=None):
         _PREPROCESSOR_METRICS["contextual_misses"] += 1.0
 
     from insightface.utils import face_align
+
+    entry = contextual_ip_adapter.load_contextual_model(model_path)
+    if entry is None:
+        raise RuntimeError('PuLID model is missing its contextual checkpoint path.')
 
     adapter_model = entry['model']
     load_device = adapter_model.load_device

@@ -38,6 +38,31 @@ def clear_contextual_payload_cache() -> None:
     _CONTEXTUAL_PAYLOAD_CACHE.clear()
 
 
+def _normalize_contextual_cache_kind(kind):
+    normalized = str(kind or "").strip().lower().replace(" ", "_")
+    if normalized in {"imageprompt", "image_prompt"}:
+        return "image_prompt"
+    if normalized in {"faceidv2", "faceid_v2"}:
+        return "faceid_v2"
+    if normalized == "pulid":
+        return "pulid"
+    return normalized or None
+
+
+def _build_contextual_payload_cache_key(
+    img,
+    *,
+    cn_type,
+    model_path,
+    clip_vision_path=None,
+    ip_negative_path=None,
+    insightface_model_names=None,
+):
+    cn_img_hash = hashlib.sha256(np.ascontiguousarray(img).tobytes()).hexdigest()
+    insightface_model_names_tuple = tuple(insightface_model_names) if insightface_model_names is not None else None
+    return (cn_img_hash, cn_type, model_path, clip_vision_path, ip_negative_path, insightface_model_names_tuple)
+
+
 SD_V12_CHANNELS = [320] * 4 + [640] * 4 + [1280] * 4 + [1280] * 6 + [640] * 6 + [320] * 6 + [1280] * 2
 SD_XL_CHANNELS = [640] * 8 + [1280] * 40 + [1280] * 60 + [640] * 12 + [1280] * 20
 
@@ -632,28 +657,50 @@ def load_insightface(model_name="antelopev2", providers=None, root=None):
     return app
 
 
-def preprocess(img, model_path, clip_vision_path=None, ip_negative_path=None, insightface_model_names=None):
-    entry = load_contextual_model(model_path, clip_vision_path=clip_vision_path, ip_negative_path=ip_negative_path)
-    if entry is None:
-        return None
-
-    cn_type = entry["kind"]
-    cn_img_hash = hashlib.sha256(img.tobytes()).hexdigest()
-    insightface_model_names_tuple = tuple(insightface_model_names) if insightface_model_names is not None else None
-
-    cache_key = (cn_img_hash, cn_type, model_path, clip_vision_path, ip_negative_path, insightface_model_names_tuple)
-
+def preprocess(img, model_path, clip_vision_path=None, ip_negative_path=None, insightface_model_names=None, cache_kind=None):
     try:
         from backend.sdxl_unified_runtime import _PREPROCESSOR_METRICS
     except ImportError:
         _PREPROCESSOR_METRICS = None
 
-    cached_val = _CONTEXTUAL_PAYLOAD_CACHE.get(cache_key)
-    if cached_val is not None:
-        _CONTEXTUAL_PAYLOAD_CACHE.move_to_end(cache_key)
-        if _PREPROCESSOR_METRICS is not None:
-            _PREPROCESSOR_METRICS["contextual_hits"] += 1.0
-        return _clone_contextual_payload(cached_val)
+    cache_key = None
+    normalized_cache_kind = _normalize_contextual_cache_kind(cache_kind)
+    if normalized_cache_kind is not None:
+        cache_key = _build_contextual_payload_cache_key(
+            img,
+            cn_type=normalized_cache_kind,
+            model_path=model_path,
+            clip_vision_path=clip_vision_path,
+            ip_negative_path=ip_negative_path,
+            insightface_model_names=insightface_model_names,
+        )
+        cached_val = _CONTEXTUAL_PAYLOAD_CACHE.get(cache_key)
+        if cached_val is not None:
+            _CONTEXTUAL_PAYLOAD_CACHE.move_to_end(cache_key)
+            if _PREPROCESSOR_METRICS is not None:
+                _PREPROCESSOR_METRICS["contextual_hits"] += 1.0
+            return _clone_contextual_payload(cached_val)
+
+    entry = load_contextual_model(model_path, clip_vision_path=clip_vision_path, ip_negative_path=ip_negative_path)
+    if entry is None:
+        return None
+
+    if cache_key is None:
+        cn_type = _normalize_contextual_cache_kind(entry["kind"]) or entry["kind"]
+        cache_key = _build_contextual_payload_cache_key(
+            img,
+            cn_type=cn_type,
+            model_path=model_path,
+            clip_vision_path=clip_vision_path,
+            ip_negative_path=ip_negative_path,
+            insightface_model_names=insightface_model_names,
+        )
+        cached_val = _CONTEXTUAL_PAYLOAD_CACHE.get(cache_key)
+        if cached_val is not None:
+            _CONTEXTUAL_PAYLOAD_CACHE.move_to_end(cache_key)
+            if _PREPROCESSOR_METRICS is not None:
+                _PREPROCESSOR_METRICS["contextual_hits"] += 1.0
+            return _clone_contextual_payload(cached_val)
 
     if _PREPROCESSOR_METRICS is not None:
         _PREPROCESSOR_METRICS["contextual_misses"] += 1.0

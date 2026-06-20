@@ -169,7 +169,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
     from backend import resources
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
     from backend.sdxl_streaming_runtime import SDXLStreamingRuntime
-    from backend.staging_manager import ExecutionClass
+    from backend.staging_manager import ExecutionClass, SDXL_RESIDENT_EXECUTION_CLASSES
     from modules.pipeline.inference import _resolve_unified_checkpoint_path, _resolve_unified_vae_path
     import modules.pipeline.preprocessing as preprocessing
 
@@ -264,10 +264,7 @@ def apply_tiled_diffusion_refinement(task_state, upscaled_image: np.ndarray, pro
             except KeyError:
                 pass
 
-        is_resident = exec_class in {
-            ExecutionClass.SDXL_RESIDENT_T2,
-            ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-        }
+        is_resident = exec_class in SDXL_RESIDENT_EXECUTION_CLASSES
 
         if is_resident:
             runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))

@@ -329,12 +329,8 @@ def _config_targets_resident_runtime(config: UnifiedSDXLRuntimeConfig | None) ->
     if config is None:
         return False
 
-    from backend.staging_manager import ExecutionClass
+    from backend.staging_manager import ExecutionClass, SDXL_RESIDENT_EXECUTION_CLASSES
 
-    resident_execution_classes = {
-        ExecutionClass.SDXL_RESIDENT_T2,
-        ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-    }
     candidates = (
         getattr(config, "execution_class", None),
         getattr(getattr(config, "runtime_policy", None), "execution_class", None),
@@ -347,7 +343,7 @@ def _config_targets_resident_runtime(config: UnifiedSDXLRuntimeConfig | None) ->
                 normalized = ExecutionClass[normalized_name]
             except KeyError:
                 pass
-        if normalized in resident_execution_classes:
+        if normalized in SDXL_RESIDENT_EXECUTION_CLASSES:
             return True
     return False
 
@@ -487,7 +483,9 @@ class UnifiedSDXLRuntime(
         self._compiled_unet_cache_hit = False
 
         if self.unet is not None:
-            self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
+            # Resident SDXL always reloads clean UNet weights from the runtime source.
+            # The deprecated CPU/GPU clean-shadow policy is intentionally ignored here.
+            self.unet.runtime_release_to_meta = True
             self._reapply_scheduler_patches()
         if self.clip is not None:
             self.clip.runtime_policy = self.policy

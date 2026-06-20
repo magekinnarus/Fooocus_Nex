@@ -30,16 +30,6 @@ args_parser.parser.add_argument(
         "Useful for simulating streaming-class Flux Fill hardware on high-RAM Colab sessions."
     ),
 )
-args_parser.parser.add_argument(
-    "--sdxl-resident-clean-source-device",
-    type=str,
-    default=None,
-    help=(
-        "Override resident SDXL clean UNet snapshot placement. "
-        "Supported values: auto, cpu, cuda. "
-        "Use cpu to force the resident clean-source copy onto host RAM even on high-VRAM systems."
-    ),
-)
 args_parser.parser.add_argument("--preset", type=str, default=None, help="Apply specified UI preset.")
 args_parser.parser.add_argument("--disable-preset-selection", action='store_true',
                                 help="Disables preset selection in Gradio.")
@@ -92,16 +82,6 @@ args_parser.args.always_offload_from_vram = not args_parser.args.disable_offload
 if args_parser.args.disable_analytics:
     import os
     os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
-
-if isinstance(getattr(args_parser.args, "sdxl_resident_clean_source_device", None), str):
-    override = args_parser.args.sdxl_resident_clean_source_device.strip().lower()
-    if override:
-        if override not in {"auto", "cpu", "cuda"}:
-            raise ValueError(
-                "--sdxl-resident-clean-source-device must be one of: auto, cpu, cuda."
-            )
-        import os
-        os.environ["FOOOCUS_NEX_SDXL_RESIDENT_CLEAN_SOURCE_DEVICE"] = override
 
 if args_parser.args.disable_in_browser:
     args_parser.args.in_browser = False

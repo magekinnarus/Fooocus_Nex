@@ -998,6 +998,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
                         clip_vision_path=clip_vision_path,
                         ip_negative_path=ip_negative_path,
                         insightface_model_names=insightface_model_names,
+                        cache_kind=cn_type,
                     )
                 prepared_payload = self._normalize_contextual_preprocessed_payload(prepared_payload)
             if prepared_payload is None:

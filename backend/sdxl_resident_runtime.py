@@ -262,7 +262,9 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
         self._discard_legacy_clean_snapshots()
 
         if self.unet is not None:
-            self.unet.runtime_release_to_meta = not getattr(self.policy, "allow_cpu_shadow", False)
+            # Resident SDXL always reloads clean UNet weights from the runtime source.
+            # The deprecated CPU/GPU clean-shadow policy is intentionally ignored here.
+            self.unet.runtime_release_to_meta = True
             self._reapply_scheduler_patches()
         if self.clip is not None:
             self.clip.runtime_policy = self.policy
@@ -980,16 +982,6 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             return resources.get_torch_device()
         except Exception:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    def _resolve_clean_source_device(self) -> torch.device:
-        configured = getattr(self.policy, "resident_clean_source_device", "cpu")
-        if isinstance(configured, torch.device):
-            device = configured
-        else:
-            device = torch.device(str(configured or "cpu").strip() or "cpu")
-        if device.type == "cuda" and device.index is None:
-            return self._execution_device()
-        return device
 
     def _clean_unet_budget_bytes(self, device: torch.device) -> int:
         if device.type != "cuda":

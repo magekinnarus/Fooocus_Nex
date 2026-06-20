@@ -66,6 +66,10 @@ FLUX_RESIDENT_EXECUTION_CLASSES = {
     ExecutionClass.FLUX_RESIDENT_T5,
     ExecutionClass.FLUX_RESIDENT_T6,
 }
+SDXL_RESIDENT_EXECUTION_CLASSES = {
+    ExecutionClass.SDXL_RESIDENT_T2,
+    ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
+}
 
 
 DEFAULT_PLATFORM_BASELINE_MB = {
@@ -632,9 +636,7 @@ class ExecutionClassSolver:
         if family == "sdxl":
             if vram_total_mb < 8192.0:
                 return ExecutionClass.SDXL_STREAMING_T1, tier
-            if tier == HardwareTier.NORMAL_VRAM:
-                return ExecutionClass.SDXL_RESIDENT_T2, tier
-            return ExecutionClass.SDXL_GPU_GREEDY_T3PLUS, tier
+            return ExecutionClass.SDXL_RESIDENT_T2, tier
         if family == "flux":
             if tier in (HardwareTier.LOW_VRAM, HardwareTier.NORMAL_VRAM):
                 return ExecutionClass.FLUX_STREAMING_T3, tier
@@ -870,13 +872,12 @@ class PlacementPlanner:
         runtime_contract: dict[str, str | None],
         greedy: bool,
     ) -> bool:
+        if request.family != "flux":
+            # SDXL VAE residency was retired after repeated warm-run lifecycle
+            # regressions. Keep it opportunistic for every SDXL execution class.
+            return False
         if greedy:
             return True
-        if request.family != "flux":
-            return request.execution_class in {
-                ExecutionClass.SDXL_RESIDENT_T2,
-                ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-            }
 
         runtime_posture = str(runtime_contract.get("runtime_posture") or "").strip().lower()
         if runtime_posture == FLUX_RUNTIME_POSTURE_RESIDENT:

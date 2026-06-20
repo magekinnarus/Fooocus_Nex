@@ -33,6 +33,8 @@ class MemoryPhase(str, Enum):
     MODEL_REFRESH = 'model_refresh'
     PROMPT_ENCODE = 'prompt_encode'
     IMAGE_INPUT_PREPARE = 'image_input_prepare'
+    INPAINT_PREPARE = 'inpaint_prepare'
+    OUTPAINT_PREPARE = 'outpaint_prepare'
     VAE_ENCODE = 'vae_encode'
     STRUCTURAL_PREPROCESS = 'structural_preprocess'
     CONTEXTUAL_PREPROCESS = 'contextual_preprocess'
@@ -160,6 +162,16 @@ GGUF_RESIDENCY_PLANS = {
         warm=('unet',),
         evictable=('clip', 'controlnet') + RESIDENCY_RESOURCE_GROUPS['support_caches'],
     ),
+    MemoryPhase.INPAINT_PREPARE.value: _plan(
+        pinned=('vae',),
+        warm=('unet',),
+        evictable=('clip', 'controlnet') + RESIDENCY_RESOURCE_GROUPS['support_caches'],
+    ),
+    MemoryPhase.OUTPAINT_PREPARE.value: _plan(
+        pinned=('vae',),
+        warm=('unet',),
+        evictable=('clip', 'controlnet') + RESIDENCY_RESOURCE_GROUPS['support_caches'],
+    ),
     MemoryPhase.VAE_ENCODE.value: _plan(
         pinned=('vae',),
         warm=('unet',),
@@ -190,6 +202,8 @@ BASE_RESIDENCY_PLANS = {
     MemoryPhase.MODEL_REFRESH.value: _plan(pinned=('unet', 'clip', 'vae'), evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + RESIDENCY_RESOURCE_GROUPS['route_artifacts']),
     MemoryPhase.PROMPT_ENCODE.value: _plan(pinned=('clip',), warm=('unet', 'vae'), evictable=RESIDENCY_RESOURCE_GROUPS['support_caches'] + ('route_state',)),
     MemoryPhase.IMAGE_INPUT_PREPARE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.INPAINT_PREPARE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
+    MemoryPhase.OUTPAINT_PREPARE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
     MemoryPhase.VAE_ENCODE.value: _plan(pinned=('vae',), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
     MemoryPhase.STRUCTURAL_PREPROCESS.value: _plan(pinned=('controlnet', 'structural_preprocessors'), warm=('unet', 'vae'), evictable=('clip', 'contextual_adapters', 'clip_vision', 'insightface', 'pulid_support')),
     MemoryPhase.CONTEXTUAL_PREPROCESS.value: _plan(pinned=('contextual_adapters', 'clip_vision', 'insightface', 'pulid_support'), warm=('unet', 'controlnet'), evictable=('clip', 'structural_preprocessors')),

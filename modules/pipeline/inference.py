@@ -350,7 +350,7 @@ def _run_unified_sdxl_task(
 ):
     from backend.sdxl_unified_runtime import UnifiedSDXLRuntime, UnifiedSDXLRuntimeConfig
     from backend.sdxl_streaming_runtime import SDXLStreamingRuntime
-    from backend.staging_manager import ExecutionClass
+    from backend.staging_manager import ExecutionClass, SDXL_RESIDENT_EXECUTION_CLASSES
 
     policy = getattr(task_state, 'sdxl_execution_policy', None)
     checkpoint_path = _ensure_supported_unified_runtime_request(task_state)
@@ -429,10 +429,7 @@ def _run_unified_sdxl_task(
         except KeyError:
             pass
 
-    is_resident = exec_class in {
-        ExecutionClass.SDXL_RESIDENT_T2,
-        ExecutionClass.SDXL_GPU_GREEDY_T3PLUS,
-    }
+    is_resident = exec_class in SDXL_RESIDENT_EXECUTION_CLASSES
 
     if is_resident:
         runtime = UnifiedSDXLRuntime(UnifiedSDXLRuntimeConfig(**config_kwargs))

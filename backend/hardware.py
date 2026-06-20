@@ -767,7 +767,9 @@ def get_component_plan(role: str, policy: Any = None) -> Tuple[torch.device, str
                     sdxl_runtime_policy.VAE_POSTURE_GPU_RESIDENT,
                 }
             if prefer_gpu_vae:
-                return get_torch_device(), "gpu_resident"
+                # SDXL VAE is CPU-cached and activated opportunistically on GPU.
+                # Do not map policy preference back to resident GPU placement.
+                return torch.device("cpu"), "cpu_resident"
             return torch.device("cpu"), "cpu_resident"
             
     return dev, mode
@@ -780,4 +782,3 @@ def model_reconciliation_signature(model_patcher):
 
     model_obj = getattr(model_patcher, "model", None)
     return str(getattr(model_obj, "current_weight_patches_uuid", None))
-

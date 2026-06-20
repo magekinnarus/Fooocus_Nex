@@ -578,16 +578,8 @@ def load_controlnet_support_models(image_input_result=None):
         from backend import resources
 
         resources.trigger_refresh_controlnets(requested_controlnets)
-
-    contextual_assets = image_input_result.get('contextual_assets') or {}
-    for contextual_model_path in contextual_assets.get('contextual_model_paths', {}).values():
-        contextual_ip_adapter.load_contextual_model(
-            contextual_model_path,
-            clip_vision_path=contextual_assets.get('clip_vision_path'),
-            ip_negative_path=contextual_assets.get('ip_negative_path')
-        )
-    for insightface_model_name in contextual_assets.get('insightface_model_names', []):
-        contextual_ip_adapter.load_insightface(insightface_model_name)
+    # Leave contextual support lazy. Their preprocess seams are payload-cache aware,
+    # so eager warm-up here would turn warm requests back into cold-looking setup work.
 
 
 def _unpack_cn_image(raw_img, label):
@@ -744,6 +736,7 @@ def preprocess_contextual_controlnets(task_state, contextual_assets=None):
                         clip_vision_path=clip_vision_path,
                         ip_negative_path=ip_negative_path,
                         insightface_model_names=insightface_model_names,
+                        cache_kind=cn_type,
                     )
             except Exception as exc:
                 print(f'[ControlNet] Failed to preprocess {cn_type} slot {slot_index}: {exc}')
