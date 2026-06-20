@@ -632,7 +632,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                 decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=tiled)
                 images = self._compose_decoded_images(decoded_patch)
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            resources.eject_model(getattr(self.vae, "patcher", None))
             _soft_empty_cache_force()
             self._attached_payload = None
             self._transition_execution_state(
@@ -648,7 +648,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
 
     def close(self) -> None:
         # Keep resident UNet state warm, but release the shared VAE so it does not stay on GPU.
-        self._detach_component(getattr(self.vae, "patcher", None))
+        resources.eject_model(getattr(self.vae, "patcher", None))
         _soft_empty_cache_force()
         self._attached_payload = None
         self.execution_state = None
@@ -716,7 +716,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
             res = vae_encode.encode_pixels(self.vae, pixels)
             return res["samples"]
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            resources.eject_model(getattr(self.vae, "patcher", None))
             _soft_empty_cache_force()
 
     def decode_spatial_latents(self, latent: torch.Tensor, tiled: bool = False) -> torch.Tensor:
@@ -735,7 +735,7 @@ class ResidentSDXLRuntime(UnifiedSDXLRuntime):
                     self.vae.first_stage_model.to(device=decode_device)
             return vae_decode.decode_latent(self.vae, latent, tiled=tiled)
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            resources.eject_model(getattr(self.vae, "patcher", None))
             _soft_empty_cache_force()
 
     def _encode_spatial_pixels_for_artifacts(self, pixels: torch.Tensor) -> torch.Tensor:

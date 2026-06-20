@@ -370,7 +370,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
                 decoded_patch = decode.decode_preloaded_vae(self.vae, latent, tiled=tiled)
                 images = self._compose_decoded_images(decoded_patch)
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            resources.eject_model(getattr(self.vae, "patcher", None))
             _soft_empty_cache_force()
             self._attached_payload = None
             self._transition_execution_state(
@@ -387,7 +387,7 @@ class SDXLStreamingRuntime(UnifiedSDXLRuntime):
     def close(self) -> None:
         self._park_compiled_unet_before_decode()
         self._detach_component(self.unet)
-        self._detach_component(getattr(self.vae, "patcher", None))
+        resources.eject_model(getattr(self.vae, "patcher", None))
         self._detach_component(getattr(self.clip, "patcher", None))
         self._attached_payload = None
         self.execution_state = None

@@ -354,11 +354,12 @@ def cleanup_models_gc():
     if do_gc:
         gc.collect()
         soft_empty_cache()
+    cleanup_models()
 
 def cleanup_models():
     to_delete = []
     for i in range(len(current_loaded_models)):
-        if current_loaded_models[i].real_model() is None:
+        if current_loaded_models[i].model is None or current_loaded_models[i].real_model() is None:
             to_delete = [i] + to_delete
     for i in to_delete:
         del current_loaded_models[i]
@@ -420,8 +421,36 @@ def unload_all_models():
     free_memory(1e30, get_torch_device())
 
 def eject_model(model_patcher):
-    model_patcher.detach()
-    soft_empty_cache()
+    detached = False
+    try:
+        if model_patcher is None:
+            return False
+        model_patcher.detach()
+        detached = True
+        for i in range(len(current_loaded_models) - 1, -1, -1):
+            if current_loaded_models[i].model is model_patcher:
+                current_loaded_models.pop(i)
+        return True
+    except Exception:
+        logging.warning(
+            "[Nex-Memory] Failed to eject model patcher %s cleanly; leaving live wrapper registered.",
+            type(model_patcher).__name__ if model_patcher is not None else "<none>",
+            exc_info=True,
+        )
+        return False
+    finally:
+        try:
+            cleanup_models()
+        except Exception:
+            logging.warning("[Nex-Memory] cleanup_models failed during eject_model.", exc_info=True)
+        try:
+            soft_empty_cache()
+        except Exception:
+            logging.warning(
+                "[Nex-Memory] soft_empty_cache failed during eject_model cleanup (detached=%s).",
+                detached,
+                exc_info=True,
+            )
 
 def load_model_gpu(model):
     return load_models_gpu([model])

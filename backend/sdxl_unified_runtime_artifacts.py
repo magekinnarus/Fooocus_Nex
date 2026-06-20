@@ -13,6 +13,7 @@ from backend.sdxl_runtime_contract import (
     SpatialConditioningArtifact,
     StructuralConditioningArtifact,
 )
+from backend import resources
 
 
 _SPATIAL_LATENT_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -73,7 +74,7 @@ class UnifiedSDXLRuntimeArtifactMixin:
                 self.vae.first_stage_model.to(device=decode_device)
             return self.vae.encode(pixels)["samples"].detach().cpu()
         finally:
-            self._detach_component(getattr(self.vae, "patcher", None))
+            resources.eject_model(getattr(self.vae, "patcher", None))
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
