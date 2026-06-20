@@ -11,7 +11,8 @@ def makedirs_with_log(path):
 
 def get_files_from_folder(folder_path, extensions=None, name_filter=None):
     if not os.path.isdir(folder_path):
-        raise ValueError("Folder path is not a valid directory.")
+        print(f"Warning: Folder path is not a valid directory: {folder_path}")
+        return []
 
     filenames = []
 
