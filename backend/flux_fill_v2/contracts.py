@@ -41,6 +41,7 @@ class FluxFillRequest:
     scheduler: str = "normal"
     prefetch_depth: int = 0
     prefetch_chunk_mb: int = 64
+    unet_spine: UNetSpineKind = UNetSpineKind.STREAMING
     device: str | torch.device | None = None
     image: np.ndarray | None = None
     mask: np.ndarray | None = None

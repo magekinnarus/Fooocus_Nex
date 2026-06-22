@@ -1,4 +1,4 @@
-"""Greenfield Flux Fill Posture Runtime Rebuild (M17-W01R)."""
+"""Greenfield Flux Fill Posture Runtime Rebuild (M17-W01R/W02R)."""
 
 from backend.flux_fill_v2.contracts import (
     FluxFillPreviewContext,
@@ -14,6 +14,7 @@ from backend.flux_fill_v2.loader import load_flux_fill_unet
 from backend.flux_fill_v2.patcher import FluxDirectStreamModelPatcher
 from backend.flux_fill_v2.scheduler import FluxAsyncLayerPrefetchScheduler
 from backend.flux_fill_v2.streaming_spine import FluxStreamingUNetSpine
+from backend.flux_fill_v2.resident_spine import FluxResidentUNetSpine
 from backend.flux_fill_v2.vae_loader import load_flux_ae
 
 __all__ = [
@@ -26,8 +27,10 @@ __all__ = [
     "FluxRuntimeIdentity",
     "FluxDispatcher",
     "FluxStreamingUNetSpine",
+    "FluxResidentUNetSpine",
     "FluxDirectStreamModelPatcher",
     "FluxAsyncLayerPrefetchScheduler",
     "load_flux_fill_unet",
     "load_flux_ae",
 ]
+

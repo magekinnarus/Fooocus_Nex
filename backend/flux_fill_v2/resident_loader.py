@@ -117,6 +117,13 @@ def load_flux_fill_native_unet(
 
     load_device = torch.device(load_device) if load_device is not None else resources.get_torch_device()
     offload_device = torch.device(offload_device) if offload_device is not None else resources.unet_offload_device()
+    if str(resident_load_strategy or "").strip().lower().replace("-", "_") == "sticky_no_cpu_shadow":
+        if load_device.type != "cuda":
+            load_device = resources.get_torch_device()
+        if load_device.type != "cuda":
+            raise RuntimeError("Flux Fill sticky resident fp8 path requires a CUDA load device.")
+        offload_device = load_device
+
     model, detected_config = _instantiate_flux_fill_native_model(
         path,
         offload_device=offload_device,

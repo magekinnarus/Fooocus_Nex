@@ -453,7 +453,8 @@ def resolve_flux_fill_process_key(
     route_family: str | None = None,
     selected_engine: str | None = None,
 ) -> ProcessKey | None:
-    return None
+    from backend.flux_fill_v2.activation import resolve_flux_fill_process_key as resolve_greenfield
+    return resolve_greenfield(task_state, route_family=route_family, selected_engine=selected_engine)
 
 
 def resolve_requested_process_key(task_state, route) -> ProcessKey | None:
@@ -471,7 +472,22 @@ def resolve_requested_process_key(task_state, route) -> ProcessKey | None:
 
 
 def release_process_boundary(current_key: ProcessKey | None, requested_key: ProcessKey | None) -> Any:
-    if current_key is None or requested_key is None:
+    if current_key is None:
+        return None
+
+    if current_key.family == PROCESS_FAMILY_FLUX_FILL:
+        from backend.flux_fill_v2.runtime_state import release_active_flux_resident_spine
+
+        released = release_active_flux_resident_spine(reason='route_transition')
+        return {
+            'released': released,
+            'reason': 'greenfield_flux_route_transition',
+            'hard_reset': False,
+            'current_process_key': current_key,
+            'next_process_key': requested_key,
+        }
+
+    if requested_key is None:
         return None
 
     if current_key.family == PROCESS_FAMILY_SDXL:
@@ -533,23 +549,17 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
             'next_process_key': requested_key,
         }
 
-    if current_key.family == PROCESS_FAMILY_FLUX_FILL:
-        return {
-            'released': True,
-            'reason': 'archived_flux_boundary',
-            'hard_reset': False,
-            'current_process_key': current_key,
-            'next_process_key': requested_key,
-        }
-
     return None
 
 
 def apply_process_transition_gate(requested_key: ProcessKey | None) -> ProcessTransitionDecision | None:
+    current_key = get_active_process_key()
     if requested_key is None:
+        if current_key is not None and current_key.family == PROCESS_FAMILY_FLUX_FILL:
+            release_process_boundary(current_key, None)
+            clear_active_runtime()
         return None
 
-    current_key = get_active_process_key()
     decision = evaluate_process_transition(requested_key)
     if decision.reset_required:
         release_process_boundary(current_key, requested_key)
@@ -559,8 +569,8 @@ def apply_process_transition_gate(requested_key: ProcessKey | None) -> ProcessTr
 
 def sync_route_process_activation(route, task_state, requested_process_key: ProcessKey | None) -> Any:
     if route.family == "flux_fill":
-        clear_active_runtime()
-        return None
+        from backend.flux_fill_v2.activation import sync_flux_fill_process_activation
+        return sync_flux_fill_process_activation(route, task_state, requested_process_key)
 
     elif route.family == "sdxl" or getattr(task_state.sdxl_execution_policy, "enabled", False):
         if requested_process_key is not None and requested_process_key.family == PROCESS_FAMILY_SDXL:

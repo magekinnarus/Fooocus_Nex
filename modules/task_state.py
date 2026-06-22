@@ -57,6 +57,11 @@ class TaskState:
     objr_engine: str = OBJR_ENGINE_MAT
     flux_fill_conditioning: str = "empty"
     flux_fill_prompt_cache: str = "temp"
+    flux_fill_runtime_posture: str = ""
+    flux_fill_model_variant: str = ""
+    flux_fill_unet_path: str = ""
+    flux_fill_ae_path: str = ""
+    flux_fill_conditioning_cache_path: str = ""
     objr_mask_dilate: int = 16
     objr_mask_blur: int = 6
     objr_blend_mode: str = FLUX_FILL_BLEND_MORPHOLOGICAL

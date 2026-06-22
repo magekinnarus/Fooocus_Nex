@@ -17,6 +17,11 @@ from backend.flux_fill_v2.contracts import (
     VAEPostureKind,
 )
 from backend.flux_fill_v2.streaming_spine import FluxStreamingUNetSpine
+from backend.flux_fill_v2.resident_spine import FluxResidentUNetSpine
+from backend.flux_fill_v2.runtime_state import (
+    acquire_resident_spine,
+    release_active_flux_resident_spine,
+)
 from backend.flux_fill_v2.vae_loader import load_flux_ae
 
 class FluxDispatcher:
@@ -28,14 +33,24 @@ class FluxDispatcher:
     def execute(self, request: FluxFillRequest, callback: Any | None = None) -> FluxFillResult:
         request.validate_dispatch_ready(require_existing_assets=True)
         device = torch.device(request.device) if request.device else resources.get_torch_device()
+        resident_spine_reused = False
+        retain_resident_spine = (request.unet_spine == UNetSpineKind.RESIDENT)
 
-        # In W01R, we only support the streaming spine
-        spine = FluxStreamingUNetSpine(request)
-        runtime_identity = FluxRuntimeIdentity(
-            unet_spine=UNetSpineKind.STREAMING,
-            t5_posture=None,
-            vae_posture=VAEPostureKind.TRANSIENT,
-        )
+        # Select spine based on requested unet_spine kind
+        if retain_resident_spine:
+            spine: Any
+            runtime_identity = FluxRuntimeIdentity(
+                unet_spine=UNetSpineKind.RESIDENT,
+                t5_posture=None,
+                vae_posture=VAEPostureKind.TRANSIENT,
+            )
+        else:
+            spine = FluxStreamingUNetSpine(request)
+            runtime_identity = FluxRuntimeIdentity(
+                unet_spine=UNetSpineKind.STREAMING,
+                t5_posture=None,
+                vae_posture=VAEPostureKind.TRANSIENT,
+            )
 
         timings: dict[str, float] = {}
 
@@ -65,7 +80,10 @@ class FluxDispatcher:
 
         # 2. Start UNet spine and run denoise
         unet_start = time.perf_counter()
-        spine.start()
+        if retain_resident_spine:
+            spine, resident_spine_reused = acquire_resident_spine(request)
+        else:
+            spine.start()
         timings["unet_start"] = time.perf_counter() - unet_start
 
         try:
@@ -76,8 +94,13 @@ class FluxDispatcher:
                 source_latent, concat_latent, denoise_mask, empty_cond, callback=callback
             )
             timings["unet_denoise"] = time.perf_counter() - denoise_start
+        except Exception:
+            if retain_resident_spine:
+                release_active_flux_resident_spine(reason="dispatcher_denoise_failed")
+            raise
         finally:
-            spine.end()
+            if not retain_resident_spine:
+                spine.end()
 
         # 3. Reload transient VAE to decode the denoised samples
         vae_load_start = time.perf_counter()
@@ -115,6 +138,8 @@ class FluxDispatcher:
             metadata={
                 "runtime_identity": runtime_identity.as_dict(),
                 "conditioning_contract": "empty_conditioning_only",
+                "resident_spine_reused": resident_spine_reused,
+                "resident_spine_retained": retain_resident_spine,
             },
         )
 
