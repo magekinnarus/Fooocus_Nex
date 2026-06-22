@@ -479,12 +479,14 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
         from backend.flux_fill_v2.runtime_state import (
             release_active_flux_resident_spine,
             release_active_flux_resident_t5,
+            release_flux_latent_artifacts,
         )
 
         released_spine = release_active_flux_resident_spine(reason='route_transition')
         released_t5 = release_active_flux_resident_t5()
+        released_artifacts = release_flux_latent_artifacts()
         return {
-            'released': released_spine or released_t5,
+            'released': released_spine or released_t5 or released_artifacts,
             'reason': 'greenfield_flux_route_transition',
             'hard_reset': False,
             'current_process_key': current_key,

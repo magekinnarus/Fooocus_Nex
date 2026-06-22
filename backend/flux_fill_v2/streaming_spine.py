@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 from backend import resources
-from backend.flux_fill_v2.contracts import FluxFillPreviewContext, FluxFillRequest
+from backend.flux_fill_v2.contracts import FluxFillPreviewContext, FluxFillRequest, FluxLatentArtifactBundle
 from backend.flux_fill_v2.streaming_loader import (
     _sample_flux_fill_direct_streaming,
     load_flux_fill_unet_streaming,
@@ -156,14 +156,25 @@ class FluxStreamingUNetSpine:
 
     def denoise(
         self,
-        source: torch.Tensor,
-        concat: torch.Tensor,
-        mask: torch.Tensor,
-        empty_conditioning: Any,
+        source_or_bundle: torch.Tensor | FluxLatentArtifactBundle,
+        concat_latent: torch.Tensor | None = None,
+        denoise_mask: torch.Tensor | None = None,
+        empty_conditioning: Any | None = None,
         callback: Any | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.started:
             self.start()
+
+        if isinstance(source_or_bundle, FluxLatentArtifactBundle):
+            source = source_or_bundle.source_latent
+            concat = source_or_bundle.concat_latent
+            mask = source_or_bundle.denoise_mask
+            if empty_conditioning is None:
+                empty_conditioning = concat_latent
+        else:
+            source = source_or_bundle
+            concat = concat_latent
+            mask = denoise_mask
 
         device = self.device
         source_device = source.to(device=device, dtype=torch.float32)

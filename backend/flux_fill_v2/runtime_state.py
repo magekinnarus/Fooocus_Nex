@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import RLock
 
-from backend.flux_fill_v2.contracts import FluxFillRequest, UNetSpineKind
+from backend.flux_fill_v2.contracts import FluxFillRequest, UNetSpineKind, FluxLatentArtifactBundle
 from backend.flux_fill_v2.resident_spine import FluxResidentUNetSpine
 
 
@@ -166,3 +166,42 @@ def release_active_flux_resident_t5() -> bool:
 
 def get_active_flux_resident_t5_key() -> FluxResidentT5Key | None:
     return _RESIDENT_T5_STATE.get_active_key()
+
+
+class FluxLatentArtifactState:
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._bundle: FluxLatentArtifactBundle | None = None
+
+    def get_bundle(self, fingerprint: str) -> FluxLatentArtifactBundle | None:
+        with self._lock:
+            if self._bundle is not None and self._bundle.fingerprint == fingerprint:
+                return self._bundle
+            return None
+
+    def set_bundle(self, bundle: FluxLatentArtifactBundle) -> None:
+        with self._lock:
+            self._bundle = bundle
+
+    def release(self) -> bool:
+        with self._lock:
+            if self._bundle is None:
+                return False
+            self._bundle = None
+            return True
+
+
+_LATENT_ARTIFACT_STATE = FluxLatentArtifactState()
+
+
+def get_cached_latent_artifact_bundle(fingerprint: str) -> FluxLatentArtifactBundle | None:
+    return _LATENT_ARTIFACT_STATE.get_bundle(fingerprint)
+
+
+def set_cached_latent_artifact_bundle(bundle: FluxLatentArtifactBundle) -> None:
+    _LATENT_ARTIFACT_STATE.set_bundle(bundle)
+
+
+def release_flux_latent_artifacts() -> bool:
+    return _LATENT_ARTIFACT_STATE.release()
+
