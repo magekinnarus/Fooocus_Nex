@@ -459,6 +459,8 @@ def load_flux_fill_unet(
     runtime_family: str | None = None,
     runtime_posture: str | None = None,
     streaming_profile: str | None = None,
+    prefetch_depth: int | None = None,
+    prefetch_chunk_mb: int | None = None,
     resident_load_strategy: str | None = None,
 ) -> Any:
     path = Path(unet_path)
@@ -489,6 +491,8 @@ def load_flux_fill_unet(
                 offload_device=torch.device("cpu"),
                 execution_class=execution_class,
                 streaming_profile=streaming_profile,
+                prefetch_depth=prefetch_depth,
+                max_prefetch_bytes=prefetch_chunk_mb * 1024 * 1024 if prefetch_chunk_mb is not None else None,
             )
 
         resident_load_device = torch.device(load_device) if load_device is not None else resources.get_torch_device()
@@ -555,6 +559,8 @@ def load_flux_fill_unet(
         "runtime_family": selected_runtime_family,
         "runtime_posture": selected_runtime_posture,
         "streaming_profile": streaming_profile,
+        "prefetch_depth": prefetch_depth,
+        "prefetch_chunk_mb": prefetch_chunk_mb,
         "resident_load_strategy": selected_resident_load_strategy or None,
     }
     return patcher

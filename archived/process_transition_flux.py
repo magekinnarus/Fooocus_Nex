@@ -453,7 +453,28 @@ def resolve_flux_fill_process_key(
     route_family: str | None = None,
     selected_engine: str | None = None,
 ) -> ProcessKey | None:
-    return None
+    try:
+        if selected_engine is None:
+            selected_engine = normalize_objr_engine(getattr(task_state, 'objr_engine', None))
+        if str(route_family or '').strip().lower() == 'flux_fill':
+            selected_engine = OBJR_ENGINE_FLUX_FILL
+        if selected_engine != OBJR_ENGINE_FLUX_FILL:
+            return None
+
+        import modules.objr_engine as objr_engine
+
+        asset_paths = objr_engine.resolve_flux_fill_asset_paths(
+            conditioning=getattr(task_state, 'flux_fill_conditioning', None),
+            progress=False,
+        )
+        return build_process_key(
+            family=PROCESS_FAMILY_FLUX_FILL,
+            process_class=PROCESS_CLASS_FLUX_FILL,
+            authoritative_identity=tuple(sorted(asset_paths.items())),
+            route_family='flux_fill',
+        )
+    except Exception:
+        return None
 
 
 def resolve_requested_process_key(task_state, route) -> ProcessKey | None:
@@ -534,13 +555,9 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
         }
 
     if current_key.family == PROCESS_FAMILY_FLUX_FILL:
-        return {
-            'released': True,
-            'reason': 'archived_flux_boundary',
-            'hard_reset': False,
-            'current_process_key': current_key,
-            'next_process_key': requested_key,
-        }
+        import modules.objr_engine as objr_engine
+
+        return objr_engine.end_active_flux_fill_session(reason='route_transition')
 
     return None
 
@@ -559,8 +576,28 @@ def apply_process_transition_gate(requested_key: ProcessKey | None) -> ProcessTr
 
 def sync_route_process_activation(route, task_state, requested_process_key: ProcessKey | None) -> Any:
     if route.family == "flux_fill":
-        clear_active_runtime()
-        return None
+        from modules.pipeline.routes import sync_flux_fill_route_session
+        sync_result = sync_flux_fill_route_session(route, task_state, progress=False)
+
+        import modules.objr_engine as objr_engine
+
+        if (
+            requested_process_key is not None
+            and requested_process_key.family == PROCESS_FAMILY_FLUX_FILL
+            and objr_engine.has_active_flux_fill_session()
+        ):
+            hardware = objr_engine.inspect_flux_fill_hardware()
+            safe_to_retain = (hardware.runtime_posture == "resident")
+
+            set_active_runtime(
+                family=PROCESS_FAMILY_FLUX_FILL,
+                key=requested_process_key,
+                route_owner=route.route_id,
+                safe_to_retain=safe_to_retain
+            )
+        else:
+            clear_active_runtime()
+        return sync_result
 
     elif route.family == "sdxl" or getattr(task_state.sdxl_execution_policy, "enabled", False):
         if requested_process_key is not None and requested_process_key.family == PROCESS_FAMILY_SDXL:

@@ -1,88 +1,134 @@
-﻿"""Flux runtime helpers for Fooocus_Nex direct pipelines."""
+"""Flux runtime helper compatibility stubs for Fooocus_Nex (Legacy Archived)."""
 
-from .flux_runtime import (
-    FluxFillPipeline,
-    FluxFillPipelineConfig,
-    FluxFillPipelineCropPlan,
-    FluxFillPipelineResult,
-    is_native_flux_dimensions,
-    is_native_sdxl_dimensions,
-    prepare_flux_fill_pipeline_context_crop,
-    restore_flux_fill_pipeline_context_crop,
-    select_flux_fill_pipeline_context_crop_plan,
-    select_flux_fill_canvas_dimensions,
-    select_sdxl_bucket_for_aspect,
-    stitch_flux_fill_pipeline_context_crop,
-    run_flux_fill_pipeline,
-)
-from .flux_fill_pipeline import (
-    EMPTY_FLUX_CROSS_ATTN_SHAPE,
-    EMPTY_FLUX_POOLED_SHAPE,
-    EXPECTED_FLUX_FILL_CONTRACT,
-    FluxEmptyConditioning,
-    FluxFillConditioningPayloads,
-    FluxFillConfig,
-    FluxFillDecodedImage,
-    FluxFillDenoiseResult,
-    FluxFillLatentSource,
-    FluxFillResult,
-    FluxFillUNetInfo,
-    FluxFillUnsupportedModelError,
-    FluxFillValidationError,
-    build_flux_concat_condition,
-    build_flux_fill_conditioning_payloads,
-    create_flux_fill_noise,
-    decode_flux_fill_latent,
-    denoise_flux_fill_latent,
-    inspect_flux_fill_gguf,
-    load_flux_ae,
-    load_flux_empty_conditioning_cache,
-    load_flux_fill_unet,
-    prepare_flux_fill_latent_source,
-    run_flux_fill,
-    save_flux_empty_conditioning_cache,
-    validate_flux_fill_unet_config,
-)
+from typing import Any
 
-__all__ = [
-    "EMPTY_FLUX_CROSS_ATTN_SHAPE",
-    "EMPTY_FLUX_POOLED_SHAPE",
-    "EXPECTED_FLUX_FILL_CONTRACT",
-    "FluxEmptyConditioning",
-    "FluxFillConditioningPayloads",
-    "FluxFillConfig",
-    "FluxFillDecodedImage",
-    "FluxFillDenoiseResult",
-    "FluxFillPipeline",
-    "FluxFillPipelineConfig",
-    "FluxFillPipelineCropPlan",
-    "FluxFillPipelineResult",
-    "is_native_flux_dimensions",
-    "is_native_sdxl_dimensions",
-    "prepare_flux_fill_pipeline_context_crop",
-    "restore_flux_fill_pipeline_context_crop",
-    "select_flux_fill_pipeline_context_crop_plan",
-    "select_flux_fill_canvas_dimensions",
-    "select_sdxl_bucket_for_aspect",
-    "stitch_flux_fill_pipeline_context_crop",
-    "run_flux_fill_pipeline",
-    "FluxFillLatentSource",
-    "FluxFillResult",
-    "FluxFillUNetInfo",
-    "FluxFillUnsupportedModelError",
-    "FluxFillValidationError",
-    "build_flux_concat_condition",
-    "build_flux_fill_conditioning_payloads",
-    "create_flux_fill_noise",
-    "decode_flux_fill_latent",
-    "denoise_flux_fill_latent",
-    "inspect_flux_fill_gguf",
-    "load_flux_ae",
-    "load_flux_empty_conditioning_cache",
-    "load_flux_fill_unet",
-    "prepare_flux_fill_latent_source",
-    "run_flux_fill",
-    "save_flux_empty_conditioning_cache",
-    "validate_flux_fill_unet_config",
-]
+class LegacyFluxArchivedError(NotImplementedError):
+    """Raised when any part of the archived legacy Flux Fill pipeline is invoked."""
+    def __init__(self, message="Legacy Flux Fill has been archived. Greenfield runtime pivot in progress."):
+        super().__init__(message)
 
+
+# Dummy constants/structures
+EMPTY_FLUX_CROSS_ATTN_SHAPE = (1, 512, 4096)
+EMPTY_FLUX_POOLED_SHAPE = (1, 768)
+EXPECTED_FLUX_FILL_CONTRACT = {}
+
+class FluxEmptyConditioning:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillConditioningPayloads:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillConfig:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillDecodedImage:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillDenoiseResult:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillPipeline:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillPipelineConfig:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillPipelineCropPlan:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillPipelineResult:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillLatentSource:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillResult:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillUNetInfo:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise LegacyFluxArchivedError()
+
+class FluxFillUnsupportedModelError(Exception):
+    pass
+
+class FluxFillValidationError(ValueError):
+    pass
+
+def is_native_flux_dimensions(width: int, height: int) -> bool:
+    return False
+
+def is_native_sdxl_dimensions(width: int, height: int) -> bool:
+    return False
+
+def prepare_flux_fill_pipeline_context_crop(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def restore_flux_fill_pipeline_context_crop(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def select_flux_fill_pipeline_context_crop_plan(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def select_flux_fill_canvas_dimensions(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def select_sdxl_bucket_for_aspect(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def stitch_flux_fill_pipeline_context_crop(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def run_flux_fill_pipeline(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def build_flux_concat_condition(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def build_flux_fill_conditioning_payloads(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def create_flux_fill_noise(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def decode_flux_fill_latent(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def denoise_flux_fill_latent(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def inspect_flux_fill_gguf(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def load_flux_ae(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def load_flux_empty_conditioning_cache(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def load_flux_fill_unet(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def prepare_flux_fill_latent_source(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def run_flux_fill(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def save_flux_empty_conditioning_cache(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()
+
+def validate_flux_fill_unet_config(*args: Any, **kwargs: Any) -> Any:
+    raise LegacyFluxArchivedError()

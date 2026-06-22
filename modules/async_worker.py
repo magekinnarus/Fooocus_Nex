@@ -13,7 +13,7 @@ import modules.config
 import modules.flags as flags
 from modules.task_state import TaskState
 from modules.pipeline.output import build_image_wall, yield_result
-from modules.pipeline.routes import build_generation_route, describe_route, sync_flux_fill_route_session
+from modules.pipeline.routes import build_generation_route, describe_route
 from modules.pipeline.stage_runtime import PipelineRouteContext, PipelineStageRunner
 
 class AsyncTask:

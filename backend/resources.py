@@ -416,11 +416,7 @@ def teardown_runtime_family(family: str, reason: str = None) -> None:
         except Exception:
             logging.debug("Failed to clear SDXL component cache during teardown", exc_info=True)
     elif family == "flux_fill":
-        try:
-            import modules.objr_engine as objr_engine
-            objr_engine.end_active_flux_fill_session(reason=reason or "explicit_teardown")
-        except Exception:
-            logging.debug("Failed to end active Flux Fill session during teardown", exc_info=True)
+        logging.debug("Flux Fill legacy runtime is archived; explicit teardown is a no-op.")
 
     # 3. Offload all weights from GPU
     unload_all_models()
