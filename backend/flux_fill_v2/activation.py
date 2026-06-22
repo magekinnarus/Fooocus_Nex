@@ -12,7 +12,7 @@ from backend.process_transition import (
     clear_active_runtime,
     set_active_runtime,
 )
-from backend.flux_fill_v2.contracts import UNetSpineKind
+from backend.flux_fill_v2.contracts import UNetSpineKind, T5PostureKind
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,9 @@ FLUX_FILL_TIER_Q8 = "q8_0"
 FLUX_FILL_TIER_Q4 = "q4_k_s"
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
+FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
+FLUX_FILL_T5XXL_FP16_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.fp16"
+
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_FP8: "inpaint.flux_fill.unet.fp8",
     FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
@@ -45,6 +48,9 @@ class FluxFillActivationAssets:
     conditioning_cache_path: str
     model_variant: str
     conditioning_kind: str
+    clip_l_path: str
+    t5_path: str
+    prompt: str
 
 
 def _assign_task_state_attr(task_state: Any, name: str, value: Any) -> None:
@@ -68,6 +74,57 @@ def _normalize_flux_fill_tier(value: Any) -> str | None:
     return None
 
 
+def _coerce_positive_float(value: Any) -> float | None:
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError):
+        return None
+    if resolved <= 0.0:
+        return None
+    return resolved
+
+
+def resolve_flux_fill_total_ram_gb(source: Any | None = None) -> float:
+    """Resolve the authoritative RAM input for Flux Fill posture selection.
+
+    Preference order is:
+    1. Explicit request/task overrides attached to the current source object.
+    2. The active runtime memory profile total RAM, which honors launch overrides.
+    3. Direct host RAM detection as a final fallback.
+    """
+    if source is not None:
+        for attr_name in ("flux_fill_total_ram_gb", "total_ram_gb"):
+            resolved = _coerce_positive_float(getattr(source, attr_name, None))
+            if resolved is not None:
+                return resolved
+
+        for attr_name in ("flux_fill_total_ram_mb", "total_ram_mb", "hardware_total_ram_mb", "runtime_total_ram_mb"):
+            resolved_mb = _coerce_positive_float(getattr(source, attr_name, None))
+            if resolved_mb is not None:
+                return resolved_mb / 1024.0
+
+    try:
+        from backend import resources
+
+        profile = resources.active_memory_environment_profile()
+        resolved_mb = _coerce_positive_float(getattr(profile, "total_ram_mb", None))
+        if resolved_mb is not None:
+            return resolved_mb / 1024.0
+    except Exception:
+        pass
+
+    try:
+        from backend.environment_profile import detect_total_ram_mb
+
+        resolved_mb = _coerce_positive_float(detect_total_ram_mb())
+        if resolved_mb is not None:
+            return resolved_mb / 1024.0
+    except Exception:
+        pass
+
+    return 0.0
+
+
 def _resolve_flux_fill_model_variant(task_state: Any) -> str:
     explicit_variant = str(getattr(task_state, "flux_fill_model_variant", "") or "").strip()
     if explicit_variant in FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT:
@@ -80,6 +137,21 @@ def _resolve_flux_fill_model_variant(task_state: Any) -> str:
         return FLUX_FILL_MODEL_VARIANT_BY_TIER[explicit_tier]
 
     return "flux_fill_fp8"
+
+
+def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
+    """ Authoritative T5 Posture Selector driven by UNet spine and RAM only. """
+    if total_ram_gb is None:
+        total_ram_gb = resolve_flux_fill_total_ram_gb()
+
+    if unet_spine == UNetSpineKind.STREAMING:
+        if total_ram_gb < 40.0:
+            return T5PostureKind.DISK_PAGED
+        return T5PostureKind.CPU_FP16_RESIDENT
+    else:  # RESIDENT
+        if total_ram_gb < 32.0:
+            return T5PostureKind.DISK_PAGED
+        return T5PostureKind.CPU_FP16_RESIDENT
 
 
 def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None:
@@ -107,13 +179,49 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
     unet_path = direct_unet_path or model_registry.resolve_asset_path(unet_asset_id)
     ae_path = direct_ae_path or model_registry.resolve_asset_path(FLUX_FILL_AE_ASSET_ID)
 
+    # Resolve active prompt
+    prompt_text = ""
+    if task_state is not None:
+        goals = getattr(task_state, "goals", [])
+        if "removal" in goals or getattr(task_state, "remove_obj_enabled", False):
+            prompt_text = getattr(task_state, "remove_prompt", "") or ""
+        else:
+            prompt = str(getattr(task_state, "prompt", "") or "").strip()
+            additional_prompt = str(getattr(task_state, "inpaint_additional_prompt", "") or "").strip()
+            if additional_prompt == "":
+                prompt_text = prompt
+            elif prompt == "":
+                prompt_text = additional_prompt
+            else:
+                prompt_text = additional_prompt + "\n" + prompt
+    prompt_text = str(prompt_text).strip()
+
+    if prompt_text != "" and conditioning_kind != "empty":
+        conditioning_kind = "prompt"
+
+    direct_clip_l_path = str(
+        getattr(task_state, "flux_fill_clip_l_path", None) or getattr(task_state, "clip_l_path", None) or ""
+    ).strip()
+    direct_t5_path = str(
+        getattr(task_state, "flux_fill_t5_path", None) or getattr(task_state, "t5_path", None) or ""
+    ).strip()
+
+    clip_l_path = direct_clip_l_path or model_registry.resolve_asset_path(FLUX_FILL_CLIP_L_ASSET_ID)
+    t5_path = direct_t5_path or model_registry.resolve_asset_path(FLUX_FILL_T5XXL_FP16_ASSET_ID)
+
     if direct_conditioning_path:
         conditioning_cache_path = direct_conditioning_path
     elif conditioning_kind == "empty":
         conditioning_cache_path = model_registry.resolve_asset_path(FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID)
     else:
-        # Prompt-conditioned routing remains deferred to W03R until a real T5 posture lands.
-        return None
+        # Prompt-conditioned caching path
+        from backend.flux_fill_v2.t5_posture import get_prompt_cache_path
+        conditioning_cache_path = get_prompt_cache_path(
+            prompt_text,
+            clip_l_path=clip_l_path,
+            t5_path=t5_path,
+            cache_mode=getattr(task_state, "flux_fill_prompt_cache", "temp"),
+        )
 
     assets = FluxFillActivationAssets(
         unet_path=str(unet_path),
@@ -121,11 +229,16 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
         conditioning_cache_path=str(conditioning_cache_path),
         model_variant=model_variant,
         conditioning_kind=conditioning_kind,
+        clip_l_path=str(clip_l_path),
+        t5_path=str(t5_path),
+        prompt=prompt_text,
     )
     _assign_task_state_attr(task_state, "flux_fill_model_variant", assets.model_variant)
     _assign_task_state_attr(task_state, "flux_fill_unet_path", assets.unet_path)
     _assign_task_state_attr(task_state, "flux_fill_ae_path", assets.ae_path)
     _assign_task_state_attr(task_state, "flux_fill_conditioning_cache_path", assets.conditioning_cache_path)
+    _assign_task_state_attr(task_state, "flux_fill_clip_l_path", assets.clip_l_path)
+    _assign_task_state_attr(task_state, "flux_fill_t5_path", assets.t5_path)
     return assets
 
 
@@ -164,14 +277,29 @@ def resolve_flux_fill_process_key(
     if assets is None:
         return None
 
+    # Resolve authoritative greenfield T5 posture
+    t5_posture_kind = resolve_flux_fill_t5_posture(
+        spine_kind,
+        resolve_flux_fill_total_ram_gb(task_state),
+    )
+    _assign_task_state_attr(task_state, "flux_fill_t5_posture", t5_posture_kind.value)
+
+    # Normalize cache path for identity comparisons to avoid prompt resets
+    identity_conditioning_path = assets.conditioning_cache_path
+    if assets.conditioning_kind == "prompt":
+        identity_conditioning_path = "prompt_conditioning"
+
     identity = tuple(
         sorted(
             (
                 ("ae_path", assets.ae_path),
-                ("conditioning_cache_path", assets.conditioning_cache_path),
+                ("conditioning_cache_path", identity_conditioning_path),
                 ("model_variant", assets.model_variant),
                 ("unet_path", assets.unet_path),
                 ("unet_spine", spine_kind.value),
+                ("clip_l_path", assets.clip_l_path),
+                ("t5_path", assets.t5_path),
+                ("t5_posture", t5_posture_kind.value),
             )
         )
     )

@@ -19,13 +19,13 @@ class VAEPostureKind(str, Enum):
 @dataclass(frozen=True)
 class FluxRuntimeIdentity:
     unet_spine: UNetSpineKind
-    t5_posture: T5PostureKind | None
+    t5_posture: T5PostureKind
     vae_posture: VAEPostureKind
 
     def as_dict(self) -> dict[str, str | None]:
         return {
             "unet_spine": self.unet_spine.value,
-            "t5_posture": self.t5_posture.value if self.t5_posture is not None else None,
+            "t5_posture": self.t5_posture.value,
             "vae_posture": self.vae_posture.value,
         }
 
@@ -49,6 +49,11 @@ class FluxFillRequest:
     mode: str = "baseline"
     blend_mode: str = "morphological"
     target_megapixels: float = 1.15
+    clip_l_path: Path | str | None = None
+    t5_path: Path | str | None = None
+    t5_posture: T5PostureKind | None = None
+    total_ram_mb: float | None = None
+    total_ram_gb: float | None = None
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
         if self.steps < 1:
@@ -64,11 +69,21 @@ class FluxFillRequest:
         if self.prefetch_chunk_mb < 1:
             raise ValueError(f"prefetch_chunk_mb must be >= 1, got {self.prefetch_chunk_mb}.")
         if require_existing_assets:
-            for label, value in (
+            is_empty_cond = not str(self.prompt or "").strip()
+            assets_to_check = [
                 ("UNet", self.unet_path),
                 ("AE", self.ae_path),
-                ("conditioning cache", self.conditioning_cache_path),
-            ):
+            ]
+            if is_empty_cond:
+                assets_to_check.append(("conditioning cache", self.conditioning_cache_path))
+            
+            if not is_empty_cond:
+                if self.clip_l_path:
+                    assets_to_check.append(("CLIP-L", self.clip_l_path))
+                if self.t5_path:
+                    assets_to_check.append(("T5", self.t5_path))
+
+            for label, value in assets_to_check:
                 path = Path(value)
                 if not path.exists():
                     raise FileNotFoundError(f"{label} path does not exist: {path}")
@@ -87,8 +102,6 @@ class FluxFillRequest:
             raise ValueError(
                 f"mask spatial shape {tuple(self.mask.shape[:2])} must match image shape {tuple(self.image.shape[:2])}."
             )
-        if str(self.prompt or "").strip():
-            raise NotImplementedError("Prompt-conditioned Flux Fill requests land in W03R; W01R is empty-conditioning only.")
         if str(self.mode or "").strip().lower() != "baseline":
             raise NotImplementedError("W01R only supports baseline mode.")
 

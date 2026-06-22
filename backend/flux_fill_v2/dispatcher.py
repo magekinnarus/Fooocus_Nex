@@ -15,6 +15,7 @@ from backend.flux_fill_v2.contracts import (
     FluxRuntimeIdentity,
     UNetSpineKind,
     VAEPostureKind,
+    T5PostureKind,
 )
 from backend.flux_fill_v2.streaming_spine import FluxStreamingUNetSpine
 from backend.flux_fill_v2.resident_spine import FluxResidentUNetSpine
@@ -23,6 +24,7 @@ from backend.flux_fill_v2.runtime_state import (
     release_active_flux_resident_spine,
 )
 from backend.flux_fill_v2.vae_loader import load_flux_ae
+from backend.flux_fill_v2.t5_posture import acquire_t5_posture
 
 class FluxDispatcher:
     """Minimal greenfield dispatcher shell that coordinates posture assembly."""
@@ -36,19 +38,33 @@ class FluxDispatcher:
         resident_spine_reused = False
         retain_resident_spine = (request.unet_spine == UNetSpineKind.RESIDENT)
 
+        # Resolve T5 posture kind
+        if request.t5_posture is not None:
+            t5_posture_kind = request.t5_posture
+        else:
+            from backend.flux_fill_v2.activation import (
+                resolve_flux_fill_t5_posture,
+                resolve_flux_fill_total_ram_gb,
+            )
+
+            t5_posture_kind = resolve_flux_fill_t5_posture(
+                request.unet_spine,
+                resolve_flux_fill_total_ram_gb(request),
+            )
+
         # Select spine based on requested unet_spine kind
         if retain_resident_spine:
             spine: Any
             runtime_identity = FluxRuntimeIdentity(
                 unet_spine=UNetSpineKind.RESIDENT,
-                t5_posture=None,
+                t5_posture=t5_posture_kind,
                 vae_posture=VAEPostureKind.TRANSIENT,
             )
         else:
             spine = FluxStreamingUNetSpine(request)
             runtime_identity = FluxRuntimeIdentity(
                 unet_spine=UNetSpineKind.STREAMING,
-                t5_posture=None,
+                t5_posture=t5_posture_kind,
                 vae_posture=VAEPostureKind.TRANSIENT,
             )
 
@@ -87,7 +103,8 @@ class FluxDispatcher:
         timings["unet_start"] = time.perf_counter() - unet_start
 
         try:
-            empty_cond = load_flux_empty_conditioning_cache(request.conditioning_cache_path)
+            t5_posture = acquire_t5_posture(t5_posture_kind, request)
+            empty_cond = t5_posture.get_conditioning(request)
 
             denoise_start = time.perf_counter()
             samples, sigmas = spine.denoise(
@@ -97,6 +114,9 @@ class FluxDispatcher:
         except Exception:
             if retain_resident_spine:
                 release_active_flux_resident_spine(reason="dispatcher_denoise_failed")
+            if t5_posture_kind == T5PostureKind.CPU_FP16_RESIDENT:
+                from backend.flux_fill_v2.runtime_state import release_active_flux_resident_t5
+                release_active_flux_resident_t5()
             raise
         finally:
             if not retain_resident_spine:
@@ -137,7 +157,7 @@ class FluxDispatcher:
             timings=timings,
             metadata={
                 "runtime_identity": runtime_identity.as_dict(),
-                "conditioning_contract": "empty_conditioning_only",
+                "conditioning_contract": "prompt_conditioning" if request.prompt else "empty_conditioning_only",
                 "resident_spine_reused": resident_spine_reused,
                 "resident_spine_retained": retain_resident_spine,
             },

@@ -87,3 +87,82 @@ def release_active_flux_resident_spine(*, reason: str | None = None) -> bool:
 
 def get_active_flux_resident_spine_key() -> FluxResidentSpineKey | None:
     return _RESIDENT_RUNTIME_STATE.get_active_key()
+
+
+@dataclass(frozen=True)
+class FluxResidentT5Key:
+    clip_l_path: str
+    t5_path: str
+
+
+class FluxResidentT5State:
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._key: FluxResidentT5Key | None = None
+        self._posture: Any = None
+
+    @staticmethod
+    def _build_key(request: FluxFillRequest) -> FluxResidentT5Key:
+        return FluxResidentT5Key(
+            clip_l_path=str(request.clip_l_path or ""),
+            t5_path=str(request.t5_path or ""),
+        )
+
+    def acquire(self, request: FluxFillRequest) -> Any:
+        from backend.flux_fill_v2.t5_posture import FluxCpuFp16ResidentT5Posture
+
+        requested_key = self._build_key(request)
+        stale_posture: Any = None
+
+        with self._lock:
+            if self._posture is not None and self._key == requested_key:
+                self._posture.request = request
+                if self._posture.encoder is None:
+                    self._posture.load()
+                return self._posture
+
+            stale_posture = self._posture
+            self._posture = None
+            self._key = None
+
+        if stale_posture is not None:
+            stale_posture.teardown()
+
+        posture = FluxCpuFp16ResidentT5Posture(request)
+        posture.load()
+
+        with self._lock:
+            self._posture = posture
+            self._key = requested_key
+        return posture
+
+    def release(self) -> bool:
+        with self._lock:
+            posture = self._posture
+            self._posture = None
+            self._key = None
+
+        if posture is None:
+            return False
+
+        posture.teardown()
+        return True
+
+    def get_active_key(self) -> FluxResidentT5Key | None:
+        with self._lock:
+            return self._key
+
+
+_RESIDENT_T5_STATE = FluxResidentT5State()
+
+
+def acquire_resident_t5(request: FluxFillRequest) -> Any:
+    return _RESIDENT_T5_STATE.acquire(request)
+
+
+def release_active_flux_resident_t5() -> bool:
+    return _RESIDENT_T5_STATE.release()
+
+
+def get_active_flux_resident_t5_key() -> FluxResidentT5Key | None:
+    return _RESIDENT_T5_STATE.get_active_key()
