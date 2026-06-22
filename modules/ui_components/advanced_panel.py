@@ -101,6 +101,18 @@ def build_debug_tab():
         info='Disable automatic seed increment when image number is > 1.',
         value=False
     )
+
+    results['prefetch_depth'] = gr.Slider(
+        label='Flux Fill Prefetch Depth', minimum=0, maximum=2, step=1,
+        value=0,
+        info='Async scheduler prefetch depth for Flux Fill (0 to 2).'
+    )
+
+    results['prefetch_chunk_mb'] = gr.Radio(
+        label='Flux Fill Prefetch Chunk Size', choices=[64, 128],
+        value=64,
+        info='Max size of chunks to prefetch for Flux Fill (64MB or 128MB).'
+    )
     
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(

@@ -635,10 +635,10 @@ class FluxFillInpaintStage(PipelineStage):
     def describe_resources(self, context: PipelineRouteContext):
         return _describe_route_resources(
             PipelineResourceRequirement(
-                resource_id='flux_session',
-                description='Resident Flux UNet, AE, and prompt-conditioning cache used for Flux Inpaint.',
-                owner='modules.objr_engine',
-                tags=('flux', 'inpaint'),
+                resource_id='flux_fill_runtime',
+                description='Greenfield Flux Fill runtime assembled on demand through backend.flux_fill_v2.',
+                owner='backend.flux_fill_v2',
+                tags=('flux', 'inpaint', 'runtime'),
             ),
             PipelineResourceRequirement(
                 resource_id='inpaint_context',
@@ -654,8 +654,142 @@ class FluxFillInpaintStage(PipelineStage):
         return StageMemoryEstimate(vram_mb=round(max(512.0, megapixels * 640.0), 1), notes={'basis': 'flux-fill-resolution'})
 
     def execute(self, context: PipelineRouteContext):
-        from backend.flux import LegacyFluxArchivedError
-        raise LegacyFluxArchivedError()
+        from backend import resources
+        from modules import objr_engine
+        from modules.pipeline.image_input import prepare_flux_inpaint_context
+        from modules.pipeline.inference import get_sampling_callback
+        from modules.pipeline.inpaint import InpaintPipeline
+        from modules.pipeline.output import save_and_log
+        from backend.flux_fill_v2.activation import resolve_flux_fill_assets, resolve_flux_fill_spine_kind
+        from backend.flux_fill_v2.contracts import FluxFillRequest, FluxFillPreviewContext
+        from backend.flux_fill_v2.dispatcher import FluxDispatcher
+
+        task_state = context.task_state
+        if len(task_state.goals) > 0:
+            task_state.current_progress += 1
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, task_state.current_progress, 'Preparing Flux Fill Inpaint ...')
+
+        ctx = task_state.inpaint_context
+        if ctx is None:
+            inpaint_image = context.image_input_result.get('inpaint_image')
+            inpaint_mask = context.image_input_result.get('inpaint_mask')
+            ctx = prepare_flux_inpaint_context(task_state, inpaint_image, inpaint_mask)
+
+        # Resolve prompt and assets using greenfield helpers
+        prompt_text = _resolve_inpaint_prompt(task_state)
+        assets = resolve_flux_fill_assets(task_state)
+        spine_kind = resolve_flux_fill_spine_kind(task_state)
+
+        stitcher = InpaintPipeline()
+        output_images: list[np.ndarray] = []
+        img_paths: list[str] = []
+        total_count = max(1, int(getattr(task_state, 'image_number', 1) or 1))
+        base_seed = int(task_state.seed)
+        output_height, output_width = ctx.original_image.shape[:2]
+        task_state.width = output_width
+        task_state.height = output_height
+        all_steps = max(int(task_state.steps) * total_count, 1)
+        preparation_steps = task_state.current_progress
+        force_host_cleanup = _should_force_flux_host_cleanup()
+
+        for image_index in range(total_count):
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, task_state.current_progress, f'Flux Fill Inpaint {image_index + 1}/{total_count} ...')
+
+            seed = base_seed if getattr(task_state, 'disable_seed_increment', False) else base_seed + image_index
+
+            preview_context = None
+
+            def preview_transform(latent):
+                nonlocal preview_context
+                if preview_context is None:
+                    from ldm_patched.modules import latent_formats
+                    preview_context = FluxFillPreviewContext(latent_formats.Flux(), latent.device)
+                return preview_context.decode(latent)
+
+            callback = get_sampling_callback(
+                task_state,
+                context.progressbar_callback,
+                image_index,
+                total_count,
+                preparation_steps,
+                all_steps,
+                preview_transform=preview_transform,
+            )
+
+            interrupted_action = None
+            try:
+                resources.throw_exception_if_processing_interrupted()
+
+                req = FluxFillRequest(
+                    unet_path=assets.unet_path,
+                    ae_path=assets.ae_path,
+                    conditioning_cache_path=assets.conditioning_cache_path,
+                    seed=seed,
+                    steps=int(task_state.steps),
+                    sampler=task_state.sampler_name,
+                    scheduler=task_state.scheduler_name,
+                    prefetch_depth=int(getattr(task_state, 'prefetch_depth', 0)),
+                    prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
+                    unet_spine=spine_kind,
+                    image=ctx.bb_image,
+                    mask=ctx.bb_mask,
+                    prompt=assets.prompt,
+                    blend_mode="none",  # Do blend and stitching manually below
+                    clip_l_path=assets.clip_l_path,
+                    t5_path=assets.t5_path,
+                )
+
+                dispatcher = FluxDispatcher()
+                result = dispatcher.execute(req, callback=callback)
+
+            except resources.InterruptProcessingException:
+                if task_state.last_stop == 'skip':
+                    print('User skipped')
+                    task_state.last_stop = False
+                    interrupted_action = 'skip'
+                else:
+                    print('User stopped')
+                    interrupted_action = 'stop'
+
+            if interrupted_action == 'skip':
+                continue
+            if interrupted_action == 'stop':
+                break
+
+            stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
+            output_images.append(stitched_image)
+
+            if context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, 100, f'Saving Flux Fill Inpaint {image_index + 1}/{total_count} to system ...')
+
+            task_dict = {
+                'log_positive_prompt': prompt_text,
+                'log_negative_prompt': task_state.negative_prompt,
+                'styles': task_state.style_selections,
+                'task_seed': seed,
+                'description': 'Flux Fill Inpaint',
+            }
+            current_img_paths = save_and_log(task_state, output_height, output_width, [stitched_image], task_dict, False, task_state.loras)
+            img_paths.extend(current_img_paths)
+            if context.yield_result_callback is not None:
+                context.yield_result_callback(
+                    task_state,
+                    current_img_paths,
+                    100,
+                    do_not_show_finished_images=task_state.disable_intermediate_results,
+                )
+            resources.cleanup_memory(
+                'flux_inpaint_image_complete',
+                gc_collect=force_host_cleanup,
+                trim_host=force_host_cleanup,
+                notes={'task_index': image_index, 'route_id': getattr(context, 'route_id', 'flux_inpaint')},
+                target_phase=resources.MemoryPhase.DIFFUSION,
+                task=task_state,
+            )
+
+        return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': len(output_images)})
 
 
 class UpscaleStage(PipelineStage):
@@ -807,40 +941,117 @@ class RemovalStage(PipelineStage):
                 if context.progressbar_callback is not None:
                     context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
                 if selected_engine == OBJR_ENGINE_FLUX_FILL:
-                    raise LegacyFluxArchivedError()
-                res_path = objr_engine.remove_object_from_file(
-                    image_path=task_state.remove_base_image,
-                    mask_path=task_state.remove_mask_image,
-                    seed=task_state.seed,
-                    mask_dilate=task_state.objr_mask_dilate,
-                    engine=task_state.objr_engine,
-                    flux_conditioning=task_state.flux_fill_conditioning,
-                    flux_prompt=task_state.remove_prompt,
-                    flux_prompt_cache=task_state.flux_fill_prompt_cache,
-                    flux_mask_blur=task_state.objr_mask_blur,
-                    flux_blend_mode=task_state.objr_blend_mode,
-                    flux_steps=int(task_state.steps),
-                    flux_sampler=task_state.sampler_name,
-                    flux_scheduler=task_state.scheduler_name,
-                    flux_callback=None,
-                    flux_disable_pbar=True,
-                )
-                objr_engine.unload_model()
-                persisted_res_path = _save_logged_output(
-                    context,
-                    res_path,
-                    'Object Removal',
-                    prompt_text=getattr(task_state, 'remove_prompt', ''),
-                    negative_prompt=getattr(task_state, 'negative_prompt', ''),
-                    seed=getattr(task_state, 'seed', None),
-                )
-                if context.yield_result_callback is not None:
-                    context.yield_result_callback(
-                        task_state,
-                        [persisted_res_path or res_path],
-                        100,
-                        do_not_show_finished_images=True,
+                    from PIL import Image
+                    from backend.flux_fill_v2.activation import resolve_flux_fill_assets, resolve_flux_fill_spine_kind
+                    from backend.flux_fill_v2.contracts import FluxFillRequest, FluxFillPreviewContext
+                    from backend.flux_fill_v2.dispatcher import FluxDispatcher
+                    from modules.pipeline.inference import get_sampling_callback
+
+                    with Image.open(task_state.remove_base_image) as img_pil:
+                        image_np = np.array(img_pil.convert('RGB'))
+                    with Image.open(task_state.remove_mask_image) as mask_pil:
+                        mask_np = np.array(mask_pil.convert('L'))
+
+                    prepared_mask = objr_engine.prepare_flux_fill_mask(
+                        mask_np,
+                        grow=task_state.objr_mask_dilate,
+                        blur=task_state.objr_mask_blur
                     )
+
+                    assets = resolve_flux_fill_assets(task_state)
+                    spine_kind = resolve_flux_fill_spine_kind(task_state)
+
+                    req = FluxFillRequest(
+                        unet_path=assets.unet_path,
+                        ae_path=assets.ae_path,
+                        conditioning_cache_path=assets.conditioning_cache_path,
+                        seed=int(task_state.seed),
+                        steps=int(task_state.steps),
+                        sampler=task_state.sampler_name,
+                        scheduler=task_state.scheduler_name,
+                        prefetch_depth=int(getattr(task_state, 'prefetch_depth', 0)),
+                        prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
+                        unet_spine=spine_kind,
+                        image=image_np,
+                        mask=prepared_mask,
+                        prompt=assets.prompt,
+                        blend_mode=task_state.objr_blend_mode,
+                        clip_l_path=assets.clip_l_path,
+                        t5_path=assets.t5_path,
+                    )
+
+                    preview_context = None
+
+                    def preview_transform(latent):
+                        nonlocal preview_context
+                        if preview_context is None:
+                            from ldm_patched.modules import latent_formats
+                            preview_context = FluxFillPreviewContext(latent_formats.Flux(), latent.device)
+                        return preview_context.decode(latent)
+
+                    callback = get_sampling_callback(
+                        task_state,
+                        context.progressbar_callback,
+                        0,
+                        1,
+                        0,
+                        int(task_state.steps),
+                        preview_transform=preview_transform,
+                    )
+
+                    dispatcher = FluxDispatcher()
+                    result = dispatcher.execute(req, callback=callback)
+
+                    persisted_res_path = _save_logged_output(
+                        context,
+                        result.output_image,
+                        'Object Removal',
+                        prompt_text=getattr(task_state, 'remove_prompt', ''),
+                        negative_prompt=getattr(task_state, 'negative_prompt', ''),
+                        seed=getattr(task_state, 'seed', None),
+                    )
+
+                    if context.yield_result_callback is not None:
+                        context.yield_result_callback(
+                            task_state,
+                            [persisted_res_path],
+                            100,
+                            do_not_show_finished_images=True,
+                        )
+                else:
+                    res_path = objr_engine.remove_object_from_file(
+                        image_path=task_state.remove_base_image,
+                        mask_path=task_state.remove_mask_image,
+                        seed=task_state.seed,
+                        mask_dilate=task_state.objr_mask_dilate,
+                        engine=task_state.objr_engine,
+                        flux_conditioning=task_state.flux_fill_conditioning,
+                        flux_prompt=task_state.remove_prompt,
+                        flux_prompt_cache=task_state.flux_fill_prompt_cache,
+                        flux_mask_blur=task_state.objr_mask_blur,
+                        flux_blend_mode=task_state.objr_blend_mode,
+                        flux_steps=int(task_state.steps),
+                        flux_sampler=task_state.sampler_name,
+                        flux_scheduler=task_state.scheduler_name,
+                        flux_callback=None,
+                        flux_disable_pbar=True,
+                    )
+                    objr_engine.unload_model()
+                    persisted_res_path = _save_logged_output(
+                        context,
+                        res_path,
+                        'Object Removal',
+                        prompt_text=getattr(task_state, 'remove_prompt', ''),
+                        negative_prompt=getattr(task_state, 'negative_prompt', ''),
+                        seed=getattr(task_state, 'seed', None),
+                    )
+                    if context.yield_result_callback is not None:
+                        context.yield_result_callback(
+                            task_state,
+                            [persisted_res_path or res_path],
+                            100,
+                            do_not_show_finished_images=True,
+                        )
 
             return PipelineStageResult(route_complete=True, notes={'completed': True})
         finally:

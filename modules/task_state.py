@@ -65,6 +65,8 @@ class TaskState:
     flux_fill_clip_l_path: str = ""
     flux_fill_t5_path: str = ""
     flux_fill_t5_posture: str = ""
+    prefetch_depth: int = 0
+    prefetch_chunk_mb: int = 64
     objr_mask_dilate: int = 16
     objr_mask_blur: int = 6
     objr_blend_mode: str = FLUX_FILL_BLEND_MORPHOLOGICAL

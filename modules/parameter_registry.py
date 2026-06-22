@@ -117,6 +117,8 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('preview_update_interval', 'preview_update_interval', 1, int),
     ParamDef('disable_intermediate_results', 'disable_intermediate_results', False, bool),
     ParamDef('disable_seed_increment', 'disable_seed_increment', False, bool),
+    ParamDef('prefetch_depth', 'prefetch_depth', 0, int),
+    ParamDef('prefetch_chunk_mb', 'prefetch_chunk_mb', 64, int),
     
     # --- Advanced Sampling ---
     ParamDef('adm_scaler_positive', 'adm_scaler_positive', 1.5, float),

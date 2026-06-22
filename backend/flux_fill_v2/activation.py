@@ -176,8 +176,15 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
         model_variant,
         FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT["flux_fill_fp8"],
     )
-    unet_path = direct_unet_path or model_registry.resolve_asset_path(unet_asset_id)
-    ae_path = direct_ae_path or model_registry.resolve_asset_path(FLUX_FILL_AE_ASSET_ID)
+    if direct_unet_path:
+        unet_path = direct_unet_path
+    else:
+        unet_path = model_registry.ensure_asset(unet_asset_id)
+
+    if direct_ae_path:
+        ae_path = direct_ae_path
+    else:
+        ae_path = model_registry.ensure_asset(FLUX_FILL_AE_ASSET_ID)
 
     # Resolve active prompt
     prompt_text = ""
@@ -206,13 +213,20 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
         getattr(task_state, "flux_fill_t5_path", None) or getattr(task_state, "t5_path", None) or ""
     ).strip()
 
-    clip_l_path = direct_clip_l_path or model_registry.resolve_asset_path(FLUX_FILL_CLIP_L_ASSET_ID)
-    t5_path = direct_t5_path or model_registry.resolve_asset_path(FLUX_FILL_T5XXL_FP16_ASSET_ID)
+    if direct_clip_l_path:
+        clip_l_path = direct_clip_l_path
+    else:
+        clip_l_path = model_registry.ensure_asset(FLUX_FILL_CLIP_L_ASSET_ID)
+
+    if direct_t5_path:
+        t5_path = direct_t5_path
+    else:
+        t5_path = model_registry.ensure_asset(FLUX_FILL_T5XXL_FP16_ASSET_ID)
 
     if direct_conditioning_path:
         conditioning_cache_path = direct_conditioning_path
     elif conditioning_kind == "empty":
-        conditioning_cache_path = model_registry.resolve_asset_path(FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID)
+        conditioning_cache_path = model_registry.ensure_asset(FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID)
     else:
         # Prompt-conditioned caching path
         from backend.flux_fill_v2.t5_posture import get_prompt_cache_path
