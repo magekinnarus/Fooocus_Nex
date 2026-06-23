@@ -767,6 +767,8 @@ class FluxFillInpaintStage(PipelineStage):
             task_dict = {
                 'log_positive_prompt': prompt_text,
                 'log_negative_prompt': task_state.negative_prompt,
+                'positive': [],
+                'negative': [],
                 'styles': task_state.style_selections,
                 'task_seed': seed,
                 'description': 'Flux Fill Inpaint',

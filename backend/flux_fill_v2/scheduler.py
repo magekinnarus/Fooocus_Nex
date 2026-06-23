@@ -62,20 +62,38 @@ class FluxAsyncLayerPrefetchScheduler:
         self._stats["module_count"] = len(ordered)
 
         # Eagerly allocate streams when device is specified and has CUDA capability
-        if device is not None and self.is_enabled_for(device):
+        if device is not None and self.is_enabled_for(device) and self.prefetch_depth > 0:
             device_key = self._device_key(device)
             if device_key not in self._streams:
-                try:
-                    self._streams[device_key] = [
-                        torch.cuda.Stream(device=device, priority=0),
-                        torch.cuda.Stream(device=device, priority=0),
-                    ]
-                except Exception as e:
-                    import logging
-                    logging.warning(
-                        f"[Nex-Streaming] Failed to eagerly allocate CUDA streams on {device}: {e}"
-                    )
+                streams = self._create_streams_safe(device)
+                if streams is not None:
+                    self._streams[device_key] = streams
         return len(ordered)
+
+    def _create_streams_safe(self, device: torch.device) -> list[Any] | None:
+        try:
+            return [
+                torch.cuda.Stream(device=device, priority=0),
+                torch.cuda.Stream(device=device, priority=0),
+            ]
+        except Exception as e_first:
+            import logging
+            logging.warning(
+                f"[Nex-Streaming] Failed to allocate CUDA streams on {device}: {e_first}. "
+                f"Clearing PyTorch CUDA cache and retrying..."
+            )
+            try:
+                torch.cuda.empty_cache()
+                return [
+                    torch.cuda.Stream(device=device, priority=0),
+                    torch.cuda.Stream(device=device, priority=0),
+                ]
+            except Exception as e_retry:
+                logging.warning(
+                    f"[Nex-Streaming] Retry failed: {e_retry}. Falling back to default stream."
+                )
+                torch.cuda.empty_cache()
+                return None
 
     def detach(self) -> None:
         for hook in self._hooks:
@@ -172,20 +190,15 @@ class FluxAsyncLayerPrefetchScheduler:
         return str(device)
 
     def _stream_for_index(self, device: torch.device, module_index: int):
-        if not self.is_enabled_for(device):
+        if not self.is_enabled_for(device) or self.prefetch_depth <= 0:
             return None
         device_key = self._device_key(device)
         streams = self._streams.get(device_key)
         if streams is None:
-            try:
-                streams = [torch.cuda.Stream(device=device, priority=0), torch.cuda.Stream(device=device, priority=0)]
+            streams = self._create_streams_safe(device)
+            if streams is not None:
                 self._streams[device_key] = streams
-            except Exception as e:
-                import logging
-                logging.warning(
-                    f"[Nex-Streaming] Failed to lazily create CUDA streams on {device}: {e}. "
-                    f"Falling back to default stream."
-                )
+            else:
                 return None
         return streams[int(module_index) % len(streams)]
 

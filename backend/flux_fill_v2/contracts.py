@@ -38,7 +38,7 @@ class FluxFillRequest:
     steps: int
     guidance: float = 15.0
     sampler: str = "euler"
-    scheduler: str = "normal"
+    scheduler: str = "simple"
     prefetch_depth: int = 0
     prefetch_chunk_mb: int = 64
     unet_spine: UNetSpineKind = UNetSpineKind.STREAMING
@@ -56,6 +56,12 @@ class FluxFillRequest:
     total_ram_gb: float | None = None
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
+        # Enforce euler/simple for Flux Fill to ensure correct Flow Matching math
+        if self.sampler != "euler" or self.scheduler != "simple":
+            print(f"[Flux Fill] Overriding sampler/scheduler to euler/simple (was {self.sampler}/{self.scheduler})")
+            self.sampler = "euler"
+            self.scheduler = "simple"
+
         if self.steps < 1:
             raise ValueError(f"Steps must be >= 1, got {self.steps}.")
         if self.guidance <= 0:

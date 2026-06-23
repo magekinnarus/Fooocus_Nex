@@ -184,9 +184,14 @@ class FluxTransientVAEPosture:
         if vae is None:
             return
         try:
-            resources.eject_model(vae)
+            patcher = getattr(vae, "patcher", None)
+            if patcher is not None:
+                resources.eject_model(patcher)
+            else:
+                resources.eject_model(vae)
         except Exception:
-            detach = getattr(vae.patcher, "detach", None)
+            patcher = getattr(vae, "patcher", None)
+            detach = getattr(patcher, "detach", None) if patcher is not None else getattr(vae, "detach", None)
             if callable(detach):
                 detach()
         gc.collect()

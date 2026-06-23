@@ -103,7 +103,6 @@ class FluxStreamingUNetSpine:
                 load_device="cpu", # staged on CPU host memory for streaming
                 offload_device="cpu",
                 execution_class="standard_streaming",
-                runtime_posture="streaming",
                 prefetch_depth=self.request.prefetch_depth,
                 prefetch_chunk_mb=self.request.prefetch_chunk_mb,
             )
