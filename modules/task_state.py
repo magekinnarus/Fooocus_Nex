@@ -67,6 +67,7 @@ class TaskState:
     flux_fill_t5_posture: str = ""
     prefetch_depth: int = 0
     prefetch_chunk_mb: int = 64
+    flux_fill_t5_low_ram: bool = False
     objr_mask_dilate: int = 16
     objr_mask_blur: int = 6
     objr_blend_mode: str = FLUX_FILL_BLEND_MORPHOLOGICAL

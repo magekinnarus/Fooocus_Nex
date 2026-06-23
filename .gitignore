@@ -48,3 +48,4 @@ config_old.txt
 notebooks/
 scratch/
 /test_old/
+/tests/

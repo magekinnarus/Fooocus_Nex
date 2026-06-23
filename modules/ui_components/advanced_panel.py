@@ -113,6 +113,13 @@ def build_debug_tab():
         value=64,
         info='Max size of chunks to prefetch for Flux Fill (64MB or 128MB).'
     )
+
+    from backend.environment_profile import detect_is_colab
+    results['flux_fill_t5_low_ram'] = gr.Checkbox(
+        label='Flux Fill Low RAM T5',
+        value=detect_is_colab(),
+        info='Enable block-by-block garbage collection during T5 text encoding to fit within Colab Free / low RAM systems.'
+    )
     
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(

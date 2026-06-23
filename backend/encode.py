@@ -11,6 +11,42 @@ def _process_input(image):
     return (image.movedim(-1, 1) * 2.0) - 1.0
 
 
+def encode_preloaded_pixels(vae, pixels):
+    """
+    Encode using a VAE that the caller has already attached/placed.
+    No implicit load/eject behavior is performed here.
+    """
+    patcher = getattr(vae, "patcher", None)
+    active_device = getattr(patcher, "current_loaded_device", lambda: getattr(patcher, "load_device", torch.device("cpu")))()
+    if not isinstance(active_device, torch.device):
+        active_device = torch.device(active_device)
+
+    first_stage_model = vae.first_stage_model
+    live_param = next(first_stage_model.parameters(), None)
+    dtype = torch.float32
+    if isinstance(live_param, torch.Tensor):
+        active_device = live_param.device
+        dtype = live_param.dtype
+
+    pixels = _process_input(pixels)
+    memory_used = (VAE_ENCODE_MEMORY_STRICT * pixels.shape[2] * pixels.shape[3]) * utils.dtype_size(dtype)
+    free_memory = resources.get_free_memory(active_device)
+    batch_number = int(free_memory / max(1, memory_used))
+    batch_number = max(1, batch_number)
+
+    latents = []
+    for x in range(0, pixels.shape[0], batch_number):
+        batch = pixels[x : x + batch_number].to(device=active_device, dtype=dtype)
+        latent = first_stage_model.encode(batch)
+        if hasattr(latent, "sample"):
+            latent = latent.sample()
+        latents.append(latent.to("cpu"))
+
+    output = torch.cat(latents, dim=0)
+    output = vae.latent_format.process_in(output)
+    return {"samples": output}
+
+
 def encode_pixels(vae, pixels):
     """
     Encodes pixel tensor into latent space.
@@ -43,11 +79,6 @@ def encode_pixels(vae, pixels):
     )
     device = torch.device("cpu")
     dtype = torch.float32
-    output_device = "cpu"
-
-    # Normalize and move dim.
-    pixels = _process_input(pixels)
-
     # Estimate memory usage using CPU available memory because encode is CPU-bound.
     memory_used = (VAE_ENCODE_MEMORY_STRICT * pixels.shape[2] * pixels.shape[3]) * utils.dtype_size(dtype)
     try:
@@ -72,31 +103,7 @@ def encode_pixels(vae, pixels):
             except Exception:
                 pass
 
-        first_stage_model = vae.first_stage_model
-        live_param = next(first_stage_model.parameters(), None)
-        if isinstance(live_param, torch.Tensor):
-            device = live_param.device
-            dtype = live_param.dtype
-
-        free_memory = resources.get_free_memory(device)
-        batch_number = int(free_memory / max(1, memory_used))
-        batch_number = max(1, batch_number)
-
-        latents = []
-        for x in range(0, pixels.shape[0], batch_number):
-            batch = pixels[x : x + batch_number].to(device=device, dtype=dtype)
-            latent = first_stage_model.encode(batch)
-            if hasattr(latent, "sample"):
-                latent = latent.sample()
-
-            latents.append(latent.to(output_device))
-
-        output = torch.cat(latents, dim=0)
-
-        # Apply latent scaling (e.g., 0.18215 for SD1.5)
-        output = vae.latent_format.process_in(output)
-
-        return {"samples": output}
+        return encode_preloaded_pixels(vae, pixels)
     finally:
         if gpu_preferred and not is_resident and patcher is not None:
             try:

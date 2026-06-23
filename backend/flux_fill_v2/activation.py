@@ -139,8 +139,11 @@ def _resolve_flux_fill_model_variant(task_state: Any) -> str:
     return "flux_fill_fp8"
 
 
-def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
-    """ Authoritative T5 Posture Selector driven by UNet spine and RAM only. """
+def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None, *, low_ram_override: bool = False) -> T5PostureKind:
+    """ Authoritative T5 Posture Selector driven by UNet spine, RAM, and UI override. """
+    if low_ram_override:
+        return T5PostureKind.DISK_PAGED_LOWRAM
+
     if total_ram_gb is None:
         total_ram_gb = resolve_flux_fill_total_ram_gb()
 
@@ -150,7 +153,7 @@ def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float 
         return T5PostureKind.CPU_FP16_RESIDENT
     else:  # RESIDENT
         if total_ram_gb < 32.0:
-            return T5PostureKind.DISK_PAGED
+            return T5PostureKind.DISK_PAGED_LOWRAM
         return T5PostureKind.CPU_FP16_RESIDENT
 
 
@@ -295,6 +298,7 @@ def resolve_flux_fill_process_key(
     t5_posture_kind = resolve_flux_fill_t5_posture(
         spine_kind,
         resolve_flux_fill_total_ram_gb(task_state),
+        low_ram_override=bool(getattr(task_state, "flux_fill_t5_low_ram", False)),
     )
     _assign_task_state_attr(task_state, "flux_fill_t5_posture", t5_posture_kind.value)
 

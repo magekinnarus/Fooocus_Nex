@@ -53,6 +53,7 @@ class FluxDispatcher:
             t5_posture_kind = resolve_flux_fill_t5_posture(
                 request.unet_spine,
                 resolve_flux_fill_total_ram_gb(request),
+                low_ram_override=bool(request.flux_fill_t5_low_ram),
             )
 
         # Select spine based on requested unet_spine kind

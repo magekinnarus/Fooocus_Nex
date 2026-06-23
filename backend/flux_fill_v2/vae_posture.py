@@ -43,18 +43,14 @@ def compute_artifact_fingerprint(request: FluxFillRequest) -> str:
 def _encode_vae_latents(
     vae: Any, image: np.ndarray, mask: np.ndarray, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    from modules.core import numpy_to_pytorch, encode_vae
-    from backend import resources
+    from backend import encode as backend_vae_encode
+    from modules.core import numpy_to_pytorch
 
-    resources.load_models_gpu([vae.patcher])
-    vae_device = getattr(vae.patcher, "current_loaded_device", lambda: vae.patcher.load_device)()
-    move_model = getattr(vae.first_stage_model, "to", None)
-    if callable(move_model):
-        move_model(device=vae_device, dtype=torch.float32)
+    _attach_vae(vae, device)
 
     # 1. Encode unmasked source image
     orig_pixels = numpy_to_pytorch(image)
-    source_latent = encode_vae(vae=vae, pixels=orig_pixels)["samples"]
+    source_latent = backend_vae_encode.encode_preloaded_pixels(vae, orig_pixels)["samples"]
 
     # 2. Gray-masked image for concat encoding
     bb_image_for_concat = image.copy().astype(np.float32) / 255.0
@@ -67,27 +63,8 @@ def _encode_vae_latents(
         bb_image_for_concat[:, :, ch] *= inv_mask
         bb_image_for_concat[:, :, ch] += 0.5
     bb_image_for_concat = np.clip(bb_image_for_concat * 255.0, 0, 255).astype(np.uint8)
-
-    # Encode gray-masked to get concat_latent (bypass encode.py double-normalization)
-    pixels_for_vae = (numpy_to_pytorch(bb_image_for_concat).movedim(-1, 1) * 2.0) - 1.0
-    if pixels_for_vae.ndim == 3:
-        pixels_for_vae = pixels_for_vae.unsqueeze(0)
-
-    vae_param = next(vae.first_stage_model.parameters(), None)
-    vae_input_device = vae.patcher.load_device
-    vae_input_dtype = torch.float32
-    if isinstance(vae_param, torch.Tensor):
-        vae_input_device = vae_param.device
-        vae_input_dtype = vae_param.dtype
-
-    pixels_for_vae = pixels_for_vae.to(device=vae_input_device, dtype=vae_input_dtype)
-    raw_latent = vae.first_stage_model.encode(pixels_for_vae)
-    if hasattr(raw_latent, "sample"):
-        raw_latent = raw_latent.sample()
-    concat_latent = raw_latent.cpu()
-
-    vae.patcher.detach()
-    resources.soft_empty_cache()
+    concat_pixels = numpy_to_pytorch(bb_image_for_concat)
+    concat_latent = backend_vae_encode.encode_preloaded_pixels(vae, concat_pixels)["samples"]
 
     # 3. Build denoise_mask
     mask_t = torch.from_numpy(mask).float() / 255.0
@@ -100,21 +77,30 @@ def _encode_vae_latents(
     return source_latent, concat_latent, denoise_mask
 
 
-def _decode_vae_latents(vae: Any, latent: torch.Tensor) -> np.ndarray:
-    from modules import core
-    from backend import resources
-    import gc
+def _attach_vae(vae: Any, device: torch.device) -> None:
+    patcher = getattr(vae, "patcher", None)
+    if patcher is None:
+        return
+
+    patch_model = getattr(patcher, "patch_model", None)
+    if callable(patch_model):
+        patch_model(device_to=device, lowvram_model_memory=0)
+
+    active_device = getattr(patcher, "current_loaded_device", lambda: patcher.load_device)()
+    move_model = getattr(vae.first_stage_model, "to", None)
+    if callable(move_model):
+        move_model(device=active_device, dtype=torch.float32)
+
+
+def _decode_vae_latents(vae: Any, latent: torch.Tensor, device: torch.device | None = None) -> np.ndarray:
+    from backend import decode as backend_vae_decode
 
     gc.collect()
-    resources.soft_empty_cache()
+    resources.soft_empty_cache(force=True)
 
-    patcher = getattr(vae, "patcher", None)
-    if patcher is not None:
-        patch_model = getattr(patcher, "patch_model", None)
-        if callable(patch_model):
-            patch_model(device_to=vae.patcher.load_device)
-
-    decoded = core.decode_vae(vae, {"samples": latent.detach().cpu()}, tiled=False)
+    if device is not None:
+        _attach_vae(vae, device)
+    decoded = backend_vae_decode.decode_preloaded_vae(vae, latent.detach().cpu(), tiled=False)
 
     original_argv = list(sys.argv)
     try:
@@ -144,7 +130,7 @@ class FluxTransientVAEPosture:
     def prepare_artifacts(self, device: torch.device) -> FluxLatentArtifactBundle:
         """Loads VAE transiently, runs encode steps, builds artifacts, and ejects VAE."""
         vae_load_start = time.perf_counter()
-        vae = load_flux_ae(self.request.ae_path, load_device=device, offload_device="cpu")
+        vae = load_flux_ae(self.request.ae_path, load_device="cpu", offload_device="cpu")
         vae_load_time = time.perf_counter() - vae_load_start
 
         try:
@@ -169,12 +155,12 @@ class FluxTransientVAEPosture:
     def decode(self, samples: torch.Tensor, device: torch.device) -> tuple[np.ndarray, float, float]:
         """Loads VAE transiently, decodes samples, and ejects VAE."""
         vae_load_start = time.perf_counter()
-        vae = load_flux_ae(self.request.ae_path, load_device=device, offload_device="cpu")
+        vae = load_flux_ae(self.request.ae_path, load_device="cpu", offload_device="cpu")
         vae_load_time = time.perf_counter() - vae_load_start
 
         try:
             decode_start = time.perf_counter()
-            output_image = _decode_vae_latents(vae, samples)
+            output_image = _decode_vae_latents(vae, samples, device)
             vae_decode_time = time.perf_counter() - decode_start
             return output_image, vae_load_time, vae_decode_time
         finally:

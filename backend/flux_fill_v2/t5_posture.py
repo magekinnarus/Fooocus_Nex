@@ -345,8 +345,11 @@ class T5Stack(torch.nn.Module):
 
         optimized_attention = optimized_attention_for_device(x.device, mask=attention_mask is not None, small_input=True)
         past_bias = None
+        use_gc = getattr(self, "_t5_lazy_runtime", False)
         for block in self.block:
             x, past_bias = block(x, mask=mask, past_bias=past_bias, optimized_attention=optimized_attention)
+            if use_gc:
+                gc.collect()
         return self.final_layer_norm(x), None
 
 
@@ -640,6 +643,7 @@ def load_flux_prompt_text_encoder(
     t5_path: str | Path,
     embedding_directory: str | Path | None = None,
     t5_loader_policy: str | None = None,
+    low_ram_gc: bool = False,
 ) -> FluxPromptTextEncoder:
     clip_l_path = Path(clip_l_path)
     t5_path = Path(t5_path)
@@ -691,6 +695,8 @@ def load_flux_prompt_text_encoder(
         logger.debug("Flux T5 unexpected keys: %s", unexpected)
 
     encoder = FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
+    if low_ram_gc:
+        setattr(cond_stage_model.t5xxl.transformer.encoder, "_t5_lazy_runtime", True)
     setattr(
         encoder,
         "_nex_load_metadata",
@@ -702,7 +708,7 @@ def load_flux_prompt_text_encoder(
             "t5_source_kind": "safetensors_lazy_runtime" if t5_loader_policy == "stream_safetensors_runtime" else "eager_state_dict",
             "t5_full_state_dict_materialized": t5_loader_policy != "stream_safetensors_runtime",
             "t5_stream_runtime": t5_loader_policy == "stream_safetensors_runtime",
-            "t5_lazy_runtime": t5_loader_policy == "stream_safetensors_runtime",
+            "t5_lazy_runtime": t5_loader_policy == "stream_safetensors_runtime" or low_ram_gc,
             "t5_lazy_duplicate_source_keys": list(t5_options.get("lazy_duplicate_source_keys", [])),
         },
     )
@@ -776,8 +782,9 @@ class FluxDiskPagedT5Posture:
     Loads T5/CLIP text encoder on-demand (streaming safely from safetensors/mmap)
     and tears down immediately after prompt conditioning generation to free RAM.
     """
-    def __init__(self, request: FluxFillRequest) -> None:
+    def __init__(self, request: FluxFillRequest, *, low_ram_gc: bool = False) -> None:
         self.request = request
+        self.low_ram_gc = low_ram_gc
 
     def get_conditioning(self, request: FluxFillRequest) -> FluxEmptyConditioning:
         if not request.prompt or not str(request.prompt).strip():
@@ -800,6 +807,7 @@ class FluxDiskPagedT5Posture:
             clip_l_path=clip_l_path,
             t5_path=t5_path,
             t5_loader_policy=t5_loader_policy,
+            low_ram_gc=self.low_ram_gc,
         )
 
         try:
@@ -814,7 +822,7 @@ class FluxDiskPagedT5Posture:
                     "t5_path": str(t5_path),
                     "conditioning_kind": "prompt",
                     "t5_loader_policy": t5_loader_policy,
-                    "posture": "disk_paged_t5",
+                    "posture": "disk_paged_lowram" if self.low_ram_gc else "disk_paged_t5",
                 }
             )
             return cond
@@ -905,9 +913,21 @@ class FluxCpuFp16ResidentT5Posture:
             pass
 
 
+class FluxLowRamT5Posture(FluxDiskPagedT5Posture):
+    """ Greenfield Low RAM Disk Paged T5 Posture.
+    
+    Identical to FluxDiskPagedT5Posture but forces block-by-block garbage collection
+    during text encoding to prevent memory spikes on RAM-constrained machines.
+    """
+    def __init__(self, request: FluxFillRequest) -> None:
+        super().__init__(request, low_ram_gc=True)
+
+
 def acquire_t5_posture(kind: T5PostureKind, request: FluxFillRequest) -> Any:
     if kind == T5PostureKind.CPU_FP16_RESIDENT:
         from backend.flux_fill_v2.runtime_state import acquire_resident_t5
         return acquire_resident_t5(request)
+    elif kind == T5PostureKind.DISK_PAGED_LOWRAM:
+        return FluxLowRamT5Posture(request)
     else:
         return FluxDiskPagedT5Posture(request)
