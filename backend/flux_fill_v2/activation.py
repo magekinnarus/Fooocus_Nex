@@ -125,6 +125,41 @@ def resolve_flux_fill_total_ram_gb(source: Any | None = None) -> float:
     return 0.0
 
 
+def resolve_flux_fill_total_vram_mb(source: Any | None = None) -> float:
+    """Resolve the authoritative VRAM input for Flux Fill posture selection."""
+    if source is not None:
+        for attr_name in ("flux_fill_total_vram_gb", "total_vram_gb"):
+            resolved = _coerce_positive_float(getattr(source, attr_name, None))
+            if resolved is not None:
+                return resolved * 1024.0
+
+        for attr_name in ("flux_fill_total_vram_mb", "total_vram_mb", "hardware_total_vram_mb", "runtime_total_vram_mb"):
+            resolved_mb = _coerce_positive_float(getattr(source, attr_name, None))
+            if resolved_mb is not None:
+                return resolved_mb
+
+    try:
+        from backend import resources
+
+        profile = resources.active_memory_environment_profile()
+        resolved_mb = _coerce_positive_float(getattr(profile, "total_vram_mb", None))
+        if resolved_mb is not None:
+            return resolved_mb
+    except Exception:
+        pass
+
+    try:
+        from backend.environment_profile import detect_total_vram_mb
+
+        resolved_mb = _coerce_positive_float(detect_total_vram_mb())
+        if resolved_mb is not None:
+            return resolved_mb
+    except Exception:
+        pass
+
+    return 0.0
+
+
 def _resolve_flux_fill_model_variant(task_state: Any) -> str:
     explicit_variant = str(getattr(task_state, "flux_fill_model_variant", "") or "").strip()
     if explicit_variant in FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT:
@@ -192,8 +227,8 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
     # Resolve active prompt
     prompt_text = ""
     if task_state is not None:
-        goals = getattr(task_state, "goals", [])
-        if "removal" in goals or getattr(task_state, "remove_obj_enabled", False):
+        goal_tokens = {str(goal or "").strip().lower() for goal in getattr(task_state, "goals", [])}
+        if {"remove_obj", "removal"} & goal_tokens or getattr(task_state, "remove_obj_enabled", False):
             prompt_text = getattr(task_state, "remove_prompt", "") or ""
         else:
             prompt = str(getattr(task_state, "prompt", "") or "").strip()
@@ -206,7 +241,7 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
                 prompt_text = additional_prompt + "\n" + prompt
     prompt_text = str(prompt_text).strip()
 
-    if prompt_text != "" and conditioning_kind != "empty":
+    if prompt_text != "":
         conditioning_kind = "prompt"
 
     direct_clip_l_path = str(
@@ -344,6 +379,24 @@ def resolve_flux_fill_spine_kind(task_state: Any) -> UNetSpineKind:
     ).strip().lower().replace("-", "_").replace(" ", "_")
     if posture == "resident":
         return UNetSpineKind.RESIDENT
+    if posture == "streaming":
+        return UNetSpineKind.STREAMING
+
+    try:
+        from backend.staging_manager import (
+            FLUX_RUNTIME_POSTURE_RESIDENT,
+            PlacementSolver,
+        )
+
+        total_vram_mb = resolve_flux_fill_total_vram_mb(task_state)
+        total_ram_mb = resolve_flux_fill_total_ram_gb(task_state) * 1024.0
+        requested_variant = _resolve_flux_fill_model_variant(task_state)
+        plan = PlacementSolver.solve(total_vram_mb, total_ram_mb, requested_variant)
+        runtime_posture = str(getattr(plan, "runtime_posture", "") or "").strip().lower()
+        if runtime_posture == FLUX_RUNTIME_POSTURE_RESIDENT:
+            return UNetSpineKind.RESIDENT
+    except Exception:
+        pass
 
     return UNetSpineKind.STREAMING
 

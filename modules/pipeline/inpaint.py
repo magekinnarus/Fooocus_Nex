@@ -254,8 +254,8 @@ class InpaintPipeline:
         
         return {'samples': latent, 'noise_mask': denoise_mask}
 
-    def stitch(self, context: InpaintContext, generated_image) -> np.ndarray:
-        """Preserve Fooocus's superior morphological blending."""
+    def paste_back(self, context: InpaintContext, generated_image) -> np.ndarray:
+        """Hard-paste a generated crop back into the full canvas without blending."""
         y1, y2, x1, x2 = context.bb
         target_w, target_h = x2 - x1, y2 - y1
         
@@ -275,6 +275,11 @@ class InpaintPipeline:
         content_x1, content_x2 = ix1 - x1, ix2 - x1
         
         result[iy1:iy2, ix1:ix2] = content[content_y1:content_y2, content_x1:content_x2]
+        return result
+
+    def stitch(self, context: InpaintContext, generated_image) -> np.ndarray:
+        """Preserve Fooocus's superior morphological blending for final outputs."""
+        result = self.paste_back(context, generated_image)
         
         # 3. Apply morphological gradient blend at full-image resolution
         fg = result.astype(np.float32)

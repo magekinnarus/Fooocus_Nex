@@ -25,7 +25,17 @@ def _resolve_preview_update_interval(task_state) -> int:
         return 1
 
 
-def get_sampling_callback(task_state, progressbar_callback, current_task_id, total_count, preparation_steps, all_steps, preview_transform=None, disable_pbar=True):
+def get_sampling_callback(
+    task_state,
+    progressbar_callback,
+    current_task_id,
+    total_count,
+    preparation_steps,
+    all_steps,
+    preview_transform=None,
+    disable_pbar=True,
+    preview_stitch_context=None,
+):
     """
     Returns a callback function for the diffusion sampler to report progress.
     """
@@ -84,14 +94,14 @@ def get_sampling_callback(task_state, progressbar_callback, current_task_id, tot
             if (
                 preview_image is not None
                 and isinstance(preview_image, np.ndarray)
-                and hasattr(task_state, 'inpaint_context')
-                and task_state.inpaint_context is not None
+                and preview_stitch_context is not None
             ):
-                # Stitch the localized preview back into the full canvas before transport downscaling.
+                # Preview transport uses a hard paste only; full-image morphological blending
+                # remains reserved for the final stitched output.
                 from modules.pipeline.inpaint import InpaintPipeline
 
                 inpaint = InpaintPipeline()
-                preview_image = inpaint.stitch(task_state.inpaint_context, preview_image)
+                preview_image = inpaint.paste_back(preview_stitch_context, preview_image)
             elif not isinstance(preview_image, np.ndarray):
                 preview_image = None
 
@@ -472,6 +482,7 @@ def _run_unified_sdxl_task(
             all_steps,
             preview_transform=preview_transform,
             disable_pbar=False,
+            preview_stitch_context=getattr(task_state, 'inpaint_context', None),
         )
 
         denoise_result = runtime.denoise_prepared_inputs(

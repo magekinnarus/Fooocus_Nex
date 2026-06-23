@@ -3,6 +3,18 @@ import modules.config
 import modules.flags as flags
 import args_manager
 
+
+def _default_flux_fill_t5_low_ram_enabled() -> bool:
+    try:
+        from backend import resources
+        from backend.environment_profile import PROFILE_COLAB_FREE
+
+        profile = resources.active_memory_environment_profile()
+        return str(getattr(profile, "name", "") or "").strip().lower() == PROFILE_COLAB_FREE
+    except Exception:
+        return False
+
+
 def build_advanced_tab():
     """
     Builds the Advanced tab components (now mostly empty or wrapper).
@@ -114,10 +126,9 @@ def build_debug_tab():
         info='Max size of chunks to prefetch for Flux Fill (64MB or 128MB).'
     )
 
-    from backend.environment_profile import detect_is_colab
     results['flux_fill_t5_low_ram'] = gr.Checkbox(
         label='Flux Fill Low RAM T5',
-        value=detect_is_colab(),
+        value=_default_flux_fill_t5_low_ram_enabled(),
         info='Enable block-by-block garbage collection during T5 text encoding to fit within Colab Free / low RAM systems.'
     )
     

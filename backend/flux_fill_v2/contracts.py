@@ -123,6 +123,18 @@ class FluxFillResult:
     timings: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+
+def _resolve_default_vae_approx_path() -> str | None:
+    try:
+        from modules.config import path_vae_approx
+    except Exception:
+        return None
+
+    if isinstance(path_vae_approx, (list, tuple)):
+        return str(path_vae_approx[0]) if path_vae_approx else None
+    return str(path_vae_approx) if path_vae_approx else None
+
+
 class FluxFillPreviewContext:
     """Encapsulates the preview generation capability of the active runtime posture.
     
@@ -133,7 +145,7 @@ class FluxFillPreviewContext:
     def __init__(self, latent_format: Any, device: torch.device, vae_approx_path: str | None = None) -> None:
         self.latent_format = latent_format
         self.device = device
-        self.vae_approx_path = vae_approx_path
+        self.vae_approx_path = vae_approx_path or _resolve_default_vae_approx_path()
         self._previewer = None
         self._resolved = False
 
@@ -174,4 +186,3 @@ class FluxLatentArtifactBundle:
     fingerprint: str
     vae_load_time: float = 0.0
     vae_encode_time: float = 0.0
-

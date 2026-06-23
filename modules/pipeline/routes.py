@@ -716,6 +716,7 @@ class FluxFillInpaintStage(PipelineStage):
                 preparation_steps,
                 all_steps,
                 preview_transform=preview_transform,
+                preview_stitch_context=ctx,
             )
 
             interrupted_action = None
@@ -899,6 +900,7 @@ class RemovalStage(PipelineStage):
         from backend import resources
 
         task_state = context.task_state
+        task_state.inpaint_context = None
         selected_engine = normalize_objr_engine(task_state.objr_engine)
         resources.begin_memory_phase('removal', notes={'goals': list(task_state.goals)})
         try:
