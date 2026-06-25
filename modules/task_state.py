@@ -57,7 +57,7 @@ class TaskState:
     objr_engine: str = OBJR_ENGINE_MAT
     flux_fill_conditioning: str = "empty"
     flux_fill_prompt_cache: str = "temp"
-    flux_fill_runtime_posture: str = ""
+    flux_fill_runtime_posture: str = "auto"
     flux_fill_model_variant: str = ""
     flux_fill_unet_path: str = ""
     flux_fill_ae_path: str = ""
@@ -65,7 +65,7 @@ class TaskState:
     flux_fill_clip_l_path: str = ""
     flux_fill_t5_path: str = ""
     flux_fill_t5_posture: str = ""
-    prefetch_depth: int = 0
+    prefetch_depth: int = 1
     prefetch_chunk_mb: int = 64
     flux_fill_t5_low_ram: bool = False
     objr_mask_dilate: int = 16

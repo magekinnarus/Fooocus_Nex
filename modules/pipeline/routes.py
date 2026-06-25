@@ -665,6 +665,7 @@ class FluxFillInpaintStage(PipelineStage):
         from backend.flux_fill_v2.dispatcher import FluxDispatcher
 
         task_state = context.task_state
+        resources.begin_memory_phase('diffusion', notes={'route': 'flux_inpaint'})
         if len(task_state.goals) > 0:
             task_state.current_progress += 1
             if context.progressbar_callback is not None:
@@ -731,7 +732,7 @@ class FluxFillInpaintStage(PipelineStage):
                     steps=int(task_state.steps),
                     sampler=task_state.sampler_name,
                     scheduler=task_state.scheduler_name,
-                    prefetch_depth=int(getattr(task_state, 'prefetch_depth', 0)),
+                    prefetch_depth=int(getattr(task_state, 'prefetch_depth', 1)),
                     prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
                     flux_fill_t5_low_ram=bool(getattr(task_state, 'flux_fill_t5_low_ram', False)),
                     unet_spine=spine_kind,
@@ -760,6 +761,8 @@ class FluxFillInpaintStage(PipelineStage):
             if interrupted_action == 'stop':
                 break
 
+            import logging
+            logging.getLogger(__name__).debug(f"[Flux Telemetry] Applying final morphological blending and stitch-back for image {image_index + 1}/{total_count}")
             stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
             output_images.append(stitched_image)
 
@@ -974,7 +977,7 @@ class RemovalStage(PipelineStage):
                         steps=int(task_state.steps),
                         sampler=task_state.sampler_name,
                         scheduler=task_state.scheduler_name,
-                        prefetch_depth=int(getattr(task_state, 'prefetch_depth', 0)),
+                        prefetch_depth=int(getattr(task_state, 'prefetch_depth', 1)),
                         prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
                         flux_fill_t5_low_ram=bool(getattr(task_state, 'flux_fill_t5_low_ram', False)),
                         unet_spine=spine_kind,

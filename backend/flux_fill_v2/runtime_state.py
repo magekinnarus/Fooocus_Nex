@@ -117,8 +117,6 @@ class FluxResidentT5State:
         with self._lock:
             if self._posture is not None and self._key == requested_key:
                 self._posture.request = request
-                if self._posture.encoder is None:
-                    self._posture.load()
                 return self._posture
 
             stale_posture = self._posture
@@ -129,7 +127,6 @@ class FluxResidentT5State:
             stale_posture.teardown()
 
         posture = FluxCpuFp16ResidentT5Posture(request)
-        posture.load()
 
         with self._lock:
             self._posture = posture
@@ -204,4 +201,3 @@ def set_cached_latent_artifact_bundle(bundle: FluxLatentArtifactBundle) -> None:
 
 def release_flux_latent_artifacts() -> bool:
     return _LATENT_ARTIFACT_STATE.release()
-

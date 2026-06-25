@@ -1,9 +1,81 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
+import json
 from pathlib import Path
 from typing import Any
 import numpy as np
 import torch
+
+
+_DEFAULT_FLUX_FILL_ALLOWED_SAMPLERS = ("euler", "deis", "dpmpp_2m", "uni_pc")
+_DEFAULT_FLUX_FILL_ALLOWED_SCHEDULERS = ("beta", "normal", "simple", "sgm_uniform")
+_DEFAULT_FLUX_FILL_FALLBACK_SAMPLER = "euler"
+_DEFAULT_FLUX_FILL_FALLBACK_SCHEDULER = "simple"
+_FLUX_FILL_SAMPLER_SCHEDULER_ALLOWLIST_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "defaults" / "flux_fill_sampler_scheduler_allowlist.json"
+)
+
+
+def _normalize_flux_fill_sampling_name(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+@lru_cache(maxsize=1)
+def load_flux_fill_sampler_scheduler_allowlist() -> dict[str, Any]:
+    allowed_samplers = [_normalize_flux_fill_sampling_name(value) for value in _DEFAULT_FLUX_FILL_ALLOWED_SAMPLERS]
+    allowed_schedulers = [_normalize_flux_fill_sampling_name(value) for value in _DEFAULT_FLUX_FILL_ALLOWED_SCHEDULERS]
+    fallback_sampler = _normalize_flux_fill_sampling_name(_DEFAULT_FLUX_FILL_FALLBACK_SAMPLER)
+    fallback_scheduler = _normalize_flux_fill_sampling_name(_DEFAULT_FLUX_FILL_FALLBACK_SCHEDULER)
+
+    try:
+        with _FLUX_FILL_SAMPLER_SCHEDULER_ALLOWLIST_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        payload = {}
+
+    if isinstance(payload, dict):
+        configured_samplers = payload.get("allowed_samplers", allowed_samplers)
+        configured_schedulers = payload.get("allowed_schedulers", allowed_schedulers)
+        configured_fallback_sampler = payload.get("fallback_sampler", fallback_sampler)
+        configured_fallback_scheduler = payload.get("fallback_scheduler", fallback_scheduler)
+
+        if isinstance(configured_samplers, list):
+            normalized_samplers = [
+                _normalize_flux_fill_sampling_name(value)
+                for value in configured_samplers
+                if _normalize_flux_fill_sampling_name(value) != ""
+            ]
+            if normalized_samplers:
+                allowed_samplers = normalized_samplers
+
+        if isinstance(configured_schedulers, list):
+            normalized_schedulers = [
+                _normalize_flux_fill_sampling_name(value)
+                for value in configured_schedulers
+                if _normalize_flux_fill_sampling_name(value) != ""
+            ]
+            if normalized_schedulers:
+                allowed_schedulers = normalized_schedulers
+
+        normalized_fallback_sampler = _normalize_flux_fill_sampling_name(configured_fallback_sampler)
+        normalized_fallback_scheduler = _normalize_flux_fill_sampling_name(configured_fallback_scheduler)
+        if normalized_fallback_sampler != "":
+            fallback_sampler = normalized_fallback_sampler
+        if normalized_fallback_scheduler != "":
+            fallback_scheduler = normalized_fallback_scheduler
+
+    if fallback_sampler not in allowed_samplers:
+        allowed_samplers.append(fallback_sampler)
+    if fallback_scheduler not in allowed_schedulers:
+        allowed_schedulers.append(fallback_scheduler)
+
+    return {
+        "allowed_samplers": tuple(dict.fromkeys(allowed_samplers)),
+        "allowed_schedulers": tuple(dict.fromkeys(allowed_schedulers)),
+        "fallback_sampler": fallback_sampler,
+        "fallback_scheduler": fallback_scheduler,
+    }
 
 class UNetSpineKind(str, Enum):
     STREAMING = "streaming"
@@ -40,7 +112,7 @@ class FluxFillRequest:
     guidance: float = 15.0
     sampler: str = "euler"
     scheduler: str = "simple"
-    prefetch_depth: int = 0
+    prefetch_depth: int = 1
     prefetch_chunk_mb: int = 64
     unet_spine: UNetSpineKind = UNetSpineKind.STREAMING
     device: str | torch.device | None = None
@@ -58,11 +130,30 @@ class FluxFillRequest:
     total_ram_gb: float | None = None
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
-        # Enforce euler/simple for Flux Fill to ensure correct Flow Matching math
-        if self.sampler != "euler" or self.scheduler != "simple":
-            print(f"[Flux Fill] Overriding sampler/scheduler to euler/simple (was {self.sampler}/{self.scheduler})")
-            self.sampler = "euler"
-            self.scheduler = "simple"
+        policy = load_flux_fill_sampler_scheduler_allowlist()
+        original_sampler = str(self.sampler or "")
+        original_scheduler = str(self.scheduler or "")
+        normalized_sampler = _normalize_flux_fill_sampling_name(original_sampler)
+        normalized_scheduler = _normalize_flux_fill_sampling_name(original_scheduler)
+
+        resolved_sampler = (
+            normalized_sampler
+            if normalized_sampler in policy["allowed_samplers"]
+            else str(policy["fallback_sampler"])
+        )
+        resolved_scheduler = (
+            normalized_scheduler
+            if normalized_scheduler in policy["allowed_schedulers"]
+            else str(policy["fallback_scheduler"])
+        )
+
+        if resolved_sampler != original_sampler or resolved_scheduler != original_scheduler:
+            print(
+                f"[Flux Fill] Adjusted sampler/scheduler to "
+                f"{resolved_sampler}/{resolved_scheduler} (was {original_sampler}/{original_scheduler})"
+            )
+            self.sampler = resolved_sampler
+            self.scheduler = resolved_scheduler
 
         if self.steps < 1:
             raise ValueError(f"Steps must be >= 1, got {self.steps}.")

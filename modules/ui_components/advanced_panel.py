@@ -116,7 +116,7 @@ def build_debug_tab():
 
     results['prefetch_depth'] = gr.Slider(
         label='Flux Fill Prefetch Depth', minimum=0, maximum=2, step=1,
-        value=0,
+        value=1,
         info='Async scheduler prefetch depth for Flux Fill (0 to 2).'
     )
 
@@ -130,6 +130,13 @@ def build_debug_tab():
         label='Flux Fill Low RAM T5',
         value=_default_flux_fill_t5_low_ram_enabled(),
         info='Enable block-by-block garbage collection during T5 text encoding to fit within Colab Free / low RAM systems.'
+    )
+
+    results['flux_fill_runtime_posture'] = gr.Radio(
+        label='Flux Fill Runtime Posture',
+        choices=['auto', 'streaming'],
+        value='auto',
+        info='Benchmark override for Flux Fill UNet posture. Auto keeps solver behavior; high-VRAM systems may still resolve to resident. Streaming forces the streaming path.'
     )
     
     if not args_manager.args.disable_metadata:

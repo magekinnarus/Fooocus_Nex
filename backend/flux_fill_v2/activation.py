@@ -12,6 +12,10 @@ from backend.process_transition import (
     clear_active_runtime,
     set_active_runtime,
 )
+from backend.staging_manager import (
+    FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB,
+    FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB,
+)
 from backend.flux_fill_v2.contracts import UNetSpineKind, T5PostureKind
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,53 @@ def _coerce_positive_float(value: Any) -> float | None:
     if resolved <= 0.0:
         return None
     return resolved
+
+
+def _merge_flux_fill_prompt_text(prompt: Any, additional_prompt: Any) -> str:
+    prompt_text = str(prompt or "").strip()
+    additional_prompt_text = str(additional_prompt or "").strip()
+    if additional_prompt_text == "":
+        return prompt_text
+    if prompt_text == "":
+        return additional_prompt_text
+    return additional_prompt_text + "\n" + prompt_text
+
+
+def _resolve_flux_fill_prompt_text(task_state: Any) -> str:
+    if task_state is None:
+        return ""
+
+    remove_prompt = str(getattr(task_state, "remove_prompt", "") or "").strip()
+    merged_inpaint_prompt = _merge_flux_fill_prompt_text(
+        getattr(task_state, "prompt", ""),
+        getattr(task_state, "inpaint_additional_prompt", ""),
+    )
+    goal_tokens = {str(goal or "").strip().lower() for goal in getattr(task_state, "goals", [])}
+    current_tab = str(getattr(task_state, "current_tab", "") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    runtime_route_id = str(getattr(task_state, "runtime_route_id", "") or "").strip().lower()
+
+    try:
+        from modules.route_intent import resolve_route_intent
+
+        intent = resolve_route_intent(task_state, prefer_runtime_route=True)
+        if intent.wants_removal:
+            return remove_prompt
+        if intent.wants_inpaint:
+            return merged_inpaint_prompt
+    except Exception:
+        pass
+
+    if runtime_route_id == "removal":
+        return remove_prompt
+    if runtime_route_id == "flux_inpaint":
+        return merged_inpaint_prompt
+    if current_tab == "inpaint":
+        return merged_inpaint_prompt
+    if current_tab == "remove" and bool(getattr(task_state, "remove_obj_enabled", False)):
+        return remove_prompt
+    if {"remove_obj", "removal"} & goal_tokens:
+        return remove_prompt
+    return merged_inpaint_prompt
 
 
 def resolve_flux_fill_total_ram_gb(source: Any | None = None) -> float:
@@ -182,12 +233,15 @@ def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float 
     if total_ram_gb is None:
         total_ram_gb = resolve_flux_fill_total_ram_gb()
 
+    streaming_min_total_ram_gb = FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB / 1024.0
+    resident_min_total_ram_gb = FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB / 1024.0
+
     if unet_spine == UNetSpineKind.STREAMING:
-        if total_ram_gb < 40.0:
+        if total_ram_gb < streaming_min_total_ram_gb:
             return T5PostureKind.DISK_PAGED
         return T5PostureKind.CPU_FP16_RESIDENT
     else:  # RESIDENT
-        if total_ram_gb < 32.0:
+        if total_ram_gb < resident_min_total_ram_gb:
             return T5PostureKind.DISK_PAGED_LOWRAM
         return T5PostureKind.CPU_FP16_RESIDENT
 
@@ -224,22 +278,7 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
     else:
         ae_path = model_registry.ensure_asset(FLUX_FILL_AE_ASSET_ID)
 
-    # Resolve active prompt
-    prompt_text = ""
-    if task_state is not None:
-        goal_tokens = {str(goal or "").strip().lower() for goal in getattr(task_state, "goals", [])}
-        if {"remove_obj", "removal"} & goal_tokens or getattr(task_state, "remove_obj_enabled", False):
-            prompt_text = getattr(task_state, "remove_prompt", "") or ""
-        else:
-            prompt = str(getattr(task_state, "prompt", "") or "").strip()
-            additional_prompt = str(getattr(task_state, "inpaint_additional_prompt", "") or "").strip()
-            if additional_prompt == "":
-                prompt_text = prompt
-            elif prompt == "":
-                prompt_text = additional_prompt
-            else:
-                prompt_text = additional_prompt + "\n" + prompt
-    prompt_text = str(prompt_text).strip()
+    prompt_text = _resolve_flux_fill_prompt_text(task_state)
 
     if prompt_text != "":
         conditioning_kind = "prompt"

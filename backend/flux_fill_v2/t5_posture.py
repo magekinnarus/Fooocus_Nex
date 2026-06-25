@@ -5,6 +5,7 @@ import json
 import logging
 import hashlib
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -788,6 +789,7 @@ class FluxDiskPagedT5Posture:
 
     def get_conditioning(self, request: FluxFillRequest) -> FluxEmptyConditioning:
         if not request.prompt or not str(request.prompt).strip():
+            logger.debug("[Flux Telemetry] Empty prompt, loading empty conditioning cache.")
             return load_flux_empty_conditioning_cache(request.conditioning_cache_path)
 
         prompt_text = str(request.prompt).strip()
@@ -797,21 +799,29 @@ class FluxDiskPagedT5Posture:
             raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
 
         cache_path = _resolve_request_conditioning_cache_path(request)
+        logger.debug(f"[Flux Telemetry] Checking prompt conditioning cache at: {cache_path}")
         if cache_path.exists():
+            logger.debug(f"[Flux Telemetry] Prompt conditioning cache HIT for path: {cache_path}")
             return load_flux_empty_conditioning_cache(cache_path)
 
+        logger.debug(f"[Flux Telemetry] Prompt conditioning cache MISS. Loading CLIP/T5 text encoders: clip_l={clip_l_path}, t5={t5_path}")
         # Lazy Safetensors stream policy
         t5_loader_policy = "stream_safetensors_runtime" if Path(t5_path).suffix.lower() == ".safetensors" else "eager"
 
+        encoder_load_start = time.perf_counter()
         encoder = load_flux_prompt_text_encoder(
             clip_l_path=clip_l_path,
             t5_path=t5_path,
             t5_loader_policy=t5_loader_policy,
             low_ram_gc=self.low_ram_gc,
         )
+        logger.debug(f"[Flux Telemetry] CLIP/T5 text encoders loaded in {time.perf_counter() - encoder_load_start:.3f}s. Encoding prompt...")
 
         try:
+            encode_start = time.perf_counter()
             cross_attn, pooled_output = encoder.encode(prompt_text)
+            encode_time = time.perf_counter() - encode_start
+            logger.debug(f"[Flux Telemetry] Prompt encoded successfully in {encode_time:.3f}s. Saving to cache: {cache_path}")
             cond = save_flux_prompt_conditioning_cache(
                 cache_path,
                 cross_attn=cross_attn,
@@ -827,6 +837,7 @@ class FluxDiskPagedT5Posture:
             )
             return cond
         finally:
+            logger.debug("[Flux Telemetry] Ejecting and cleaning up T5 text encoder.")
             if encoder is not None:
                 try:
                     resources.eject_model(encoder.patcher)
@@ -865,6 +876,7 @@ class FluxCpuFp16ResidentT5Posture:
 
     def get_conditioning(self, request: FluxFillRequest) -> FluxEmptyConditioning:
         if not request.prompt or not str(request.prompt).strip():
+            logger.debug("[Flux Telemetry] Empty prompt, loading empty conditioning cache.")
             return load_flux_empty_conditioning_cache(request.conditioning_cache_path)
 
         prompt_text = str(request.prompt).strip()
@@ -874,14 +886,21 @@ class FluxCpuFp16ResidentT5Posture:
             raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
 
         cache_path = _resolve_request_conditioning_cache_path(request)
+        logger.debug(f"[Flux Telemetry] Checking prompt conditioning cache at: {cache_path}")
         if cache_path.exists():
+            logger.debug(f"[Flux Telemetry] Prompt conditioning cache HIT for path: {cache_path}")
             return load_flux_empty_conditioning_cache(cache_path)
 
         if self.encoder is None:
+            logger.debug(f"[Flux Telemetry] Resident T5 encoder is not loaded. Loading eagerly...")
             self.load()
+            logger.debug(f"[Flux Telemetry] Resident T5 encoder loaded successfully.")
 
-        # self.encoder is verified not None here
+        logger.debug(f"[Flux Telemetry] Encoding prompt with resident T5.")
+        encode_start = time.perf_counter()
         cross_attn, pooled_output = self.encoder.encode(prompt_text)
+        encode_time = time.perf_counter() - encode_start
+        logger.debug(f"[Flux Telemetry] Prompt encoded successfully in {encode_time:.3f}s. Saving to cache: {cache_path}")
         cond = save_flux_prompt_conditioning_cache(
             cache_path,
             cross_attn=cross_attn,

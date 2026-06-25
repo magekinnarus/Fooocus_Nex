@@ -59,8 +59,9 @@ FLUX_RESIDENT_LOAD_STANDARD = "resident_cpu_shadow"
 FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW = "sticky_no_cpu_shadow"
 FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB = 40 * 1024.0
 FLUX_T5_STREAMING_MIN_AVAILABLE_RAM_MB = 32 * 1024.0
-FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB = 32 * 1024.0
+FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB = 31 * 1024.0
 FLUX_T5_RESIDENT_MIN_AVAILABLE_RAM_MB = 24 * 1024.0
+HIGH_VRAM_MIN_TOTAL_VRAM_MB = 14 * 1024.0
 FLUX_RESIDENT_EXECUTION_CLASSES = {
     ExecutionClass.FLUX_RESIDENT_T4,
     ExecutionClass.FLUX_RESIDENT_T5,
@@ -626,7 +627,7 @@ class ExecutionClassSolver:
     def hardware_tier_for_vram(vram_total_mb: float, total_ram_mb: float = 16384.0) -> HardwareTier:
         if vram_total_mb <= 6144.0:
             return HardwareTier.LOW_VRAM
-        if vram_total_mb < 15360.0:
+        if vram_total_mb < HIGH_VRAM_MIN_TOTAL_VRAM_MB:
             return HardwareTier.NORMAL_VRAM
         return HardwareTier.HIGH_VRAM
 

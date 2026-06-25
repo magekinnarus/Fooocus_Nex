@@ -1,0 +1,16 @@
+{
+  "allowed_samplers": [
+    "euler",
+    "deis",
+    "dpmpp_2m",
+    "uni_pc"
+  ],
+  "allowed_schedulers": [
+    "beta",
+    "normal",
+    "simple",
+    "sgm_uniform"
+  ],
+  "fallback_sampler": "euler",
+  "fallback_scheduler": "simple"
+}

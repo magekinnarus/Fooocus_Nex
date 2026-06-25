@@ -4,6 +4,7 @@ import gc
 import sys
 import time
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ import torch
 from backend import resources
 from backend.flux_fill_v2.vae_loader import load_flux_ae
 from backend.flux_fill_v2.contracts import FluxFillRequest, FluxLatentArtifactBundle
+
+logger = logging.getLogger(__name__)
 
 
 def hash_ndarray(arr: np.ndarray | None) -> str:
@@ -129,9 +132,11 @@ class FluxTransientVAEPosture:
 
     def prepare_artifacts(self, device: torch.device) -> FluxLatentArtifactBundle:
         """Loads VAE transiently, runs encode steps, builds artifacts, and ejects VAE."""
+        logger.debug(f"[Flux Telemetry] Loading VAE transiently from: {self.request.ae_path}")
         vae_load_start = time.perf_counter()
         vae = load_flux_ae(self.request.ae_path, load_device="cpu", offload_device="cpu")
         vae_load_time = time.perf_counter() - vae_load_start
+        logger.debug(f"[Flux Telemetry] VAE loaded in {vae_load_time:.3f}s. Encoding latents...")
 
         try:
             encode_start = time.perf_counter()
@@ -139,6 +144,7 @@ class FluxTransientVAEPosture:
                 vae, self.request.image, self.request.mask, device
             )
             vae_encode_time = time.perf_counter() - encode_start
+            logger.debug(f"[Flux Telemetry] VAE encoding finished in {vae_encode_time:.3f}s.")
             
             fingerprint = self.compute_fingerprint()
             return FluxLatentArtifactBundle(
@@ -154,14 +160,17 @@ class FluxTransientVAEPosture:
 
     def decode(self, samples: torch.Tensor, device: torch.device) -> tuple[np.ndarray, float, float]:
         """Loads VAE transiently, decodes samples, and ejects VAE."""
+        logger.debug(f"[Flux Telemetry] Loading VAE transiently to decode from: {self.request.ae_path}")
         vae_load_start = time.perf_counter()
         vae = load_flux_ae(self.request.ae_path, load_device="cpu", offload_device="cpu")
         vae_load_time = time.perf_counter() - vae_load_start
+        logger.debug(f"[Flux Telemetry] VAE loaded in {vae_load_time:.3f}s. Decoding latents...")
 
         try:
             decode_start = time.perf_counter()
             output_image = _decode_vae_latents(vae, samples, device)
             vae_decode_time = time.perf_counter() - decode_start
+            logger.debug(f"[Flux Telemetry] VAE decoding finished in {vae_decode_time:.3f}s.")
             return output_image, vae_load_time, vae_decode_time
         finally:
             self._eject_vae(vae)
@@ -169,6 +178,7 @@ class FluxTransientVAEPosture:
     def _eject_vae(self, vae: Any) -> None:
         if vae is None:
             return
+        logger.debug("[Flux Telemetry] Ejecting VAE model and freeing VRAM cache.")
         try:
             patcher = getattr(vae, "patcher", None)
             if patcher is not None:
@@ -181,4 +191,4 @@ class FluxTransientVAEPosture:
             if callable(detach):
                 detach()
         gc.collect()
-        resources.soft_empty_cache()
+        resources.soft_empty_cache(force=True)
