@@ -5,6 +5,8 @@ import json
 import logging
 import hashlib
 import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ from backend.flux_fill_v2.contracts import (
 )
 from backend.flux_fill_v2.conditioning_loader import (
     FluxEmptyConditioning,
+    format_flux_conditioning_memory_summary,
     load_flux_empty_conditioning_cache,
 )
 from ldm_patched.ldm.modules.attention import optimized_attention_for_device
@@ -37,6 +40,14 @@ _T5_FIXED_LENGTH = 256
 _CLIP_L_KEY = "text_model.encoder.layers.1.mlp.fc1.weight"
 _T5_KEY = "encoder.block.23.layer.1.DenseReluDense.wi_1.weight"
 _T5_KEY_OLD = "encoder.block.23.layer.1.DenseReluDense.wi.weight"
+
+
+def _describe_cache_path(path: Path) -> str:
+    try:
+        size_mb = float(path.stat().st_size) / (1024 * 1024)
+        return f"exists={path.exists()} size={size_mb:.3f}MB"
+    except OSError:
+        return f"exists={path.exists()} size=n/a"
 
 
 def flux_t5_tokenizer_path() -> Path:
@@ -777,176 +788,200 @@ def _resolve_request_conditioning_cache_path(request: FluxFillRequest) -> Path:
     return Path(explicit_path)
 
 
+def _flux_prompt_conditioning_generator_script() -> Path:
+    return Path(__file__).resolve().parents[2] / "tools" / "generate_flux_t5_fp16_stream_artifact.py"
+
+
+def _flux_prompt_conditioning_metrics_path(cache_path: Path) -> Path:
+    return cache_path.with_suffix(cache_path.suffix + ".metrics.json")
+
+
+def _extract_json_payload_from_process_output(stdout: str) -> dict[str, Any]:
+    lines = [line.strip() for line in str(stdout or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise ValueError("Artifact generator did not emit a JSON object on stdout.")
+
+
+def _summarize_process_output(text: str, *, limit: int = 400) -> str:
+    cleaned = " ".join(str(text or "").splitlines()).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3] + "..."
+
+
+def _require_disk_paged_t5_checkpoint(t5_path: str | Path) -> Path:
+    resolved = Path(t5_path)
+    if resolved.suffix.lower() != ".safetensors":
+        raise ValueError(
+            "Flux disk-paged T5 artifact generation requires a .safetensors T5 checkpoint."
+        )
+    return resolved
+
+
+def generate_flux_prompt_conditioning_artifact(
+    *,
+    prompt_text: str,
+    clip_l_path: str | Path,
+    t5_path: str | Path,
+    cache_path: str | Path,
+) -> dict[str, Any]:
+    script_path = _flux_prompt_conditioning_generator_script()
+    if not script_path.exists():
+        raise FileNotFoundError(f"Flux prompt-conditioning generator script not found: {script_path}")
+
+    cache_path = Path(cache_path)
+    t5_path = _require_disk_paged_t5_checkpoint(t5_path)
+    metrics_path = _flux_prompt_conditioning_metrics_path(cache_path)
+    repo_root = script_path.parent.parent
+    command = [
+        sys.executable,
+        str(script_path),
+        "--prompt",
+        str(prompt_text),
+        "--output",
+        str(cache_path),
+        "--clip-l",
+        str(clip_l_path),
+        "--fp16-t5",
+        str(t5_path),
+        "--metrics-json",
+        str(metrics_path),
+    ]
+
+    logger.debug(
+        "[Flux Telemetry] Launching isolated prompt-conditioning generator posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True cache_path=%s metrics_path=%s %s",
+        cache_path,
+        metrics_path,
+        format_flux_conditioning_memory_summary(tag="conditioning_generator_launch"),
+    )
+
+    gc.collect()
+    try:
+        resources.soft_empty_cache(force=True)
+    except Exception:
+        pass
+
+    start = time.perf_counter()
+    completed = subprocess.run(
+        command,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    wall = time.perf_counter() - start
+
+    try:
+        payload = _extract_json_payload_from_process_output(completed.stdout)
+    except Exception:
+        payload = {}
+
+    if completed.returncode != 0 or payload.get("status") != "ok":
+        stdout_summary = _summarize_process_output(completed.stdout)
+        stderr_summary = _summarize_process_output(completed.stderr)
+        error_message = None
+        if isinstance(payload.get("error"), dict):
+            error_message = payload["error"].get("message")
+        raise RuntimeError(
+            "Flux prompt-conditioning artifact generation failed "
+            f"(posture=disk_paged_t5, policy=stream_safetensors_runtime, exit_code={completed.returncode}, "
+            f"error={error_message!r}, stdout={stdout_summary!r}, stderr={stderr_summary!r})."
+        )
+
+    logger.debug(
+        "[Flux Telemetry] Isolated prompt-conditioning generator completed in %.3fs posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True output_path=%s metrics_path=%s %s",
+        wall,
+        payload.get("output_path") or payload.get("output") or str(cache_path),
+        payload.get("metrics_path") or str(metrics_path),
+        format_flux_conditioning_memory_summary(tag="conditioning_generator_complete"),
+    )
+    return payload
+
+
+def _load_or_generate_prompt_conditioning(
+    request: FluxFillRequest,
+) -> FluxEmptyConditioning:
+    prompt_text = str(request.prompt or "").strip()
+    clip_l_path = request.clip_l_path
+    t5_path = request.t5_path
+    if not clip_l_path or not t5_path:
+        raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
+    t5_path = _require_disk_paged_t5_checkpoint(t5_path)
+
+    cache_path = _resolve_request_conditioning_cache_path(request)
+    logger.debug(
+        "[Flux Telemetry] T5 conditioning begin posture=disk_paged_t5 prompt_len=%d low_ram_gc=True cache_path=%s %s %s",
+        len(prompt_text),
+        cache_path,
+        _describe_cache_path(cache_path),
+        format_flux_conditioning_memory_summary(tag="conditioning_begin"),
+    )
+    logger.debug(f"[Flux Telemetry] Checking prompt conditioning cache at: {cache_path}")
+    if cache_path.exists():
+        logger.debug(f"[Flux Telemetry] Prompt conditioning cache HIT for path: {cache_path}")
+        try:
+            return load_flux_empty_conditioning_cache(cache_path)
+        except Exception:
+            logger.exception(
+                "[Flux Telemetry] Prompt conditioning cache reuse failed path=%s posture=disk_paged_t5 %s",
+                cache_path,
+                format_flux_conditioning_memory_summary(tag="conditioning_cache_reuse_failed"),
+            )
+            raise
+
+    logger.debug(
+        "[Flux Telemetry] Prompt conditioning cache MISS. Launching isolated artifact generator clip_l=%s t5=%s posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True",
+        clip_l_path,
+        t5_path,
+    )
+    generate_flux_prompt_conditioning_artifact(
+        prompt_text=prompt_text,
+        clip_l_path=clip_l_path,
+        t5_path=t5_path,
+        cache_path=cache_path,
+    )
+    logger.debug(
+        "[Flux Telemetry] Prompt conditioning artifact ready posture=disk_paged_t5 cache_path=%s %s",
+        cache_path,
+        format_flux_conditioning_memory_summary(tag="conditioning_artifact_ready"),
+    )
+    return load_flux_empty_conditioning_cache(cache_path)
+
+
 class FluxDiskPagedT5Posture:
     """ Greenfield Disk Paged T5 Posture Contract.
     
-    Loads T5/CLIP text encoder on-demand (streaming safely from safetensors/mmap)
-    and tears down immediately after prompt conditioning generation to free RAM.
+    Ensures prompt-conditioning artifacts via an isolated subprocess generator and
+    then loads the cached artifact into the main runtime.
     """
-    def __init__(self, request: FluxFillRequest, *, low_ram_gc: bool = False) -> None:
+    def __init__(self, request: FluxFillRequest) -> None:
         self.request = request
-        self.low_ram_gc = low_ram_gc
 
     def get_conditioning(self, request: FluxFillRequest) -> FluxEmptyConditioning:
         if not request.prompt or not str(request.prompt).strip():
-            logger.debug("[Flux Telemetry] Empty prompt, loading empty conditioning cache.")
-            return load_flux_empty_conditioning_cache(request.conditioning_cache_path)
-
-        prompt_text = str(request.prompt).strip()
-        clip_l_path = request.clip_l_path
-        t5_path = request.t5_path
-        if not clip_l_path or not t5_path:
-            raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
-
-        cache_path = _resolve_request_conditioning_cache_path(request)
-        logger.debug(f"[Flux Telemetry] Checking prompt conditioning cache at: {cache_path}")
-        if cache_path.exists():
-            logger.debug(f"[Flux Telemetry] Prompt conditioning cache HIT for path: {cache_path}")
-            return load_flux_empty_conditioning_cache(cache_path)
-
-        logger.debug(f"[Flux Telemetry] Prompt conditioning cache MISS. Loading CLIP/T5 text encoders: clip_l={clip_l_path}, t5={t5_path}")
-        # Lazy Safetensors stream policy
-        t5_loader_policy = "stream_safetensors_runtime" if Path(t5_path).suffix.lower() == ".safetensors" else "eager"
-
-        encoder_load_start = time.perf_counter()
-        encoder = load_flux_prompt_text_encoder(
-            clip_l_path=clip_l_path,
-            t5_path=t5_path,
-            t5_loader_policy=t5_loader_policy,
-            low_ram_gc=self.low_ram_gc,
-        )
-        logger.debug(f"[Flux Telemetry] CLIP/T5 text encoders loaded in {time.perf_counter() - encoder_load_start:.3f}s. Encoding prompt...")
-
-        try:
-            encode_start = time.perf_counter()
-            cross_attn, pooled_output = encoder.encode(prompt_text)
-            encode_time = time.perf_counter() - encode_start
-            logger.debug(f"[Flux Telemetry] Prompt encoded successfully in {encode_time:.3f}s. Saving to cache: {cache_path}")
-            cond = save_flux_prompt_conditioning_cache(
-                cache_path,
-                cross_attn=cross_attn,
-                pooled_output=pooled_output,
-                metadata={
-                    "prompt": prompt_text,
-                    "clip_l_path": str(clip_l_path),
-                    "t5_path": str(t5_path),
-                    "conditioning_kind": "prompt",
-                    "t5_loader_policy": t5_loader_policy,
-                    "posture": "disk_paged_lowram" if self.low_ram_gc else "disk_paged_t5",
-                }
+            logger.debug(
+                "[Flux Telemetry] Empty prompt, loading empty conditioning cache. %s",
+                format_flux_conditioning_memory_summary(tag="disk_paged_empty_prompt"),
             )
-            return cond
-        finally:
-            logger.debug("[Flux Telemetry] Ejecting and cleaning up T5 text encoder.")
-            if encoder is not None:
-                try:
-                    resources.eject_model(encoder.patcher)
-                except Exception:
-                    detach = getattr(encoder.patcher, "detach", None)
-                    if callable(detach):
-                        detach()
-                del encoder
-            gc.collect()
-            try:
-                resources.soft_empty_cache(force=True)
-            except Exception:
-                pass
-
-
-class FluxCpuFp16ResidentT5Posture:
-    """ Greenfield CPU FP16 Resident T5 Posture Contract.
-    
-    Loads T5/CLIP text encoder eagerly and retains it on host CPU RAM for
-    extremely fast warm reuse across compatible requests.
-    """
-    def __init__(self, request: FluxFillRequest) -> None:
-        self.request = request
-        self.encoder: FluxPromptTextEncoder | None = None
-        self.clip_l_path = request.clip_l_path
-        self.t5_path = request.t5_path
-
-    def load(self) -> None:
-        if not self.clip_l_path or not self.t5_path:
-            raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
-        self.encoder = load_flux_prompt_text_encoder(
-            clip_l_path=self.clip_l_path,
-            t5_path=self.t5_path,
-            t5_loader_policy="eager",
-        )
-
-    def get_conditioning(self, request: FluxFillRequest) -> FluxEmptyConditioning:
-        if not request.prompt or not str(request.prompt).strip():
-            logger.debug("[Flux Telemetry] Empty prompt, loading empty conditioning cache.")
             return load_flux_empty_conditioning_cache(request.conditioning_cache_path)
 
-        prompt_text = str(request.prompt).strip()
-        clip_l_path = request.clip_l_path
-        t5_path = request.t5_path
-        if not clip_l_path or not t5_path:
-            raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
-
-        cache_path = _resolve_request_conditioning_cache_path(request)
-        logger.debug(f"[Flux Telemetry] Checking prompt conditioning cache at: {cache_path}")
-        if cache_path.exists():
-            logger.debug(f"[Flux Telemetry] Prompt conditioning cache HIT for path: {cache_path}")
-            return load_flux_empty_conditioning_cache(cache_path)
-
-        if self.encoder is None:
-            logger.debug(f"[Flux Telemetry] Resident T5 encoder is not loaded. Loading eagerly...")
-            self.load()
-            logger.debug(f"[Flux Telemetry] Resident T5 encoder loaded successfully.")
-
-        logger.debug(f"[Flux Telemetry] Encoding prompt with resident T5.")
-        encode_start = time.perf_counter()
-        cross_attn, pooled_output = self.encoder.encode(prompt_text)
-        encode_time = time.perf_counter() - encode_start
-        logger.debug(f"[Flux Telemetry] Prompt encoded successfully in {encode_time:.3f}s. Saving to cache: {cache_path}")
-        cond = save_flux_prompt_conditioning_cache(
-            cache_path,
-            cross_attn=cross_attn,
-            pooled_output=pooled_output,
-            metadata={
-                "prompt": prompt_text,
-                "clip_l_path": str(clip_l_path),
-                "t5_path": str(t5_path),
-                "conditioning_kind": "prompt",
-                "t5_loader_policy": "eager",
-                "posture": "cpu_fp16_resident",
-            }
-        )
-        return cond
-
-    def teardown(self) -> None:
-        if self.encoder is not None:
-            try:
-                resources.eject_model(self.encoder.patcher)
-            except Exception:
-                detach = getattr(self.encoder.patcher, "detach", None)
-                if callable(detach):
-                    detach()
-            self.encoder = None
-        gc.collect()
-        try:
-            resources.soft_empty_cache(force=True)
-        except Exception:
-            pass
-
-
-class FluxLowRamT5Posture(FluxDiskPagedT5Posture):
-    """ Greenfield Low RAM Disk Paged T5 Posture.
-    
-    Identical to FluxDiskPagedT5Posture but forces block-by-block garbage collection
-    during text encoding to prevent memory spikes on RAM-constrained machines.
-    """
-    def __init__(self, request: FluxFillRequest) -> None:
-        super().__init__(request, low_ram_gc=True)
+        # Disk-paged prompt generation always uses the strict safetensors streaming worker.
+        return _load_or_generate_prompt_conditioning(request)
 
 
 def acquire_t5_posture(kind: T5PostureKind, request: FluxFillRequest) -> Any:
-    if kind == T5PostureKind.CPU_FP16_RESIDENT:
-        from backend.flux_fill_v2.runtime_state import acquire_resident_t5
-        return acquire_resident_t5(request)
-    elif kind == T5PostureKind.DISK_PAGED_LOWRAM:
-        return FluxLowRamT5Posture(request)
-    else:
-        return FluxDiskPagedT5Posture(request)
+    prompt_text = str(getattr(request, "prompt", "") or "").strip()
+    logger.debug(
+        "[Flux Telemetry] Acquiring T5 posture kind=%s prompt_present=%s prompt_len=%d %s",
+        getattr(kind, "value", kind),
+        bool(prompt_text),
+        len(prompt_text),
+        format_flux_conditioning_memory_summary(tag="acquire_t5_posture"),
+    )
+    return FluxDiskPagedT5Posture(request)

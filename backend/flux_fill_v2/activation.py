@@ -12,10 +12,6 @@ from backend.process_transition import (
     clear_active_runtime,
     set_active_runtime,
 )
-from backend.staging_manager import (
-    FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB,
-    FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB,
-)
 from backend.flux_fill_v2.contracts import UNetSpineKind, T5PostureKind
 
 logger = logging.getLogger(__name__)
@@ -225,25 +221,14 @@ def _resolve_flux_fill_model_variant(task_state: Any) -> str:
     return "flux_fill_fp8"
 
 
-def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None, *, low_ram_override: bool = False) -> T5PostureKind:
-    """ Authoritative T5 Posture Selector driven by UNet spine, RAM, and UI override. """
-    if low_ram_override:
-        return T5PostureKind.DISK_PAGED_LOWRAM
+def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
+    """Authoritative Flux Fill T5 selector.
 
-    if total_ram_gb is None:
-        total_ram_gb = resolve_flux_fill_total_ram_gb()
-
-    streaming_min_total_ram_gb = FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB / 1024.0
-    resident_min_total_ram_gb = FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB / 1024.0
-
-    if unet_spine == UNetSpineKind.STREAMING:
-        if total_ram_gb < streaming_min_total_ram_gb:
-            return T5PostureKind.DISK_PAGED
-        return T5PostureKind.CPU_FP16_RESIDENT
-    else:  # RESIDENT
-        if total_ram_gb < resident_min_total_ram_gb:
-            return T5PostureKind.DISK_PAGED_LOWRAM
-        return T5PostureKind.CPU_FP16_RESIDENT
+    W06R stabilizes T5 on the isolated disk-paged artifact path regardless of
+    UNet spine or host RAM so the runtime baseline stays deterministic.
+    """
+    del unet_spine, total_ram_gb
+    return T5PostureKind.DISK_PAGED
 
 
 def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None:
@@ -372,7 +357,6 @@ def resolve_flux_fill_process_key(
     t5_posture_kind = resolve_flux_fill_t5_posture(
         spine_kind,
         resolve_flux_fill_total_ram_gb(task_state),
-        low_ram_override=bool(getattr(task_state, "flux_fill_t5_low_ram", False)),
     )
     _assign_task_state_attr(task_state, "flux_fill_t5_posture", t5_posture_kind.value)
 

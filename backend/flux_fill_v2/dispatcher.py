@@ -16,7 +16,6 @@ from backend.flux_fill_v2.contracts import (
     FluxRuntimeIdentity,
     UNetSpineKind,
     VAEPostureKind,
-    T5PostureKind,
 )
 from backend.flux_fill_v2.streaming_spine import FluxStreamingUNetSpine
 from backend.flux_fill_v2.resident_spine import FluxResidentUNetSpine
@@ -56,7 +55,6 @@ class FluxDispatcher:
             t5_posture_kind = resolve_flux_fill_t5_posture(
                 request.unet_spine,
                 resolve_flux_fill_total_ram_gb(request),
-                low_ram_override=bool(request.flux_fill_t5_low_ram),
             )
 
         # Select spine based on requested unet_spine kind
@@ -115,9 +113,6 @@ class FluxDispatcher:
         except Exception:
             if retain_resident_spine:
                 release_active_flux_resident_spine(reason="dispatcher_denoise_failed")
-            if t5_posture_kind == T5PostureKind.CPU_FP16_RESIDENT:
-                from backend.flux_fill_v2.runtime_state import release_active_flux_resident_t5
-                release_active_flux_resident_t5()
             raise
         finally:
             if not retain_resident_spine:

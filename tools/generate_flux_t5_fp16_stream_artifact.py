@@ -107,7 +107,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--fp16-t5", default=str(DEFAULT_FP16_T5_PATH), help="Path to the fp16 T5 safetensors weights.")
     parser.add_argument("--embedding-directory", default=None, help="Optional embedding directory.")
     parser.add_argument("--metrics-json", default=None, help="Optional metrics JSON output path.")
-    parser.add_argument("--forward-trace", action="store_true", help="Enable heavy per-layer forward memory sampling for debugging.")
     parser.add_argument("--traceback", action="store_true")
     return parser.parse_args()
 
@@ -117,25 +116,27 @@ def main() -> int:
     prompt_text = str(args.prompt or "").strip()
     if not prompt_text:
         raise ValueError("--prompt must be a non-empty string.")
+    if Path(args.fp16_t5).suffix.lower() != ".safetensors":
+        raise ValueError("--fp16-t5 must point to a .safetensors checkpoint for disk-paged worker execution.")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path = Path(args.metrics_json) if args.metrics_json else output_path.with_suffix(output_path.suffix + ".metrics.json")
 
     from backend import resources
-    from backend.flux.flux_fill_pipeline import save_flux_empty_conditioning_cache
-    from tools import flux_text_conditioning_experiments as experiments
+    from backend.flux_fill_v2.t5_posture import (
+        load_flux_prompt_text_encoder,
+        save_flux_prompt_conditioning_cache,
+    )
 
-    experiments.clear_flux_prompt_text_encoder_cache()
     gc.collect()
     try:
         resources.soft_empty_cache(force=True)
     except Exception:
         pass
 
+    encoder = None
     try:
-        experiments.set_stream_trace_forward_sampling(bool(args.forward_trace))
-        experiments.reset_stream_trace_stats()
         with MemorySampler() as memory:
             phase_snapshots: list[dict[str, Any]] = []
             total_start = time.perf_counter()
@@ -147,14 +148,12 @@ def main() -> int:
                 }
             )
             load_start = time.perf_counter()
-            encoder = experiments.get_flux_prompt_text_encoder(
+            encoder = load_flux_prompt_text_encoder(
                 clip_l_path=Path(args.clip_l),
                 t5_path=Path(args.fp16_t5),
                 embedding_directory=Path(args.embedding_directory) if args.embedding_directory else None,
-                load_device="cpu",
-                offload_device="cpu",
-                keep_resident=False,
                 t5_loader_policy="stream_safetensors_runtime",
+                low_ram_gc=True,
             )
             model_load_wall = time.perf_counter() - load_start
             loader_metadata = dict(getattr(encoder, "_nex_load_metadata", {}) or {})
@@ -171,7 +170,6 @@ def main() -> int:
             cross_attn, pooled_output = encoder.encode(prompt_text)
             encode_wall = time.perf_counter() - encode_start
             encode_cpu_proc = time.process_time() - encode_cpu_start
-            stream_trace = experiments.consume_stream_trace_stats()
             phase_snapshots.append(
                 {
                     "phase": "post_encode",
@@ -181,10 +179,10 @@ def main() -> int:
             )
 
             save_start = time.perf_counter()
-            conditioning = save_flux_empty_conditioning_cache(
+            conditioning = save_flux_prompt_conditioning_cache(
                 output_path,
-                cross_attn=cross_attn.to(device="cpu"),
-                pooled_output=pooled_output.to(device="cpu"),
+                cross_attn=cross_attn,
+                pooled_output=pooled_output,
                 metadata={
                     "prompt": prompt_text,
                     "clip_l_path": str(args.clip_l),
@@ -195,9 +193,9 @@ def main() -> int:
                     "transport": "pt_cache",
                     "text_encoder_resident": False,
                     "t5_loader_policy": "stream_safetensors_runtime",
-                    "forward_trace_enabled": bool(args.forward_trace),
+                    "low_ram_gc": True,
+                    "posture": "disk_paged_t5",
                     "loader_metadata": loader_metadata,
-                    "stream_trace": stream_trace,
                     "phase_snapshots": phase_snapshots,
                 },
             )
@@ -231,8 +229,9 @@ def main() -> int:
             "conditioning_dtype": str(conditioning.cross_attn.dtype),
             "pooled_dtype": str(conditioning.pooled_output.dtype),
             "loader_metadata": loader_metadata,
-            "stream_trace": stream_trace,
-            "forward_trace_enabled": bool(args.forward_trace),
+            "low_ram_gc": True,
+            "t5_loader_policy": "stream_safetensors_runtime",
+            "posture_label": "disk_paged_t5",
             "phase_snapshots": phase_snapshots,
             "process_isolated": True,
             "pid": int(os.getpid()),
@@ -257,7 +256,13 @@ def main() -> int:
         return 1
     finally:
         try:
-            experiments.set_stream_trace_forward_sampling(False)
+            if encoder is not None:
+                try:
+                    resources.eject_model(encoder.patcher)
+                except Exception:
+                    detach = getattr(encoder.patcher, "detach", None)
+                    if callable(detach):
+                        detach()
         except Exception:
             pass
         try:

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from backend import resources
 from backend.flux_fill_v2.unet_contract import FluxFillValidationError, _validate_tensor_shape
 
+logger = logging.getLogger(__name__)
 
 EMPTY_FLUX_CROSS_ATTN_SHAPE = (1, 256, 4096)
 EMPTY_FLUX_POOLED_SHAPE = (1, 768)
@@ -46,6 +49,37 @@ class FluxEmptyConditioning:
         return cross_attn, pooled_output
 
 
+def format_flux_conditioning_memory_summary(*, tag: str | None = None) -> str:
+    parts: list[str] = []
+    if tag:
+        parts.append(f"tag={tag}")
+    try:
+        snapshot = resources.capture_memory_snapshot(notes={"tag": tag or "flux_conditioning"})
+        parts.append(f"phase={snapshot.phase}")
+        if snapshot.total_ram_mb is not None:
+            parts.append(f"ram_total={snapshot.total_ram_mb:.1f}MB")
+        if snapshot.free_ram_mb is not None:
+            parts.append(f"ram_free={snapshot.free_ram_mb:.1f}MB")
+        if snapshot.total_ram_mb is not None and snapshot.free_ram_mb is not None:
+            parts.append(f"ram_used={snapshot.total_ram_mb - snapshot.free_ram_mb:.1f}MB")
+        if snapshot.total_vram_mb is not None:
+            parts.append(f"vram_total={snapshot.total_vram_mb:.1f}MB")
+        if snapshot.free_vram_mb is not None:
+            parts.append(f"vram_free={snapshot.free_vram_mb:.1f}MB")
+    except Exception:
+        parts.append("memory_snapshot=unavailable")
+
+    try:
+        import psutil
+
+        process_rss_mb = float(psutil.Process().memory_info().rss) / (1024 * 1024)
+        parts.append(f"proc_rss={process_rss_mb:.1f}MB")
+    except Exception:
+        pass
+
+    return " ".join(parts)
+
+
 def load_flux_empty_conditioning_cache(
     path: Path | str,
     *,
@@ -55,10 +89,31 @@ def load_flux_empty_conditioning_cache(
     if not cache_path.exists():
         raise FileNotFoundError(f"Flux empty-conditioning cache does not exist: {cache_path}")
 
+    cache_size_mb = None
+    try:
+        cache_size_mb = float(cache_path.stat().st_size) / (1024 * 1024)
+    except OSError:
+        pass
+
+    logger.debug(
+        "[Flux Telemetry] Conditioning cache load begin path=%s size=%s %s",
+        cache_path,
+        "n/a" if cache_size_mb is None else f"{cache_size_mb:.3f}MB",
+        format_flux_conditioning_memory_summary(tag="conditioning_cache_load_begin"),
+    )
+
     try:
         payload = torch.load(cache_path, map_location=map_location, weights_only=False)
     except TypeError:
         payload = torch.load(cache_path, map_location=map_location)
+    except Exception:
+        logger.exception(
+            "[Flux Telemetry] Conditioning cache load failed path=%s size=%s %s",
+            cache_path,
+            "n/a" if cache_size_mb is None else f"{cache_size_mb:.3f}MB",
+            format_flux_conditioning_memory_summary(tag="conditioning_cache_load_failed"),
+        )
+        raise
 
     if not isinstance(payload, dict):
         raise FluxFillValidationError(
@@ -71,8 +126,22 @@ def load_flux_empty_conditioning_cache(
             f"Flux empty-conditioning cache is missing required key(s): {', '.join(missing)}."
         )
 
+    metadata = payload.get("metadata", {})
+    cross_attn = payload["cross_attn"]
+    pooled_output = payload["pooled_output"]
+    logger.debug(
+        "[Flux Telemetry] Conditioning cache load complete path=%s posture=%s conditioning_kind=%s "
+        "cross_attn_shape=%s pooled_shape=%s %s",
+        cache_path,
+        metadata.get("posture"),
+        metadata.get("conditioning_kind"),
+        tuple(getattr(cross_attn, "shape", ())),
+        tuple(getattr(pooled_output, "shape", ())),
+        format_flux_conditioning_memory_summary(tag="conditioning_cache_load_complete"),
+    )
+
     return FluxEmptyConditioning(
-        cross_attn=payload["cross_attn"],
-        pooled_output=payload["pooled_output"],
-        metadata=payload.get("metadata", {}),
+        cross_attn=cross_attn,
+        pooled_output=pooled_output,
+        metadata=metadata,
     )

@@ -83,8 +83,6 @@ class UNetSpineKind(str, Enum):
 
 class T5PostureKind(str, Enum):
     DISK_PAGED = "disk_paged"
-    DISK_PAGED_LOWRAM = "disk_paged_lowram"
-    CPU_FP16_RESIDENT = "cpu_fp16_resident"
 
 class VAEPostureKind(str, Enum):
     TRANSIENT = "transient"
@@ -125,7 +123,6 @@ class FluxFillRequest:
     clip_l_path: Path | str | None = None
     t5_path: Path | str | None = None
     t5_posture: T5PostureKind | None = None
-    flux_fill_t5_low_ram: bool = False
     total_ram_mb: float | None = None
     total_ram_gb: float | None = None
 

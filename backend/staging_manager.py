@@ -57,10 +57,6 @@ FLUX_FILL_STREAMING_PROFILE_OPEN_C64_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C64_D1_
 FLUX_FILL_STREAMING_PROFILE_OPEN_C128_D1_S1 = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
 FLUX_RESIDENT_LOAD_STANDARD = "resident_cpu_shadow"
 FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW = "sticky_no_cpu_shadow"
-FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB = 40 * 1024.0
-FLUX_T5_STREAMING_MIN_AVAILABLE_RAM_MB = 32 * 1024.0
-FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB = 31 * 1024.0
-FLUX_T5_RESIDENT_MIN_AVAILABLE_RAM_MB = 24 * 1024.0
 HIGH_VRAM_MIN_TOTAL_VRAM_MB = 14 * 1024.0
 FLUX_RESIDENT_EXECUTION_CLASSES = {
     ExecutionClass.FLUX_RESIDENT_T4,
@@ -102,8 +98,6 @@ class InferenceCostProfile:
 
 @dataclass(frozen=True)
 class T5CostProfile:
-    cpu_fp16_resident_mb: float = 9334.0
-    cpu_q8_resident_mb: float = 4827.0
     disk_paged_fp16_mb: float = 9334.0
     disk_paged_q8_mb: float = 2762.0
 
@@ -650,17 +644,7 @@ class ExecutionClassSolver:
         execution_class: ExecutionClass,
         ledger: ResourceLedger | None = None,
     ) -> str:
-        available_ram_mb = total_ram_mb
-        if ledger is not None:
-            available_ram_mb = ledger.available_ram_mb(total_ram_mb)
-        if execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
-            min_total_ram_mb = FLUX_T5_RESIDENT_MIN_TOTAL_RAM_MB
-            min_available_ram_mb = FLUX_T5_RESIDENT_MIN_AVAILABLE_RAM_MB
-        else:
-            min_total_ram_mb = FLUX_T5_STREAMING_MIN_TOTAL_RAM_MB
-            min_available_ram_mb = FLUX_T5_STREAMING_MIN_AVAILABLE_RAM_MB
-        if total_ram_mb >= min_total_ram_mb and available_ram_mb >= min_available_ram_mb:
-            return "cpu_fp16_resident"
+        del total_ram_mb, execution_class, ledger
         return "disk_paged_fp16"
 
     def resolve_request(
@@ -823,11 +807,7 @@ class PlacementPlanner:
             if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
                 runtime_posture = FLUX_RUNTIME_POSTURE_RESIDENT
                 streaming_profile = None
-                resident_load_strategy = (
-                    FLUX_RESIDENT_LOAD_STANDARD
-                    if request.t5_mode == "cpu_fp16_resident"
-                    else FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW
-                )
+                resident_load_strategy = FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW
             else:
                 runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
                 resident_load_strategy = None
@@ -1096,17 +1076,7 @@ class PlacementPlanner:
         available_ram_mb: float,
     ) -> ComponentPlacement:
         costs = self.registry.t5_costs
-        if t5_mode == "cpu_fp16_resident":
-            pinned_cpu_mb = costs.cpu_fp16_resident_mb
-            residency_mode = t5_mode
-            load_device = "cpu"
-            offload_device = "cpu"
-        elif t5_mode == "cpu_q8_resident":
-            pinned_cpu_mb = costs.cpu_q8_resident_mb
-            residency_mode = t5_mode
-            load_device = "cpu"
-            offload_device = "cpu"
-        elif t5_mode == "disk_paged_fp16":
+        if t5_mode == "disk_paged_fp16":
             pinned_cpu_mb = 0.0
             host_ram_mb = costs.disk_paged_fp16_mb
             residency_mode = t5_mode
@@ -1118,8 +1088,6 @@ class PlacementPlanner:
             residency_mode = t5_mode
             load_device = "disk"
             offload_device = "disk"
-        if t5_mode not in {"disk_paged_fp16", "disk_paged_q8"}:
-            host_ram_mb = pinned_cpu_mb
         return self._build_component(
             component_id="t5",
             family=family,

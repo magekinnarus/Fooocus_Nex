@@ -149,7 +149,7 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> Any:
     raise LegacyFluxArchivedError()
 
 def evaluate_flux_fill_text_encoder_residency(profile: Any | None = None, *, next_route_family: Any | None = None) -> Any:
-    from backend.flux_fill_v2.contracts import UNetSpineKind, T5PostureKind
+    from backend.flux_fill_v2.contracts import UNetSpineKind
     from backend.flux_fill_v2.activation import resolve_flux_fill_t5_posture
 
     total_ram_gb = None
@@ -161,10 +161,9 @@ def evaluate_flux_fill_text_encoder_residency(profile: Any | None = None, *, nex
         unet_spine = UNetSpineKind.RESIDENT
 
     t5_posture = resolve_flux_fill_t5_posture(unet_spine, total_ram_gb)
-    keep_resident = (t5_posture == T5PostureKind.CPU_FP16_RESIDENT)
 
     return {
-        "keep_resident": keep_resident,
+        "keep_resident": False,
         "t5_posture": t5_posture.value,
         "unet_spine": unet_spine.value,
     }
@@ -185,7 +184,7 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if variant is not None and str(variant).strip() != "":
         return str(variant).strip()
 
-    from backend.flux_fill_v2.contracts import UNetSpineKind, T5PostureKind
+    from backend.flux_fill_v2.contracts import UNetSpineKind
     from backend.flux_fill_v2.activation import resolve_flux_fill_t5_posture
 
     total_ram_gb = None
@@ -196,7 +195,7 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if profile is not None and getattr(profile, "runtime_posture", None) == "resident":
         unet_spine = UNetSpineKind.RESIDENT
 
-    t5_posture = resolve_flux_fill_t5_posture(unet_spine, total_ram_gb)
+    resolve_flux_fill_t5_posture(unet_spine, total_ram_gb)
     return "fp16"
 
 def get_flux_fill_t5_asset_id(variant: str | None = None, *, profile: Any | None = None) -> str:
