@@ -48,6 +48,17 @@ def get_sampling_callback(
         resources.throw_exception_if_processing_interrupted()
         if step == 0:
             task_state.callback_steps = 0
+            if debug_mode:
+                logging.getLogger(__name__).debug(
+                    "[Flux Telemetry] Sampling callback config preview_interval=%s "
+                    "preview_transform=%s preview_stitch=%s total_steps=%s image=%s/%s",
+                    _resolve_preview_update_interval(task_state),
+                    preview_transform is not None,
+                    preview_stitch_context is not None,
+                    total_steps,
+                    current_task_id + 1,
+                    total_count,
+                )
         task_state.callback_steps += (100 - preparation_steps) / float(all_steps)
 
         progress_val = int(preparation_steps + task_state.callback_steps)

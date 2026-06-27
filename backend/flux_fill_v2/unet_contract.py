@@ -44,6 +44,9 @@ class FluxFillUnsupportedModelError(NotImplementedError):
     """Raised for Flux models outside the W01 Flux Fill runtime contract."""
 
 
+_FLUX_STREAMING_SOURCE_CHUNK_BYTES = 64 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class FluxFillUNetInfo:
     path: Path
@@ -413,12 +416,17 @@ def _load_flux_fill_native_weights_into_model(
     }
 
     if str(path).lower().endswith(".safetensors"):
+        load_metrics: dict[str, Any] = {}
         missing, unexpected = loader._load_prefixed_safetensors_into_module(
             str(path),
             [""],
             model.diffusion_model,
             device=target_device,
             dtype=None,
+            chunk_bytes=_FLUX_STREAMING_SOURCE_CHUNK_BYTES,
+            realize_pinned_targets=bool(torch.cuda.is_available() and target_device.type == "cpu"),
+            load_metrics=load_metrics,
+            raw_byte_stream=True,
         )
         if missing:
             raise FluxFillValidationError(
@@ -432,6 +440,10 @@ def _load_flux_fill_native_weights_into_model(
             )
         flux_metadata["direct_safetensors_load"] = True
         flux_metadata["single_host_artifact"] = True
+        flux_metadata["realized_pinned_bytes"] = int(load_metrics.get("realized_pinned_bytes", 0))
+        flux_metadata["realized_pinned_tensor_count"] = int(load_metrics.get("realized_pinned_tensor_count", 0))
+        flux_metadata["progressive_pinned_realization"] = bool(flux_metadata["realized_pinned_tensor_count"] > 0)
+        flux_metadata["raw_sequential_stream"] = True
         return flux_metadata
 
     from backend import loader as backend_loader

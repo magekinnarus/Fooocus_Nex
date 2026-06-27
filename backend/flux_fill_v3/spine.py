@@ -16,6 +16,18 @@ from backend.flux_fill_v2.streaming_loader import (
 logger = logging.getLogger(__name__)
 
 
+def _shape_of_tensor(value: torch.Tensor | None) -> tuple[int, ...] | None:
+    if isinstance(value, torch.Tensor):
+        return tuple(int(dim) for dim in value.shape)
+    return None
+
+
+def _mask_fill_ratio(mask: torch.Tensor | None) -> float | None:
+    if not isinstance(mask, torch.Tensor):
+        return None
+    return float((mask.detach().float() > 0.5).float().mean().item())
+
+
 @dataclass(frozen=True)
 class FluxFillConditioningPayloads:
     positive: list[list[Any]]
@@ -200,6 +212,23 @@ class StreamingUnetSpine:
         concat_device = concat.to(device=device, dtype=torch.float32)
         mask_device = mask.to(device=device, dtype=torch.float32)
         noise = self._create_seeded_noise(source_device)
+
+        logger.debug(
+            "[Flux Telemetry] Spine denoise payload category=%s source_latent=%s concat_latent=%s "
+            "denoise_mask=%s latent_mask_fill=%.4f device=%s seed=%s steps=%s guidance=%.2f "
+            "sampler=%s scheduler=%s",
+            self.request.category,
+            _shape_of_tensor(source_device),
+            _shape_of_tensor(concat_device),
+            _shape_of_tensor(mask_device),
+            _mask_fill_ratio(mask_device) or 0.0,
+            device,
+            self.request.seed,
+            self.request.steps,
+            self.request.guidance,
+            self.request.sampler,
+            self.request.scheduler,
+        )
 
         # Attach/reset prefetch scheduler options if available
         flux_options = getattr(self.unet_patcher, "model_options", {}).get("flux_fill", {})

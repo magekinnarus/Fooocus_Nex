@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Sequence
 
@@ -20,6 +21,8 @@ from modules.pipeline.stage_runtime import (
     StageMemoryEstimate,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _describe_route_resources(*requirements: PipelineResourceRequirement) -> Sequence[PipelineResourceRequirement]:
     return requirements
@@ -29,6 +32,21 @@ def _estimated_megapixels(task_state) -> float:
     width = max(int(getattr(task_state, 'width', 0) or 0), 1)
     height = max(int(getattr(task_state, 'height', 0) or 0), 1)
     return float(width * height) / 1_000_000.0
+
+
+def _shape_of_array(value) -> tuple[int, ...] | None:
+    if isinstance(value, np.ndarray):
+        return tuple(int(dim) for dim in value.shape)
+    return None
+
+
+def _mask_fill_ratio(mask) -> float | None:
+    if not isinstance(mask, np.ndarray) or mask.size == 0:
+        return None
+    mask_np = mask[:, :, 0] if mask.ndim == 3 else mask
+    if mask_np.ndim != 2:
+        return None
+    return float(np.count_nonzero(mask_np > 127)) / float(mask_np.size)
 
 
 def _expects_controlnet_extension(task_state) -> bool:
@@ -723,6 +741,26 @@ class FluxFillInpaintStage(PipelineStage):
             try:
                 resources.throw_exception_if_processing_interrupted()
 
+                logger.debug(
+                    "[Flux Telemetry] Inpaint route request original=%s bb=%s bb_mask=%s bb_box=%s "
+                    "target=%sx%s mask_fill=%.4f prompt_chars=%s preview_interval=%s "
+                    "force_host_cleanup=%s seed=%s steps=%s sampler=%s scheduler=%s",
+                    _shape_of_array(getattr(ctx, "original_image", None)),
+                    _shape_of_array(getattr(ctx, "bb_image", None)),
+                    _shape_of_array(getattr(ctx, "bb_mask", None)),
+                    getattr(ctx, "bb", None),
+                    getattr(ctx, "target_w", None),
+                    getattr(ctx, "target_h", None),
+                    _mask_fill_ratio(getattr(ctx, "bb_mask", None)) or 0.0,
+                    len(str(assets.prompt or "")),
+                    getattr(task_state, "preview_update_interval", None),
+                    force_host_cleanup,
+                    seed,
+                    int(task_state.steps),
+                    task_state.sampler_name,
+                    task_state.scheduler_name,
+                )
+
                 req = FluxFillRequest(
                     unet_path=assets.unet_path,
                     ae_path=assets.ae_path,
@@ -970,6 +1008,22 @@ class RemovalStage(PipelineStage):
 
                     assets = resolve_flux_fill_assets(task_state)
                     spine_kind = UNetSpineKind.STREAMING
+
+                    logger.debug(
+                        "[Flux Telemetry] Removal route request image=%s mask=%s mask_fill=%.4f "
+                        "prompt_chars=%s preview_interval=%s seed=%s steps=%s sampler=%s "
+                        "scheduler=%s blend=%s",
+                        _shape_of_array(image_np),
+                        _shape_of_array(prepared_mask),
+                        _mask_fill_ratio(prepared_mask) or 0.0,
+                        len(str(assets.prompt or "")),
+                        getattr(task_state, "preview_update_interval", None),
+                        int(task_state.seed),
+                        int(task_state.steps),
+                        task_state.sampler_name,
+                        task_state.scheduler_name,
+                        getattr(task_state, "objr_blend_mode", None),
+                    )
 
                     req = FluxFillRequest(
                         unet_path=assets.unet_path,

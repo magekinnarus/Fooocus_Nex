@@ -228,19 +228,16 @@ def load_flux_fill_native_unet_streaming(
 
     compute_device = resources.get_torch_device() if torch.cuda.is_available() else torch.device("cpu")
     path = Path(unet_path)
-    construction_device = host_offload_device
-    if torch.cuda.is_available() and str(path).lower().endswith(".safetensors"):
-        construction_device = torch.device("meta")
+    use_progressive_pinned_targets = bool(torch.cuda.is_available() and str(path).lower().endswith(".safetensors"))
+    construction_device = torch.device("meta") if use_progressive_pinned_targets else host_offload_device
     model, detected_config = _instantiate_flux_fill_native_model(
         path,
         offload_device=host_offload_device,
         construction_device=construction_device,
     )
-    prepared_pinned_bytes = _prepare_module_tensors_for_pinned_load(getattr(model, "diffusion_model", model))
-    if prepared_pinned_bytes > 0:
+    if use_progressive_pinned_targets:
         logger.debug(
-            "[Flux Telemetry] Prepared pinned-host UNet targets before direct load bytes=%s path=%s",
-            prepared_pinned_bytes,
+            "[Flux Telemetry] Streaming Flux UNet into progressively realized pinned-host targets path=%s",
             path,
         )
     direct_load_metadata = _load_flux_fill_native_weights_into_model(
@@ -248,6 +245,14 @@ def load_flux_fill_native_unet_streaming(
         model,
         target_device=host_offload_device,
     )
+    if int(direct_load_metadata.get("realized_pinned_bytes", 0)) > 0:
+        logger.debug(
+            "[Flux Telemetry] Progressively realized pinned-host UNet targets during direct load bytes=%s tensors=%s raw_sequential_stream=%s path=%s",
+            int(direct_load_metadata.get("realized_pinned_bytes", 0)),
+            int(direct_load_metadata.get("realized_pinned_tensor_count", 0)),
+            bool(direct_load_metadata.get("raw_sequential_stream", False)),
+            path,
+        )
     runtime_patcher = FluxDirectStreamModelPatcher(
         model,
         load_device=compute_device,
@@ -291,7 +296,13 @@ def load_flux_fill_native_unet_streaming(
     scheduled_module_count = streaming_scheduler.attach(getattr(runtime_patcher, "model", None), device=compute_device)
     flux_options = runtime_patcher.model_options.setdefault("flux_fill", {})
     measured_pinned_bytes = measure_pinned_module_tensors(getattr(runtime_patcher, "model", None))
-    flux_options["host_pinned_bytes"] = int(max(prepared_pinned_bytes, pinned_bytes, measured_pinned_bytes))
+    flux_options["host_pinned_bytes"] = int(
+        max(
+            int(direct_load_metadata.get("realized_pinned_bytes", 0)),
+            pinned_bytes,
+            measured_pinned_bytes,
+        )
+    )
     flux_options["non_blocking_supported"] = bool(resources.device_supports_non_blocking(torch.device("cuda"))) if torch.cuda.is_available() else False
     flux_options["single_host_artifact"] = bool(flux_options.get("direct_safetensors_load", False))
     flux_options["streaming_scheduler"] = streaming_scheduler
@@ -306,7 +317,7 @@ def load_flux_fill_native_unet_streaming(
     return runtime_patcher
 
 
-def _prepare_module_tensors_for_pinned_load(module: Any) -> int:
+def _prepare_module_tensors_for_pinned_load(module: Any, *, strict: bool = False) -> int:
     if module is None or not torch.cuda.is_available():
         return 0
 
@@ -323,7 +334,7 @@ def _prepare_module_tensors_for_pinned_load(module: Any) -> int:
                 continue
             if param is None:
                 continue
-            param_device = getattr(param, "device", None)
+            param_device = getattr(getattr(param, "data", param), "device", None)
             param_device_type = getattr(param_device, "type", None)
             if param_device_type not in {"cpu", "meta"}:
                 continue
@@ -332,6 +343,8 @@ def _prepare_module_tensors_for_pinned_load(module: Any) -> int:
             try:
                 pinned_target = torch.empty_like(param.data, device="cpu", pin_memory=True)
             except Exception as exc:
+                if strict:
+                    raise RuntimeError(f"Failed to preallocate pinned parameter target for {full_key!r}.") from exc
                 logger.debug(
                     "[Flux Telemetry] Failed to preallocate pinned parameter target key=%s error=%s",
                     full_key,
@@ -359,6 +372,8 @@ def _prepare_module_tensors_for_pinned_load(module: Any) -> int:
             try:
                 pinned_target = torch.empty_like(buf, device="cpu", pin_memory=True)
             except Exception as exc:
+                if strict:
+                    raise RuntimeError(f"Failed to preallocate pinned buffer target for {full_key!r}.") from exc
                 logger.debug(
                     "[Flux Telemetry] Failed to preallocate pinned buffer target key=%s error=%s",
                     full_key,

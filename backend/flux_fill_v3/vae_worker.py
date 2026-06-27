@@ -32,6 +32,36 @@ def hash_ndarray(arr: np.ndarray | None) -> str:
     return digest.hexdigest()
 
 
+def _shape_of_tensor(value: torch.Tensor | None) -> tuple[int, ...] | None:
+    if isinstance(value, torch.Tensor):
+        return tuple(int(dim) for dim in value.shape)
+    return None
+
+
+def _shape_of_array(value: np.ndarray | None) -> tuple[int, ...] | None:
+    if isinstance(value, np.ndarray):
+        return tuple(int(dim) for dim in value.shape)
+    return None
+
+
+def _mask_fill_ratio(mask: np.ndarray | torch.Tensor | None, *, threshold: float = 0.5) -> float | None:
+    if mask is None:
+        return None
+    if isinstance(mask, torch.Tensor):
+        mask_t = mask.detach().float()
+        if mask_t.ndim == 4 and int(mask_t.shape[1]) == 1:
+            return float((mask_t > threshold).float().mean().item())
+        return None
+    if isinstance(mask, np.ndarray):
+        if mask.size == 0:
+            return None
+        mask_np = mask[:, :, 0] if mask.ndim == 3 else mask
+        if mask_np.ndim != 2:
+            return None
+        return float(np.count_nonzero(mask_np > 127)) / float(mask_np.size)
+    return None
+
+
 def compute_artifact_fingerprint(request: FluxFillRequest) -> str:
     image_hash = hash_ndarray(request.image)
     mask_hash = hash_ndarray(request.mask)
@@ -171,7 +201,21 @@ class TransientVaeWorker:
         
         cached_bundle = get_cached_latent_artifact_bundle(fingerprint)
         if cached_bundle is not None:
-            logger.debug(f"[Flux Telemetry] VAE latent artifacts cache hit for fingerprint={fingerprint}")
+            logger.debug(
+                "[Flux Telemetry] VAE latent artifacts cache hit fingerprint=%s image=%s mask=%s "
+                "source_latent=%s concat_latent=%s denoise_mask=%s request_mask_fill=%.4f "
+                "latent_mask_fill=%.4f category=%s blend=%s",
+                fingerprint,
+                _shape_of_array(self.request.image),
+                _shape_of_array(self.request.mask),
+                _shape_of_tensor(cached_bundle.source_latent),
+                _shape_of_tensor(cached_bundle.concat_latent),
+                _shape_of_tensor(cached_bundle.denoise_mask),
+                _mask_fill_ratio(self.request.mask) or 0.0,
+                _mask_fill_ratio(cached_bundle.denoise_mask) or 0.0,
+                self.request.category,
+                self.request.blend_mode,
+            )
             return FluxLatentArtifactBundle(
                 source_latent=cached_bundle.source_latent,
                 concat_latent=cached_bundle.concat_latent,
@@ -205,7 +249,23 @@ class TransientVaeWorker:
                 vae_encode_time=vae_encode_time,
             )
             set_cached_latent_artifact_bundle(bundle)
-            logger.debug(f"[Flux Telemetry] VAE latent artifacts generated and cached. Load time={vae_load_time:.3f}s, Encode time={vae_encode_time:.3f}s")
+            logger.debug(
+                "[Flux Telemetry] VAE latent artifacts generated and cached fingerprint=%s image=%s mask=%s "
+                "source_latent=%s concat_latent=%s denoise_mask=%s request_mask_fill=%.4f "
+                "latent_mask_fill=%.4f category=%s blend=%s load_time=%.3fs encode_time=%.3fs",
+                fingerprint,
+                _shape_of_array(self.request.image),
+                _shape_of_array(self.request.mask),
+                _shape_of_tensor(source_latent),
+                _shape_of_tensor(concat_latent),
+                _shape_of_tensor(denoise_mask),
+                _mask_fill_ratio(self.request.mask) or 0.0,
+                _mask_fill_ratio(denoise_mask) or 0.0,
+                self.request.category,
+                self.request.blend_mode,
+                vae_load_time,
+                vae_encode_time,
+            )
             return bundle
         finally:
             self._eject_vae(vae)

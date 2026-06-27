@@ -1,7 +1,11 @@
+import ctypes
+import json
 import torch
 import logging
 from typing import Any, Dict
 import gc
+import os
+import struct
 from safetensors import safe_open
 import torch
 from .defs import sdxl as sdxl_def
@@ -93,42 +97,104 @@ def _load_prefixed_safetensors_into_module(
     *,
     device=None,
     dtype=None,
+    chunk_bytes=None,
+    realize_pinned_targets=False,
+    load_metrics=None,
+    raw_byte_stream=False,
 ):
     target_device = torch.device(device) if device is not None else None
     state_entries = module.state_dict()
+    state_owners = _build_module_state_owner_index(module)
     loaded_keys = set()
     unexpected_keys = []
+    realized_pinned_bytes = 0
+    realized_pinned_tensor_count = 0
+    fallback_raw_keys = []
 
-    with safe_open(ckpt_path, framework="pt", device=_safe_open_device_arg(target_device)) as handle:
-        for key in handle.keys():
-            matched_prefix = None
-            for prefix in prefixes:
-                if key.startswith(prefix):
-                    matched_prefix = prefix
-                    break
+    if raw_byte_stream:
+        with _open_safetensors_sequential_reader(ckpt_path) as reader:
+            header, data_base_offset = _read_safetensors_header(reader)
+            for key, entry in header.items():
+                if key == "__metadata__":
+                    continue
+                matched_prefix = _match_safetensors_prefix(key, prefixes)
+                if matched_prefix is None:
+                    continue
 
-            if matched_prefix is None:
-                continue
+                target_key = _strip_checkpoint_prefix(key, matched_prefix)
+                target_tensor, realized_bytes = _resolve_streaming_target_tensor(
+                    state_entries,
+                    state_owners,
+                    target_key,
+                    realize_pinned_targets=realize_pinned_targets,
+                )
+                if target_tensor is None:
+                    unexpected_keys.append(target_key)
+                    continue
 
-            target_key = _strip_checkpoint_prefix(key, matched_prefix)
-            target_tensor = state_entries.get(target_key)
-            if target_tensor is None:
-                unexpected_keys.append(target_key)
-                continue
+                if realized_bytes > 0:
+                    realized_pinned_bytes += int(realized_bytes)
+                    realized_pinned_tensor_count += 1
 
-            source_tensor = handle.get_tensor(key)
-            target_dtype = target_tensor.dtype
-            if dtype is not None and torch.is_floating_point(target_tensor):
-                target_dtype = dtype
+                if _stream_raw_safetensors_entry_into_target(
+                    reader,
+                    data_base_offset,
+                    entry,
+                    target_tensor,
+                    dtype=dtype,
+                    chunk_bytes=chunk_bytes,
+                ):
+                    loaded_keys.add(target_key)
+                    continue
 
-            copy_tensor = source_tensor.to(
-                device=target_tensor.device,
-                dtype=target_dtype,
-            )
-            target_tensor.copy_(copy_tensor)
-            loaded_keys.add(target_key)
+                fallback_raw_keys.append((key, target_key, target_tensor))
+    else:
+        with safe_open(ckpt_path, framework="pt", device=_safe_open_device_arg(target_device)) as handle:
+            for key in handle.keys():
+                matched_prefix = _match_safetensors_prefix(key, prefixes)
+                if matched_prefix is None:
+                    continue
+
+                target_key = _strip_checkpoint_prefix(key, matched_prefix)
+                target_tensor, realized_bytes = _resolve_streaming_target_tensor(
+                    state_entries,
+                    state_owners,
+                    target_key,
+                    realize_pinned_targets=realize_pinned_targets,
+                )
+                if target_tensor is None:
+                    unexpected_keys.append(target_key)
+                    continue
+
+                if realized_bytes > 0:
+                    realized_pinned_bytes += int(realized_bytes)
+                    realized_pinned_tensor_count += 1
+
+                _stream_safetensors_key_into_target(
+                    handle,
+                    key,
+                    target_tensor,
+                    dtype=dtype,
+                    chunk_bytes=chunk_bytes,
+                )
+                loaded_keys.add(target_key)
+
+    if fallback_raw_keys:
+        with safe_open(ckpt_path, framework="pt", device=_safe_open_device_arg(target_device)) as handle:
+            for key, target_key, target_tensor in fallback_raw_keys:
+                _stream_safetensors_key_into_target(
+                    handle,
+                    key,
+                    target_tensor,
+                    dtype=dtype,
+                    chunk_bytes=chunk_bytes,
+                )
+                loaded_keys.add(target_key)
 
     missing_keys = [key for key in state_entries.keys() if key not in loaded_keys]
+    if isinstance(load_metrics, dict):
+        load_metrics["realized_pinned_bytes"] = int(realized_pinned_bytes)
+        load_metrics["realized_pinned_tensor_count"] = int(realized_pinned_tensor_count)
     return missing_keys, unexpected_keys
 
 
@@ -151,13 +217,247 @@ def _build_prefixed_safetensors_key_map(handle, prefixes=None):
     return key_map
 
 
+def _match_safetensors_prefix(key, prefixes):
+    for prefix in prefixes:
+        if key.startswith(prefix):
+            return prefix
+    return None
+
+
+def _open_safetensors_sequential_reader(path):
+    flags = int(os.O_RDONLY)
+    flags |= int(getattr(os, "O_BINARY", 0))
+    flags |= int(getattr(os, "O_SEQUENTIAL", 0))
+    fd = os.open(path, flags)
+    return os.fdopen(fd, "rb", buffering=0)
+
+
+def _read_safetensors_header(reader):
+    header_len_bytes = reader.read(8)
+    if len(header_len_bytes) != 8:
+        raise EOFError("Could not read safetensors header length.")
+    header_len = int(struct.unpack("<Q", header_len_bytes)[0])
+    header_bytes = reader.read(header_len)
+    if len(header_bytes) != header_len:
+        raise EOFError("Could not read full safetensors header payload.")
+    header = json.loads(header_bytes)
+    if not isinstance(header, dict):
+        raise ValueError("Safetensors header payload must decode to a dictionary.")
+    return header, 8 + header_len
+
+
+def _torch_dtype_from_safetensors(dtype_value):
+    mapping = {
+        "BOOL": torch.bool,
+        "U8": torch.uint8,
+        "I8": torch.int8,
+        "I16": torch.int16,
+        "U16": getattr(torch, "uint16", None),
+        "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "I32": torch.int32,
+        "U32": getattr(torch, "uint32", None),
+        "F32": torch.float32,
+        "I64": torch.int64,
+        "U64": getattr(torch, "uint64", None),
+        "F64": torch.float64,
+        "F8_E4M3": getattr(torch, "float8_e4m3fn", None),
+        "F8_E4M3FN": getattr(torch, "float8_e4m3fn", None),
+        "F8_E5M2": getattr(torch, "float8_e5m2", None),
+    }
+    return mapping.get(str(dtype_value).strip().upper())
+
+
+def _stream_raw_safetensors_entry_into_target(
+    reader,
+    data_base_offset,
+    entry,
+    target_tensor,
+    *,
+    dtype=None,
+    chunk_bytes=None,
+):
+    if not isinstance(target_tensor, torch.Tensor):
+        return False
+    if target_tensor.device.type != "cpu" or not target_tensor.is_contiguous():
+        return False
+    if dtype is not None and target_tensor.dtype != dtype:
+        return False
+
+    entry_dtype = _torch_dtype_from_safetensors(entry.get("dtype"))
+    if entry_dtype is None or entry_dtype != target_tensor.dtype:
+        return False
+
+    entry_shape = [int(dim) for dim in entry.get("shape", [])]
+    if list(target_tensor.shape) != entry_shape:
+        return False
+
+    offsets = entry.get("data_offsets")
+    if not isinstance(offsets, (list, tuple)) or len(offsets) != 2:
+        return False
+    start_offset = int(offsets[0])
+    end_offset = int(offsets[1])
+    total_bytes = int(end_offset - start_offset)
+    expected_bytes = int(target_tensor.numel() * target_tensor.element_size())
+    if total_bytes != expected_bytes:
+        return False
+
+    chunk_limit = int(chunk_bytes) if chunk_bytes is not None else 0
+    chunk_size = max(1, min(total_bytes, chunk_limit if chunk_limit > 0 else total_bytes))
+    reader.seek(int(data_base_offset) + start_offset)
+    target_ptr = int(target_tensor.data_ptr())
+    copied_bytes = 0
+
+    while copied_bytes < total_bytes:
+        this_chunk = min(chunk_size, total_bytes - copied_bytes)
+        remaining = this_chunk
+        chunk_offset = 0
+        while remaining > 0:
+            dest = (ctypes.c_char * remaining).from_address(target_ptr + copied_bytes + chunk_offset)
+            read_bytes = reader.readinto(dest)
+            if read_bytes is None:
+                read_bytes = 0
+            if read_bytes <= 0:
+                raise EOFError(
+                    f"Unexpected EOF while streaming safetensors payload at byte {copied_bytes + chunk_offset}."
+                )
+            remaining -= int(read_bytes)
+            chunk_offset += int(read_bytes)
+        copied_bytes += this_chunk
+
+    return True
+
+
+def _build_module_state_owner_index(module):
+    owners = {}
+    for module_name, submodule in module.named_modules():
+        key_prefix = f"{module_name}." if module_name else ""
+        for param_name, _ in submodule.named_parameters(recurse=False):
+            owners[key_prefix + param_name] = (submodule, "param", param_name)
+        for buffer_name, _ in submodule.named_buffers(recurse=False):
+            owners[key_prefix + buffer_name] = (submodule, "buffer", buffer_name)
+    return owners
+
+
+def _resolve_streaming_target_tensor(
+    state_entries,
+    state_owners,
+    target_key,
+    *,
+    realize_pinned_targets=False,
+):
+    fallback_tensor = state_entries.get(target_key)
+    owner = state_owners.get(target_key)
+    if owner is None:
+        return fallback_tensor, 0
+
+    submodule, tensor_kind, tensor_name = owner
+    if tensor_kind == "param":
+        current_tensor = submodule._parameters.get(tensor_name)
+    else:
+        current_tensor = submodule._buffers.get(tensor_name)
+    if current_tensor is None:
+        return fallback_tensor, 0
+
+    live_tensor = current_tensor.data if tensor_kind == "param" else current_tensor
+    if not realize_pinned_targets or not torch.cuda.is_available():
+        return live_tensor, 0
+
+    device_type = getattr(getattr(live_tensor, "device", None), "type", None)
+    if device_type not in {"cpu", "meta"}:
+        return live_tensor, 0
+    if device_type == "cpu" and live_tensor.is_pinned():
+        return live_tensor, 0
+
+    pinned_target = torch.empty_like(live_tensor, device="cpu", pin_memory=True)
+    realized_bytes = int(pinned_target.numel() * pinned_target.element_size())
+    if tensor_kind == "param":
+        submodule._parameters[tensor_name] = torch.nn.Parameter(
+            pinned_target,
+            requires_grad=bool(getattr(current_tensor, "requires_grad", False)),
+        )
+        return submodule._parameters[tensor_name].data, realized_bytes
+
+    submodule._buffers[tensor_name] = pinned_target
+    return submodule._buffers[tensor_name], realized_bytes
+
+
 def _copy_tensor_into_target(target_tensor, source_tensor, *, dtype=None, transpose=False):
     target_dtype = target_tensor.dtype
     if dtype is not None and torch.is_floating_point(target_tensor):
         target_dtype = dtype
     copy_tensor = source_tensor.t() if transpose else source_tensor
-    copy_tensor = copy_tensor.to(device=target_tensor.device, dtype=target_dtype)
-    target_tensor.copy_(copy_tensor)
+    copy_device = getattr(copy_tensor, "device", None)
+    copy_dtype = getattr(copy_tensor, "dtype", None)
+    if copy_device != target_tensor.device or copy_dtype != target_dtype:
+        copy_tensor = copy_tensor.to(device=target_tensor.device, dtype=target_dtype)
+    with torch.no_grad():
+        target_tensor.copy_(copy_tensor)
+
+
+def _safetensors_dtype_size(dtype_value):
+    dtype_text = str(dtype_value).strip().upper()
+    sizes = {
+        "BOOL": 1,
+        "U8": 1,
+        "I8": 1,
+        "F8_E4M3": 1,
+        "F8_E4M3FN": 1,
+        "F8_E5M2": 1,
+        "I16": 2,
+        "U16": 2,
+        "F16": 2,
+        "BF16": 2,
+        "I32": 4,
+        "U32": 4,
+        "F32": 4,
+        "I64": 8,
+        "U64": 8,
+        "F64": 8,
+    }
+    return sizes.get(dtype_text)
+
+
+def _stream_safetensors_key_into_target(handle, key, target_tensor, *, dtype=None, chunk_bytes=None):
+    if not isinstance(target_tensor, torch.Tensor):
+        source_tensor = handle.get_tensor(key)
+        _copy_tensor_into_target(target_tensor, source_tensor, dtype=dtype)
+        return
+
+    effective_chunk_bytes = int(chunk_bytes) if chunk_bytes is not None else 0
+    can_chunk = (
+        effective_chunk_bytes > 0
+        and target_tensor.device.type == "cpu"
+        and target_tensor.is_pinned()
+        and target_tensor.ndim >= 1
+    )
+    if can_chunk:
+        try:
+            source_slice = handle.get_slice(key)
+            source_shape = list(source_slice.get_shape())
+            source_dtype_size = _safetensors_dtype_size(source_slice.get_dtype()) or target_tensor.element_size()
+        except Exception:
+            source_slice = None
+            source_shape = []
+            source_dtype_size = target_tensor.element_size()
+
+        if source_shape:
+            row_elems = 1
+            for dim in source_shape[1:]:
+                row_elems *= int(dim)
+            row_bytes = max(1, int(row_elems) * int(source_dtype_size))
+            rows_per_chunk = max(1, effective_chunk_bytes // row_bytes)
+            if int(source_shape[0]) > rows_per_chunk:
+                tail = (slice(None),) * (len(source_shape) - 1)
+                for start in range(0, int(source_shape[0]), rows_per_chunk):
+                    end = min(int(source_shape[0]), start + rows_per_chunk)
+                    source_chunk = source_slice[(slice(start, end),) + tail]
+                    target_chunk = target_tensor[(slice(start, end),) + tail]
+                    _copy_tensor_into_target(target_chunk, source_chunk, dtype=dtype)
+                return
+
+    source_tensor = handle.get_tensor(key)
+    _copy_tensor_into_target(target_tensor, source_tensor, dtype=dtype)
 
 
 def _collect_safetensors_matches(handle, prefixes, *, fallback_to_all=False):
