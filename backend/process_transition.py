@@ -453,7 +453,7 @@ def resolve_flux_fill_process_key(
     route_family: str | None = None,
     selected_engine: str | None = None,
 ) -> ProcessKey | None:
-    from backend.flux_fill_v2.activation import resolve_flux_fill_process_key as resolve_greenfield
+    from backend.flux_fill_v3 import resolve_flux_fill_process_key as resolve_greenfield
     return resolve_greenfield(task_state, route_family=route_family, selected_engine=selected_engine)
 
 
@@ -476,7 +476,7 @@ def release_process_boundary(current_key: ProcessKey | None, requested_key: Proc
         return None
 
     if current_key.family == PROCESS_FAMILY_FLUX_FILL:
-        from backend.flux_fill_v2.runtime_state import (
+        from backend.flux_fill_v3 import (
             release_active_flux_resident_spine,
             release_flux_latent_artifacts,
         )
@@ -573,7 +573,7 @@ def apply_process_transition_gate(requested_key: ProcessKey | None) -> ProcessTr
 
 def sync_route_process_activation(route, task_state, requested_process_key: ProcessKey | None) -> Any:
     if route.family == "flux_fill":
-        from backend.flux_fill_v2.activation import sync_flux_fill_process_activation
+        from backend.flux_fill_v3 import sync_flux_fill_process_activation
         return sync_flux_fill_process_activation(route, task_state, requested_process_key)
 
     elif route.family == "sdxl" or getattr(task_state.sdxl_execution_policy, "enabled", False):

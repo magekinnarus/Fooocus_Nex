@@ -114,13 +114,6 @@ def build_debug_tab():
         info='Max size of chunks to prefetch for Flux Fill (64MB or 128MB).'
     )
 
-    results['flux_fill_runtime_posture'] = gr.Radio(
-        label='Flux Fill Runtime Posture',
-        choices=['auto', 'streaming'],
-        value='auto',
-        info='Benchmark override for Flux Fill UNet posture. Auto keeps solver behavior; high-VRAM systems may still resolve to resident. Streaming forces the streaming path.'
-    )
-    
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(
             label='Save Metadata to Images', 

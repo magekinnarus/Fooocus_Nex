@@ -804,17 +804,13 @@ class PlacementPlanner:
         if request.model_variant == "flux_fill_fp8":
             runtime_family = FLUX_RUNTIME_FAMILY_NATIVE_FP8
             fallback_model_variant = "flux_fill_q4_k_s"
-            if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
-                runtime_posture = FLUX_RUNTIME_POSTURE_RESIDENT
-                streaming_profile = None
-                resident_load_strategy = FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW
+            # Hardcode to streaming for v3 first assembly
+            runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
+            resident_load_strategy = None
+            if float(request.vram_total_mb) <= 8192.0:
+                streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
             else:
-                runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
-                resident_load_strategy = None
-                if float(request.vram_total_mb) <= 8192.0:
-                    streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
-                else:
-                    streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
+                streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
             return {
                 "runtime_family": runtime_family,
                 "runtime_posture": runtime_posture,
@@ -823,11 +819,8 @@ class PlacementPlanner:
                 "fallback_model_variant": fallback_model_variant,
             }
 
-        runtime_posture = (
-            FLUX_RUNTIME_POSTURE_RESIDENT
-            if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES
-            else FLUX_RUNTIME_POSTURE_STREAMING
-        )
+        # Hardcode to streaming for v3 first assembly
+        runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
         return {
             "runtime_family": FLUX_RUNTIME_FAMILY_GGUF,
             "runtime_posture": runtime_posture,

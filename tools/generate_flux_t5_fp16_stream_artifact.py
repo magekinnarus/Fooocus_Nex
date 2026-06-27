@@ -124,7 +124,7 @@ def main() -> int:
     metrics_path = Path(args.metrics_json) if args.metrics_json else output_path.with_suffix(output_path.suffix + ".metrics.json")
 
     from backend import resources
-    from backend.flux_fill_v2.t5_posture import (
+    from backend.flux_fill_v3.t5_worker import (
         load_flux_prompt_text_encoder,
         save_flux_prompt_conditioning_cache,
     )

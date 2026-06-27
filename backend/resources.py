@@ -152,27 +152,63 @@ def _apply_support_residency(plan, *, aggressive=False, notes=None):
 
     return actions
 
-def _try_malloc_trim():
-    if platform.system() != 'Linux':
+def _try_windows_empty_working_set():
+    try:
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        psapi = ctypes.WinDLL('psapi', use_last_error=True)
+    except Exception:
+        logging.debug('Windows working-set trimming is unavailable.', exc_info=True)
         return False
 
-    for library_name in ('libc.so.6', 'libc.so'):
-        try:
-            libc = ctypes.CDLL(library_name)
-        except OSError:
-            continue
-
-        trim = getattr(libc, 'malloc_trim', None)
-        if trim is None:
-            continue
-
-        try:
-            trim.argtypes = [ctypes.c_size_t]
-            trim.restype = ctypes.c_int
-            return bool(trim(0))
-        except Exception:
-            logging.debug('malloc_trim call failed.', exc_info=True)
+    try:
+        get_current_process = getattr(kernel32, 'GetCurrentProcess', None)
+        empty_working_set = getattr(psapi, 'EmptyWorkingSet', None)
+        if get_current_process is None or empty_working_set is None:
             return False
+
+        get_current_process.restype = ctypes.c_void_p
+        process_handle = get_current_process()
+        if not process_handle:
+            return False
+
+        empty_working_set.argtypes = [ctypes.c_void_p]
+        empty_working_set.restype = ctypes.c_int
+        if int(empty_working_set(process_handle)) == 0:
+            logging.debug(
+                'EmptyWorkingSet call failed last_error=%s.',
+                ctypes.get_last_error(),
+            )
+            return False
+        return True
+    except Exception:
+        logging.debug('EmptyWorkingSet call failed.', exc_info=True)
+        return False
+
+
+def _try_malloc_trim():
+    system_name = platform.system()
+    if system_name == 'Linux':
+        for library_name in ('libc.so.6', 'libc.so'):
+            try:
+                libc = ctypes.CDLL(library_name)
+            except OSError:
+                continue
+
+            trim = getattr(libc, 'malloc_trim', None)
+            if trim is None:
+                continue
+
+            try:
+                trim.argtypes = [ctypes.c_size_t]
+                trim.restype = ctypes.c_int
+                return bool(trim(0))
+            except Exception:
+                logging.debug('malloc_trim call failed.', exc_info=True)
+                return False
+        return False
+
+    if system_name == 'Windows':
+        return _try_windows_empty_working_set()
 
     return False
 
@@ -196,10 +232,12 @@ def cleanup_memory(reason, *, unload_models=False, force_cache=False, gc_collect
     if gc_collect:
         gc.collect()
 
-    soft_empty_cache(force=force_cache or unload_models or bool(support_actions))
-
     if trim_host is None:
         trim_host = memory_governor.should_trim_host_memory(snapshot=before, aggressive=bool(unload_models and force_cache))
+
+    # If the caller explicitly wants host trimming, flush allocator caches first
+    # so the trim attempt has reclaimable pages to work with.
+    soft_empty_cache(force=force_cache or unload_models or bool(trim_host) or bool(support_actions))
     trimmed = _try_malloc_trim() if trim_host else False
 
     after = capture_memory_snapshot(notes={

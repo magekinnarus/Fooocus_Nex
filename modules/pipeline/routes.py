@@ -636,8 +636,8 @@ class FluxFillInpaintStage(PipelineStage):
         return _describe_route_resources(
             PipelineResourceRequirement(
                 resource_id='flux_fill_runtime',
-                description='Greenfield Flux Fill runtime assembled on demand through backend.flux_fill_v2.',
-                owner='backend.flux_fill_v2',
+                description='Greenfield Flux Fill runtime assembled on demand through backend.flux_fill_v3.',
+                owner='backend.flux_fill_v3',
                 tags=('flux', 'inpaint', 'runtime'),
             ),
             PipelineResourceRequirement(
@@ -660,9 +660,9 @@ class FluxFillInpaintStage(PipelineStage):
         from modules.pipeline.inference import get_sampling_callback
         from modules.pipeline.inpaint import InpaintPipeline
         from modules.pipeline.output import save_and_log
-        from backend.flux_fill_v2.activation import resolve_flux_fill_assets, resolve_flux_fill_spine_kind
-        from backend.flux_fill_v2.contracts import FluxFillRequest, FluxFillPreviewContext
-        from backend.flux_fill_v2.dispatcher import FluxDispatcher
+        from backend.flux_fill_v3.activation import resolve_flux_fill_assets
+        from backend.flux_fill_v3.contracts import FluxFillRequest, FluxFillPreviewContext, FluxFillCategory, UNetSpineKind
+        from backend.flux_fill_v3.director import FluxAssemblyDirector
 
         task_state = context.task_state
         resources.begin_memory_phase('diffusion', notes={'route': 'flux_inpaint'})
@@ -680,11 +680,10 @@ class FluxFillInpaintStage(PipelineStage):
         # Resolve prompt and assets using greenfield helpers
         prompt_text = _resolve_inpaint_prompt(task_state)
         assets = resolve_flux_fill_assets(task_state)
-        spine_kind = resolve_flux_fill_spine_kind(task_state)
+        spine_kind = UNetSpineKind.STREAMING
 
         stitcher = InpaintPipeline()
-        output_images: list[np.ndarray] = []
-        img_paths: list[str] = []
+        processed_count = 0
         total_count = max(1, int(getattr(task_state, 'image_number', 1) or 1))
         base_seed = int(task_state.seed)
         output_height, output_width = ctx.original_image.shape[:2]
@@ -741,10 +740,12 @@ class FluxFillInpaintStage(PipelineStage):
                     blend_mode="none",  # Do blend and stitching manually below
                     clip_l_path=assets.clip_l_path,
                     t5_path=assets.t5_path,
+                    category=FluxFillCategory.INPAINT,
                 )
 
-                dispatcher = FluxDispatcher()
-                result = dispatcher.execute(req, callback=callback)
+                director = FluxAssemblyDirector()
+                assembly = director.select_assembly(req)
+                result = assembly.execute(req, callback=callback)
 
             except resources.InterruptProcessingException:
                 if task_state.last_stop == 'skip':
@@ -763,7 +764,6 @@ class FluxFillInpaintStage(PipelineStage):
             import logging
             logging.getLogger(__name__).debug(f"[Flux Telemetry] Applying final morphological blending and stitch-back for image {image_index + 1}/{total_count}")
             stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
-            output_images.append(stitched_image)
 
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, 100, f'Saving Flux Fill Inpaint {image_index + 1}/{total_count} to system ...')
@@ -778,7 +778,6 @@ class FluxFillInpaintStage(PipelineStage):
                 'description': 'Flux Fill Inpaint',
             }
             current_img_paths = save_and_log(task_state, output_height, output_width, [stitched_image], task_dict, False, task_state.loras)
-            img_paths.extend(current_img_paths)
             if context.yield_result_callback is not None:
                 context.yield_result_callback(
                     task_state,
@@ -786,6 +785,10 @@ class FluxFillInpaintStage(PipelineStage):
                     100,
                     do_not_show_finished_images=task_state.disable_intermediate_results,
                 )
+            processed_count += 1
+            result = None
+            stitched_image = None
+            preview_context = None
             resources.cleanup_memory(
                 'flux_inpaint_image_complete',
                 gc_collect=force_host_cleanup,
@@ -795,7 +798,7 @@ class FluxFillInpaintStage(PipelineStage):
                 task=task_state,
             )
 
-        return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': len(output_images)})
+        return PipelineStageResult(route_complete=True, notes={'completed': True, 'route': 'flux_inpaint', 'tasks_processed': processed_count})
 
 
 class UpscaleStage(PipelineStage):
@@ -949,9 +952,9 @@ class RemovalStage(PipelineStage):
                     context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
                 if selected_engine == OBJR_ENGINE_FLUX_FILL:
                     from PIL import Image
-                    from backend.flux_fill_v2.activation import resolve_flux_fill_assets, resolve_flux_fill_spine_kind
-                    from backend.flux_fill_v2.contracts import FluxFillRequest, FluxFillPreviewContext
-                    from backend.flux_fill_v2.dispatcher import FluxDispatcher
+                    from backend.flux_fill_v3.activation import resolve_flux_fill_assets
+                    from backend.flux_fill_v3.contracts import FluxFillRequest, FluxFillPreviewContext, FluxFillCategory, UNetSpineKind
+                    from backend.flux_fill_v3.director import FluxAssemblyDirector
                     from modules.pipeline.inference import get_sampling_callback
 
                     with Image.open(task_state.remove_base_image) as img_pil:
@@ -966,7 +969,7 @@ class RemovalStage(PipelineStage):
                     )
 
                     assets = resolve_flux_fill_assets(task_state)
-                    spine_kind = resolve_flux_fill_spine_kind(task_state)
+                    spine_kind = UNetSpineKind.STREAMING
 
                     req = FluxFillRequest(
                         unet_path=assets.unet_path,
@@ -985,6 +988,7 @@ class RemovalStage(PipelineStage):
                         blend_mode=task_state.objr_blend_mode,
                         clip_l_path=assets.clip_l_path,
                         t5_path=assets.t5_path,
+                        category=FluxFillCategory.REMOVAL,
                     )
 
                     preview_context = None
@@ -1006,8 +1010,9 @@ class RemovalStage(PipelineStage):
                         preview_transform=preview_transform,
                     )
 
-                    dispatcher = FluxDispatcher()
-                    result = dispatcher.execute(req, callback=callback)
+                    director = FluxAssemblyDirector()
+                    assembly = director.select_assembly(req)
+                    result = assembly.execute(req, callback=callback)
 
                     persisted_res_path = _save_logged_output(
                         context,

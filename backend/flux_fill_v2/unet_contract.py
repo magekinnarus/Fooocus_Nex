@@ -350,6 +350,7 @@ def _instantiate_flux_fill_native_model(
     path: Path,
     *,
     offload_device: torch.device,
+    construction_device: torch.device | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     from backend import precision
     from ldm_patched.modules import model_detection
@@ -385,7 +386,7 @@ def _instantiate_flux_fill_native_model(
     model = model_config.get_model(
         state_probe,
         "",
-        device=offload_device,
+        device=construction_device if construction_device is not None else offload_device,
         model_options={"custom_operations": None},
     )
     detected_metadata = dict(detected_config)

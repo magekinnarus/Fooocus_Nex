@@ -119,8 +119,6 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('disable_seed_increment', 'disable_seed_increment', False, bool),
     ParamDef('prefetch_depth', 'prefetch_depth', 1, int),
     ParamDef('prefetch_chunk_mb', 'prefetch_chunk_mb', 64, int),
-    ParamDef('flux_fill_runtime_posture', 'flux_fill_runtime_posture', 'auto', str),
-    
     # --- Advanced Sampling ---
     ParamDef('adm_scaler_positive', 'adm_scaler_positive', 1.5, float),
     ParamDef('adm_scaler_negative', 'adm_scaler_negative', 0.8, float),
