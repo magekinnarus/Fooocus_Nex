@@ -50,6 +50,17 @@ Resident SDXL no longer exposes a clean-shadow placement override. The live
 runtime always reloads clean UNet weights from the authoritative runtime source
 instead of keeping a separate CPU/GPU clean snapshot policy.
 
+Flux Fill runtime posture now exposes only:
+
+- `auto`
+- `streaming`
+
+Use `auto` for ordinary validation. Use `streaming` only as a benchmark/debug
+override on roomy hardware such as Colab Pro when you explicitly want to force
+the streaming lane. There is no separate `resident` UI override because resident
+machines should naturally resolve to `auto`, while streaming-capable benchmark
+machines may opt into streaming explicitly.
+
 ## Search And Compile
 
 Ownership/runtime audit search:
@@ -62,7 +73,7 @@ Compile sanity on the authoritative runtime surfaces:
 
 ```powershell
 $fluxV3Files = Get-ChildItem backend\flux_fill_v3\*.py | ForEach-Object { $_.FullName }
-.\venv\Scripts\python.exe -m py_compile @fluxV3Files backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py modules\runtime_surface_state.py modules\runtime_surface_api.py modules\ui_logic.py webui.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tests\test_runtime_surface_api.py
+.\venv\Scripts\python.exe -m py_compile @fluxV3Files backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\parameter_registry.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py modules\runtime_surface_state.py modules\runtime_surface_api.py modules\task_state.py modules\ui_components\advanced_panel.py modules\ui_logic.py webui.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tests\test_runtime_surface_api.py
 ```
 
 ## Regression Matrix
@@ -106,6 +117,38 @@ Covers:
 - Flux Fill route/session sanity (v3 greenfield and legacy compatibility)
 - runtime-surface preview and completed-image API ownership
 - transition isolation behavior
+
+## Manual Acceptance Replay
+
+These are recommended scenario checks for Flux Fill route ownership changes and
+are especially useful before pushing to Colab:
+
+### 1. Flux Warm-Reuse Replay
+
+Run this exact UI sequence:
+
+1. `Inpaint (cold)`
+2. `Inpaint (prompt change)`
+3. `Remove`
+
+Expected result:
+
+- prompt-changed inpaint still reuses the warm streaming Flux UNet spine
+- Flux Fill remove completes without the previous prompt-conditioning crash
+- pure Flux Fill remove stays on the reusable Flux-owned path rather than taking
+  the generic MAT/BGR-style aggressive reclaim branch
+
+### 2. Combined Removal Replay
+
+Run this exact UI sequence:
+
+1. `Remove (bg remove + obj remove)`
+
+Expected result:
+
+- background removal still takes the aggressive removal preflight
+- object refinement then hands off to the Flux Fill removal adapter cleanly
+- combined removal completes successfully after the non-Flux pre-stage
 
 ### 4. Tracked Route / Stage Smoke
 
