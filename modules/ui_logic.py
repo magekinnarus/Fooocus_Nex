@@ -7,6 +7,7 @@ import os
 import json
 import html
 import time
+import types
 import numpy as np
 import shared
 import modules.config
@@ -38,6 +39,7 @@ from modules.sdxl_styles import legal_style_names
 from modules.private_logger import get_current_html_path
 from modules.ui_gradio_extensions import javascript_html, css_html
 from modules.auth import auth_enabled, check_auth
+from modules.route_intent import normalize_current_tab, resolve_route_intent
 from modules.util import is_json
 CompletedTaskRecord = runtime_surface_state.CompletedTaskRecord
 completed_tasks_history = runtime_surface_state.completed_tasks_history
@@ -1077,6 +1079,56 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     
     switch_js = "(x) => {if(x){if(window.viewer_to_bottom){viewer_to_bottom(100);viewer_to_bottom(500);}}else{if(window.viewer_to_top){viewer_to_top();}} return x;}"
     down_js = "() => {if(window.viewer_to_bottom){viewer_to_bottom();}}"
+    resolve_generate_tab_js = """
+    (currentTab) => {
+        const resolveVisibleTab = () => {
+            const candidates = [
+                ['remove', 'remove_tab'],
+                ['inpaint', 'inpaint_tab'],
+                ['outpaint', 'outpaint_tab'],
+                ['ip', 'ip_tab'],
+                ['metadata', 'metadata_tab'],
+                ['uov', 'uov_tab'],
+            ];
+
+            const isVisible = (element) => {
+                if (!element) {
+                    return false;
+                }
+                const style = window.getComputedStyle(element);
+                if (style.display === 'none' || style.visibility === 'hidden') {
+                    return false;
+                }
+                if (element.hasAttribute('hidden') || element.getAttribute('aria-hidden') === 'true') {
+                    return false;
+                }
+                return element.offsetParent !== null || style.position === 'fixed';
+            };
+
+            for (const [routeTab, panelId] of candidates) {
+                const panel = document.getElementById(panelId);
+                if (isVisible(panel)) {
+                    return routeTab;
+                }
+                const tabButton = document.getElementById(`${panelId}-button`);
+                if (tabButton && tabButton.getAttribute('aria-selected') === 'true') {
+                    return routeTab;
+                }
+            }
+            return currentTab;
+        };
+
+        ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
+            const el = document.querySelector(`#${id} textarea`);
+            if (el) {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+
+        return resolveVisibleTab() || currentTab;
+    }
+    """
 
     # Bindings start here
     inpaint_toggle_toolbar.click(lambda: None, queue=False, show_progress=False, js=toggle_toolbar_js)
@@ -1274,27 +1326,14 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     )
 
     generate_button.click(
-        fn=lambda: (
-            gr.skip(),
-            gr.update(visible=True),
-            gr.update(visible=False)
-        ),
-        outputs=[gallery, preview_column, gallery_column],
-        js="""
-        () => {
-            ['inpaint_additional_prompt', 'outpaint_additional_prompt'].forEach(id => {
-                const el = document.querySelector(`#${id} textarea`);
-                if (el) {
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            });
-        }
-        """
+        fn=prepare_generate_surface,
+        inputs=[current_tab],
+        outputs=[current_tab, gallery, preview_column, gallery_column],
+        js=resolve_generate_tab_js
     ) \
         .then(fn=refresh_seed, inputs=[seed_random, image_seed], outputs=image_seed) \
         .then(fn=get_tasks, inputs=ctrls, outputs=current_tasks_state) \
-        .then(fn=enqueue_tasks, inputs=[current_tasks_state, input_image_checkbox, current_tab, ctrls_dict['remove_bg_enabled'], ctrls_dict['remove_obj_enabled']], outputs=[currentTask]) \
+        .then(fn=enqueue_tasks, inputs=[current_tasks_state], outputs=[currentTask]) \
         .then(fn=update_history_link, outputs=history_link)
 
     def handle_reconnect_click(task):
@@ -1343,12 +1382,35 @@ def get_tasks(*args):
     task_args = dict(named_args)
     task_args['image_number'] = 1
     task_args['generate_image_grid'] = False
+    task_args['current_tab'] = normalize_current_tab(task_args.get('current_tab'))
+
+    submit_snapshot = types.SimpleNamespace(**task_args, goals=[], cn_tasks={})
+    requested_intent = resolve_route_intent(submit_snapshot)
+    task_args['requested_route_id'] = requested_intent.route_id
+    task_args['requested_route_family'] = requested_intent.route_family
+
+    frozen_goals = []
+    if requested_intent.route_id == 'removal':
+        if bool(task_args.get('remove_bg_enabled', False)):
+            frozen_goals.append(flags.remove_bg)
+        if bool(task_args.get('remove_obj_enabled', False)):
+            frozen_goals.append(flags.remove_obj)
+    task_args['goals'] = frozen_goals
 
     task = worker.AsyncTask(args=task_args)
     return [task]
 
 
-def enqueue_tasks(tasks, use_img, tab, rbg, robj):
+def prepare_generate_surface(current_tab):
+    return (
+        normalize_current_tab(current_tab),
+        gr.skip(),
+        gr.update(visible=True),
+        gr.update(visible=False),
+    )
+
+
+def enqueue_tasks(tasks, *_legacy_route_inputs):
     import modules.async_worker as worker
     if not isinstance(tasks, list):
         tasks = [tasks]
@@ -1360,11 +1422,6 @@ def enqueue_tasks(tasks, use_img, tab, rbg, robj):
         return first_task
         
     for task in tasks:
-        if use_img and tab == 'remove':
-            if rbg:
-                task.state.goals.append('remove_bg')
-            if robj:
-                task.state.goals.append('remove_obj')
         worker.async_tasks.append(task)
     if worker.get_active_task() is None:
         runtime_surface_state.set_progress_state(visible=True, number=1, text='Waiting for task to start ...')

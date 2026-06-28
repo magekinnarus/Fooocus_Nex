@@ -56,6 +56,17 @@ class AsyncTask:
                     val = param.default
             setattr(s, param.task_field, val)
 
+        requested_route_id = str(args.get("requested_route_id", "") or "").strip().lower()
+        requested_route_family = str(args.get("requested_route_family", "") or "").strip().lower()
+        if requested_route_id:
+            s.requested_route_id = requested_route_id
+        if requested_route_family:
+            s.requested_route_family = requested_route_family
+
+        frozen_goals = args.get("goals", None)
+        if isinstance(frozen_goals, (list, tuple, set)):
+            s.goals = [str(goal) for goal in frozen_goals if str(goal).strip()]
+
         s.original_steps = s.steps
 
         lora_data = []
@@ -232,6 +243,7 @@ def handler(async_task: AsyncTask):
         notes={
             'current_tab': task_state.current_tab,
             'input_image_checkbox': bool(task_state.input_image_checkbox),
+            'requested_route_id': task_state.requested_route_id,
         },
         end_notes={'completed': True},
     ):

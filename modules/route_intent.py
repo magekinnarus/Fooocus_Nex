@@ -30,6 +30,16 @@ def route_family_for_route_id(route_id: str | None) -> str | None:
     return _KNOWN_ROUTE_FAMILIES.get(normalized)
 
 
+def _resolve_frozen_route_snapshot(state) -> tuple[str, str | None]:
+    requested_route_id = str(getattr(state, "requested_route_id", "") or "").strip().lower()
+    if requested_route_id == "":
+        return "", None
+
+    requested_route_family = str(getattr(state, "requested_route_family", "") or "").strip().lower()
+    normalized_family = route_family_for_route_id(requested_route_id) or requested_route_family or None
+    return requested_route_id, normalized_family
+
+
 def _has_controlnet_tasks(state) -> bool:
     cn_tasks = getattr(state, "cn_tasks", {}) or {}
     if not isinstance(cn_tasks, dict):
@@ -147,6 +157,16 @@ def resolve_route_intent(state, *, prefer_runtime_route: bool = False) -> RouteI
     elif wants_inpaint:
         route_id = "inpaint"
         route_family = "image_input"
+
+    requested_route_id, requested_route_family = _resolve_frozen_route_snapshot(state)
+    if requested_route_id and requested_route_family is not None:
+        route_id = requested_route_id
+        route_family = requested_route_family
+        wants_removal = route_id == "removal"
+        wants_upscale = route_id in {"upscale", "super_upscale"}
+        wants_outpaint = route_id == "outpaint"
+        wants_flux_inpaint = route_id == "flux_inpaint"
+        wants_inpaint = route_id in {"inpaint", "flux_inpaint"}
 
     if prefer_runtime_route:
         runtime_route_id = str(getattr(state, "runtime_route_id", "") or "").strip().lower()

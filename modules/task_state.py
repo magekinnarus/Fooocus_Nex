@@ -111,6 +111,8 @@ class TaskState:
     cn_tasks_by_channel: Dict[str, Dict[str, List[Any]]] = field(default_factory=dict)
 
     # --- Runtime State ---
+    requested_route_id: str = ""
+    requested_route_family: str = ""
     runtime_route_id: str = ""
     runtime_route_family: str = ""
     runtime_route_display_name: str = ""

@@ -137,6 +137,12 @@ Expected result:
 - Flux Fill remove completes without the previous prompt-conditioning crash
 - pure Flux Fill remove stays on the reusable Flux-owned path rather than taking
   the generic MAT/BGR-style aggressive reclaim branch
+- when switching from `Inpaint` to `Remove` on a slower frontend such as Colab,
+  Generate resolves the visibly active image-input tab at submit time so the
+  request does not fall back to `txt2img` because of a stale hidden tab state
+- once submitted, the queued task keeps its own frozen requested route and
+  removal goals, so later UI changes or later queued txt2img jobs do not
+  retroactively change how that earlier task is executed
 
 ### 2. Combined Removal Replay
 
