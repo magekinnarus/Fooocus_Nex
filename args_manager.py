@@ -1,3 +1,4 @@
+import os
 import sys
 
 import ldm_patched.modules.args_parser as args_parser
@@ -65,6 +66,47 @@ args_parser.parser.add_argument("--skip-model-load", action='store_true',
 args_parser.parser.add_argument("--rebuild-hash-cache", help="Generates missing model and LoRA hashes.",
                                 type=int, nargs="?", metavar="CPU_NUM_THREADS", const=-1)
 
+flux_attention_group = args_parser.parser.add_mutually_exclusive_group()
+flux_attention_group.add_argument(
+    "--flux-attention-backend",
+    dest="flux_attention_backend",
+    type=str,
+    choices=("auto", "sdpa", "xformers", "xformers_only"),
+    default=None,
+    help=(
+        "Select the Flux attention backend policy. "
+        "auto keeps the current SDPA default; xformers prefers xformers and falls back to SDPA."
+    ),
+)
+flux_attention_group.add_argument(
+    "--flux-attention-auto",
+    dest="flux_attention_backend",
+    action="store_const",
+    const="auto",
+    help="Force Flux attention backend policy to auto.",
+)
+flux_attention_group.add_argument(
+    "--flux-attention-sdpa",
+    dest="flux_attention_backend",
+    action="store_const",
+    const="sdpa",
+    help="Force Flux attention backend policy to SDPA.",
+)
+flux_attention_group.add_argument(
+    "--flux-attention-xformers",
+    dest="flux_attention_backend",
+    action="store_const",
+    const="xformers",
+    help="Prefer xformers for Flux attention, with SDPA fallback.",
+)
+flux_attention_group.add_argument(
+    "--flux-attention-xformers-only",
+    dest="flux_attention_backend",
+    action="store_const",
+    const="xformers_only",
+    help="Require xformers for Flux attention and fail if it cannot be used.",
+)
+
 args_parser.parser.set_defaults(
     disable_cuda_malloc=True,
     in_browser=True,
@@ -85,5 +127,8 @@ if args_parser.args.disable_analytics:
 
 if args_parser.args.disable_in_browser:
     args_parser.args.in_browser = False
+
+if getattr(args_parser.args, "flux_attention_backend", None):
+    os.environ["NEX_FLUX_ATTENTION_BACKEND"] = str(args_parser.args.flux_attention_backend)
 
 args = args_parser.args
