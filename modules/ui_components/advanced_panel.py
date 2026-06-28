@@ -121,6 +121,21 @@ def build_debug_tab():
         info='Debug/benchmark override. Keep auto for normal use; force streaming only when benchmarking Flux Fill on high-RAM Colab sessions.'
     )
 
+    total_ram_gb = 0.0
+    try:
+        from backend.flux_fill_v3.activation import resolve_flux_fill_total_ram_gb
+        total_ram_gb = resolve_flux_fill_total_ram_gb()
+    except Exception:
+        pass
+
+    results['flux_fill_t5_posture'] = gr.Radio(
+        label='Flux Fill T5 Posture Override',
+        choices=['disk_paged', 'cpu_resident'],
+        value='disk_paged',
+        visible=(total_ram_gb >= 31.0),
+        info='Advanced opt-in. Default is disk_paged (lowest RAM overhead). cpu_resident requires minimum 32 GB RAM (or 45 GB+ RAM if combined with streaming UNet).'
+    )
+
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(
             label='Save Metadata to Images', 

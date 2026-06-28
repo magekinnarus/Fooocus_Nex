@@ -228,4 +228,12 @@ def release_active_flux_resident_spine(*args, **kwargs) -> bool:
     reason = kwargs.get("reason")
     released_streaming = _STREAMING_RUNTIME_STATE.release(reason=reason)
     released_resident = _RESIDENT_RUNTIME_STATE.release(reason=reason)
-    return released_streaming or released_resident
+
+    released_t5 = False
+    try:
+        from backend.flux_fill_v3.cpu_resident_text_worker import CpuResidentTextEncoderCache
+        released_t5 = CpuResidentTextEncoderCache.teardown()
+    except Exception:
+        pass
+
+    return released_streaming or released_resident or released_t5

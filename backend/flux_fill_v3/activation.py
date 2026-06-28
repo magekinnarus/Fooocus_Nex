@@ -317,10 +317,13 @@ def resolve_flux_fill_request_t5_posture(
     *,
     spine_kind: UNetSpineKind | None = None,
 ) -> T5PostureKind:
-    if spine_kind is None:
-        spine_kind = resolve_flux_fill_spine_kind(task_state)
-    total_ram_gb = resolve_flux_fill_total_ram_gb(task_state)
-    return resolve_flux_fill_t5_posture(spine_kind, total_ram_gb)
+    if task_state is not None:
+        requested = str(getattr(task_state, "flux_fill_t5_posture", "disk_paged") or "").strip().lower()
+        if requested == "cpu_resident":
+            total_ram_gb = resolve_flux_fill_total_ram_gb(task_state)
+            if total_ram_gb >= 31.0:
+                return T5PostureKind.CPU_RESIDENT
+    return T5PostureKind.DISK_PAGED
 
 
 def resolve_flux_fill_process_key(
@@ -371,7 +374,6 @@ def resolve_flux_fill_process_key(
                 ("unet_spine", spine_kind.value),
                 ("clip_l_path", assets.clip_l_path),
                 ("t5_path", assets.t5_path),
-                ("t5_posture", t5_posture_kind.value),
             )
         )
     )
@@ -408,12 +410,6 @@ def sync_flux_fill_process_activation(
 
 
 def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
-    if total_ram_gb is None:
-        total_ram_gb = resolve_flux_fill_total_ram_gb()
-    # Paged on GTX 1050/Colab Free, prepared for future CPU-resident high headroom posture
-    threshold = 32.0 if unet_spine == UNetSpineKind.RESIDENT else 40.0
-    if total_ram_gb >= threshold:
-        return T5PostureKind.DISK_PAGED
     return T5PostureKind.DISK_PAGED
 
 

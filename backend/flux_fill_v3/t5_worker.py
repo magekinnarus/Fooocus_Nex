@@ -151,23 +151,16 @@ def _normalize_t5_loader_policy(policy: str | None, *, t5_path: str | Path | Non
             resolved = Path(t5_path)
             if resolved.suffix.lower() == ".safetensors":
                 return "stream_safetensors_runtime"
-            else:
-                logger.warning(
-                    "[Flux Telemetry] Rejected non-safetensors T5 path for default policy path=%s suffix=%s",
-                    resolved,
-                    resolved.suffix,
-                )
-                raise ValueError("T5 path must end in .safetensors for stream_safetensors_runtime loader policy.")
-        raise ValueError("T5 path must end in .safetensors for stream_safetensors_runtime loader policy.")
+        return "stream_safetensors_runtime"
 
     value = str(policy).strip().lower().replace("-", "_").replace(" ", "_")
-    if value != "stream_safetensors_runtime":
+    if value not in {"stream_safetensors_runtime", "eager"}:
         logger.warning(
-            "[Flux Telemetry] Rejected non-safetensors/unsupported T5 loader policy policy=%s",
+            "[Flux Telemetry] Rejected unsupported T5 loader policy policy=%s",
             policy,
         )
         raise ValueError(
-            f"Unsupported or rejected T5 loader policy: {policy!r}. Only 'stream_safetensors_runtime' is accepted."
+            f"Unsupported or rejected T5 loader policy: {policy!r}. Only 'stream_safetensors_runtime' and 'eager' are accepted."
         )
     if t5_path is not None:
         resolved = Path(t5_path)
@@ -177,7 +170,7 @@ def _normalize_t5_loader_policy(policy: str | None, *, t5_path: str | Path | Non
                 resolved,
                 resolved.suffix,
             )
-            raise ValueError("T5 path must end in .safetensors for stream_safetensors_runtime loader policy.")
+            raise ValueError("T5 path must end in .safetensors.")
     return value
 
 
@@ -1121,6 +1114,18 @@ class DiskPagedTextWorker:
         self.request = request
 
     def get_conditioning(self) -> FluxEmptyConditioning:
+        cpu_resident_released = False
+        try:
+            from backend.flux_fill_v3.cpu_resident_text_worker import CpuResidentTextEncoderCache
+            cpu_resident_released = CpuResidentTextEncoderCache.teardown()
+        except Exception:
+            cpu_resident_released = False
+
+        if cpu_resident_released:
+            logger.info(
+                "[Flux Telemetry] DiskPagedTextWorker request tearing down warm CPU-resident text encoder before disk-paged execution."
+            )
+
         if not self.request.prompt or not str(self.request.prompt).strip():
             logger.debug(
                 "[Flux Telemetry] Empty prompt, loading empty conditioning cache. %s",

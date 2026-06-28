@@ -5,6 +5,7 @@ from backend.flux_fill_v3.runtime_state import (
     acquire_active_flux_resident_spine,
 )
 from backend.flux_fill_v3.t5_worker import DiskPagedTextWorker
+from backend.flux_fill_v3.cpu_resident_text_worker import CpuResidentTextWorker
 from backend.flux_fill_v3.vae_worker import TransientVaeWorker
 
 
@@ -12,9 +13,11 @@ class FluxAssemblyDirector:
     """Authoritative director for assembly selection and instantiation."""
 
     @staticmethod
-    def _select_text_worker(request: FluxFillRequest) -> DiskPagedTextWorker:
+    def _select_text_worker(request: FluxFillRequest) -> DiskPagedTextWorker | CpuResidentTextWorker:
         if request.t5_posture == T5PostureKind.DISK_PAGED:
             return DiskPagedTextWorker(request)
+        if request.t5_posture == T5PostureKind.CPU_RESIDENT:
+            return CpuResidentTextWorker(request)
         raise NotImplementedError(f"Unsupported Flux Fill text-worker posture: {request.t5_posture!r}")
 
     @staticmethod

@@ -85,6 +85,7 @@ class UNetSpineKind(str, Enum):
 
 class T5PostureKind(str, Enum):
     DISK_PAGED = "disk_paged"
+    CPU_RESIDENT = "cpu_resident"
 
 
 class VAEPostureKind(str, Enum):
@@ -104,6 +105,8 @@ def normalize_t5_posture(value: Any) -> T5PostureKind:
     val_str = str(value).strip().lower().replace("-", "_").replace(" ", "_")
     if val_str == T5PostureKind.DISK_PAGED.value:
         return T5PostureKind.DISK_PAGED
+    if val_str == T5PostureKind.CPU_RESIDENT.value:
+        return T5PostureKind.CPU_RESIDENT
     raise ValueError(f"Unknown Flux Fill T5 posture: {value}")
 
 
