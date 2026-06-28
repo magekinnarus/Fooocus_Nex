@@ -8,7 +8,7 @@ import logging
 import torch
 from backend import resources
 from backend.flux_fill_v3.contracts import FluxFillPreviewContext, FluxFillRequest, FluxLatentArtifactBundle
-from backend.flux_fill_v2.streaming_loader import (
+from backend.flux_fill_v3.streaming_loader import (
     _sample_flux_fill_direct_streaming,
     load_flux_fill_unet_streaming,
 )

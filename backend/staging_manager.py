@@ -127,17 +127,6 @@ MODEL_UNIVERSE_COSTS: Dict[str, InferenceCostProfile] = {
         lora_dense_cpu_mb=24.0,
         lora_transient_gpu_mb=16.0,
     ),
-    "flux_fill_q4_k_s": InferenceCostProfile(
-        family="flux",
-        variant="flux_fill_q4_k_s",
-        weights_mb=6494.0,
-        overhead_mb=2800.0,
-        vae_mb=640.0,
-        clip_mb=235.0,
-        t5_mb=4827.0,
-        streaming_workspace_mb=1320.0,
-        conditioning_mb=8.0,
-    ),
     "flux_fill_fp8": InferenceCostProfile(
         family="flux",
         variant="flux_fill_fp8",
@@ -146,17 +135,6 @@ MODEL_UNIVERSE_COSTS: Dict[str, InferenceCostProfile] = {
         vae_mb=640.0,
         clip_mb=235.0,
         t5_mb=4827.0,
-        streaming_workspace_mb=1100.0,
-        conditioning_mb=8.0,
-    ),
-    "flux_fill_q8": InferenceCostProfile(
-        family="flux",
-        variant="flux_fill_q8",
-        weights_mb=12137.0,
-        overhead_mb=2800.0,
-        vae_mb=640.0,
-        clip_mb=235.0,
-        t5_mb=9334.0,
         streaming_workspace_mb=1100.0,
         conditioning_mb=8.0,
     ),
@@ -592,14 +570,7 @@ class ModelUniverseRegistry:
         if family == "sdxl":
             return "sdxl_fp16"
         if family == "flux":
-            if execution_class in {
-                ExecutionClass.FLUX_STREAMING_T3,
-                ExecutionClass.FLUX_RESIDENT_T4,
-                ExecutionClass.FLUX_RESIDENT_T5,
-                ExecutionClass.FLUX_RESIDENT_T6,
-            }:
-                return "flux_fill_fp8"
-            return "flux_fill_q4_k_s"
+            return "flux_fill_fp8"
         raise ValueError(f"No default variant for family {family!r}")
 
     def canonical_variant_for_request(
@@ -801,32 +772,30 @@ class PlacementPlanner:
                 "fallback_model_variant": None,
             }
 
-        if request.model_variant == "flux_fill_fp8":
-            runtime_family = FLUX_RUNTIME_FAMILY_NATIVE_FP8
-            fallback_model_variant = "flux_fill_q4_k_s"
-            # Hardcode to streaming for v3 first assembly
-            runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
-            resident_load_strategy = None
-            if float(request.vram_total_mb) <= 8192.0:
-                streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
-            else:
-                streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
+        runtime_family = FLUX_RUNTIME_FAMILY_NATIVE_FP8
+        fallback_model_variant = None
+
+        if request.execution_class in FLUX_RESIDENT_EXECUTION_CLASSES:
             return {
                 "runtime_family": runtime_family,
-                "runtime_posture": runtime_posture,
-                "streaming_profile": streaming_profile,
-                "resident_load_strategy": resident_load_strategy,
+                "runtime_posture": FLUX_RUNTIME_POSTURE_RESIDENT,
+                "streaming_profile": None,
+                "resident_load_strategy": FLUX_RESIDENT_LOAD_STICKY_NO_CPU_SHADOW,
                 "fallback_model_variant": fallback_model_variant,
             }
 
-        # Hardcode to streaming for v3 first assembly
-        runtime_posture = FLUX_RUNTIME_POSTURE_STREAMING
+        # Otherwise, streaming posture
+        if float(request.vram_total_mb) <= 8192.0:
+            streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C64_D1_S1
+        else:
+            streaming_profile = FLUX_STREAMING_PROFILE_OPEN_C128_D1_S1
+
         return {
-            "runtime_family": FLUX_RUNTIME_FAMILY_GGUF,
-            "runtime_posture": runtime_posture,
-            "streaming_profile": None,
+            "runtime_family": runtime_family,
+            "runtime_posture": FLUX_RUNTIME_POSTURE_STREAMING,
+            "streaming_profile": streaming_profile,
             "resident_load_strategy": None,
-            "fallback_model_variant": None,
+            "fallback_model_variant": fallback_model_variant,
         }
 
     @staticmethod

@@ -61,7 +61,8 @@ rg -n "sdxl_runtime_owner|process_diffusion|runtime_family|execution_mode|gguf_s
 Compile sanity on the authoritative runtime surfaces:
 
 ```powershell
-.\venv\Scripts\python.exe -m py_compile backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py backend\flux_fill_v3\__init__.py backend\flux_fill_v3\activation.py backend\flux_fill_v3\assembly.py backend\flux_fill_v3\contracts.py backend\flux_fill_v3\director.py backend\flux_fill_v3\runtime_state.py backend\flux_fill_v3\spine.py backend\flux_fill_v3\t5_worker.py backend\flux_fill_v3\vae_worker.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py modules\runtime_surface_state.py modules\runtime_surface_api.py modules\ui_logic.py webui.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tests\test_runtime_surface_api.py
+$fluxV3Files = Get-ChildItem backend\flux_fill_v3\*.py | ForEach-Object { $_.FullName }
+.\venv\Scripts\python.exe -m py_compile @fluxV3Files backend\memory_governor.py backend\resources.py backend\sdxl_runtime_policy.py backend\sdxl_streaming_runtime.py backend\sdxl_unified_runtime.py backend\staging_manager.py modules\async_worker.py modules\objr_engine.py modules\pipeline\inference.py modules\pipeline\routes.py modules\pipeline\tiled_refinement.py modules\runtime_surface_state.py modules\runtime_surface_api.py modules\ui_logic.py webui.py tools\check_validation_env.py tracked_tests\test_memory_residency.py tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tests\test_runtime_surface_api.py
 ```
 
 ## Regression Matrix

@@ -520,6 +520,7 @@ with shared.gradio_root:
                 disable_seed_increment = debug_panel_result['disable_seed_increment']
                 prefetch_depth = debug_panel_result['prefetch_depth']
                 prefetch_chunk_mb = debug_panel_result['prefetch_chunk_mb']
+                flux_fill_runtime_posture = debug_panel_result['flux_fill_runtime_posture']
                 if not args_manager.args.disable_metadata:
                     save_metadata_to_images = debug_panel_result['save_metadata_to_images']
                     metadata_scheme = debug_panel_result['metadata_scheme']
@@ -593,6 +594,7 @@ with shared.gradio_root:
             'disable_seed_increment': disable_seed_increment,
             'prefetch_depth': prefetch_depth,
             'prefetch_chunk_mb': prefetch_chunk_mb,
+            'flux_fill_runtime_posture': flux_fill_runtime_posture,
             'adm_scaler_positive': adm_scaler_positive,
             'adm_scaler_negative': adm_scaler_negative,
             'adm_scaler_end': adm_scaler_end,

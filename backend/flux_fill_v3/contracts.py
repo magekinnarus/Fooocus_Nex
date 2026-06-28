@@ -1,13 +1,86 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
+import json
 from pathlib import Path
 from typing import Any
 import numpy as np
 import torch
 
 
+_DEFAULT_FLUX_FILL_ALLOWED_SAMPLERS = ("euler", "deis", "dpmpp_2m", "uni_pc")
+_DEFAULT_FLUX_FILL_ALLOWED_SCHEDULERS = ("beta", "normal", "simple", "sgm_uniform")
+_DEFAULT_FLUX_FILL_FALLBACK_SAMPLER = "euler"
+_DEFAULT_FLUX_FILL_FALLBACK_SCHEDULER = "simple"
+_FLUX_FILL_SAMPLER_SCHEDULER_ALLOWLIST_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "defaults" / "flux_fill_sampler_scheduler_allowlist.json"
+)
+
+
+def _normalize_flux_fill_sampling_name(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+@lru_cache(maxsize=1)
+def load_flux_fill_sampler_scheduler_allowlist() -> dict[str, Any]:
+    allowed_samplers = [_normalize_flux_fill_sampling_name(value) for value in _DEFAULT_FLUX_FILL_ALLOWED_SAMPLERS]
+    allowed_schedulers = [_normalize_flux_fill_sampling_name(value) for value in _DEFAULT_FLUX_FILL_ALLOWED_SCHEDULERS]
+    fallback_sampler = _normalize_flux_fill_sampling_name(_DEFAULT_FLUX_FILL_FALLBACK_SAMPLER)
+    fallback_scheduler = _normalize_flux_fill_sampling_name(_DEFAULT_FLUX_FILL_FALLBACK_SCHEDULER)
+
+    try:
+        with _FLUX_FILL_SAMPLER_SCHEDULER_ALLOWLIST_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        payload = {}
+
+    if isinstance(payload, dict):
+        configured_samplers = payload.get("allowed_samplers", allowed_samplers)
+        configured_schedulers = payload.get("allowed_schedulers", allowed_schedulers)
+        configured_fallback_sampler = payload.get("fallback_sampler", fallback_sampler)
+        configured_fallback_scheduler = payload.get("fallback_scheduler", fallback_scheduler)
+
+        if isinstance(configured_samplers, list):
+            normalized_samplers = [
+                _normalize_flux_fill_sampling_name(value)
+                for value in configured_samplers
+                if _normalize_flux_fill_sampling_name(value) != ""
+            ]
+            if normalized_samplers:
+                allowed_samplers = normalized_samplers
+
+        if isinstance(configured_schedulers, list):
+            normalized_schedulers = [
+                _normalize_flux_fill_sampling_name(value)
+                for value in configured_schedulers
+                if _normalize_flux_fill_sampling_name(value) != ""
+            ]
+            if normalized_schedulers:
+                allowed_schedulers = normalized_schedulers
+
+        normalized_fallback_sampler = _normalize_flux_fill_sampling_name(configured_fallback_sampler)
+        normalized_fallback_scheduler = _normalize_flux_fill_sampling_name(configured_fallback_scheduler)
+        if normalized_fallback_sampler != "":
+            fallback_sampler = normalized_fallback_sampler
+        if normalized_fallback_scheduler != "":
+            fallback_scheduler = normalized_fallback_scheduler
+
+    if fallback_sampler not in allowed_samplers:
+        allowed_samplers.append(fallback_sampler)
+    if fallback_scheduler not in allowed_schedulers:
+        allowed_schedulers.append(fallback_scheduler)
+
+    return {
+        "allowed_samplers": tuple(dict.fromkeys(allowed_samplers)),
+        "allowed_schedulers": tuple(dict.fromkeys(allowed_schedulers)),
+        "fallback_sampler": fallback_sampler,
+        "fallback_scheduler": fallback_scheduler,
+    }
+
+
 class UNetSpineKind(str, Enum):
     STREAMING = "streaming"
+    RESIDENT = "resident"
 
 
 class T5PostureKind(str, Enum):
@@ -21,6 +94,17 @@ class VAEPostureKind(str, Enum):
 class FluxFillCategory(str, Enum):
     INPAINT = "inpaint"
     REMOVAL = "removal"
+
+
+def normalize_t5_posture(value: Any) -> T5PostureKind:
+    if value is None:
+        return T5PostureKind.DISK_PAGED
+    if isinstance(value, T5PostureKind):
+        return value
+    val_str = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if val_str == T5PostureKind.DISK_PAGED.value:
+        return T5PostureKind.DISK_PAGED
+    raise ValueError(f"Unknown Flux Fill T5 posture: {value}")
 
 
 def normalize_category(value: Any) -> FluxFillCategory | None:
@@ -63,6 +147,7 @@ class FluxFillRequest:
     prefetch_depth: int = 1
     prefetch_chunk_mb: int = 64
     unet_spine: UNetSpineKind = UNetSpineKind.STREAMING
+    t5_posture: T5PostureKind | str = T5PostureKind.DISK_PAGED
     device: str | torch.device | None = None
     image: np.ndarray | None = None
     mask: np.ndarray | None = None
@@ -74,12 +159,11 @@ class FluxFillRequest:
     category: FluxFillCategory | str | None = None
 
     def __post_init__(self) -> None:
+        self.t5_posture = normalize_t5_posture(self.t5_posture)
         if self.category is not None:
             self.category = normalize_category(self.category)
 
     def validate_static(self, *, require_existing_assets: bool = True) -> None:
-        from backend.flux_fill_v2.contracts import load_flux_fill_sampler_scheduler_allowlist, _normalize_flux_fill_sampling_name
-
         policy = load_flux_fill_sampler_scheduler_allowlist()
         original_sampler = str(self.sampler or "")
         original_scheduler = str(self.scheduler or "")

@@ -149,8 +149,8 @@ def inspect_flux_fill_hardware(profile: Any | None = None) -> Any:
     raise LegacyFluxArchivedError()
 
 def evaluate_flux_fill_text_encoder_residency(profile: Any | None = None, *, next_route_family: Any | None = None) -> Any:
-    from backend.flux_fill_v2.contracts import UNetSpineKind
-    from backend.flux_fill_v2.activation import resolve_flux_fill_t5_posture
+    from backend.flux_fill_v3.contracts import UNetSpineKind
+    from backend.flux_fill_v3.activation import resolve_flux_fill_t5_posture
 
     total_ram_gb = None
     if profile is not None and hasattr(profile, "total_ram_mb"):
@@ -184,8 +184,8 @@ def select_flux_fill_t5_variant(profile: Any | None = None, *, variant: str | No
     if variant is not None and str(variant).strip() != "":
         return str(variant).strip()
 
-    from backend.flux_fill_v2.contracts import UNetSpineKind
-    from backend.flux_fill_v2.activation import resolve_flux_fill_t5_posture
+    from backend.flux_fill_v3.contracts import UNetSpineKind
+    from backend.flux_fill_v3.activation import resolve_flux_fill_t5_posture
 
     total_ram_gb = None
     if profile is not None and hasattr(profile, "total_ram_mb"):

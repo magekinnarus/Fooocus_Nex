@@ -25,14 +25,12 @@ from backend.flux_fill_v3.contracts import (
     FluxFillRequest,
     T5PostureKind,
 )
-from backend.flux_fill_v2.conditioning_loader import (
+from backend.flux_fill_v3.conditioning_loader import (
     FluxEmptyConditioning,
     format_flux_conditioning_memory_summary,
     load_flux_empty_conditioning_cache,
 )
 from ldm_patched.ldm.modules.attention import optimized_attention_for_device
-from backend.gguf.loader import gguf_clip_loader
-from backend.gguf.ops import GGMLOps
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +100,6 @@ def _normalize_t5_loader_policy(policy: str | None, *, t5_path: str | Path | Non
 
 def _load_t5_tokenizer_fast():
     return T5TokenizerFast
-
-
-def _load_gguf_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    return gguf_clip_loader(str(path)), {
-        "custom_operations": GGMLOps,
-        "_nex_gguf_text_encoder": True,
-    }
 
 
 class FixedLengthT5Tokenizer:
@@ -532,7 +523,10 @@ class FluxPromptTextEncoder:
 
 def _load_text_encoder_state_dict(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     if path.suffix.lower() == ".gguf":
-        return _load_gguf_text_encoder_state_dict(path)
+        raise ValueError(
+            "GGUF text-encoder checkpoints are not supported by flux_fill_v3. "
+            "Use the native safetensors Flux Fill assets."
+        )
     return comfy_utils.load_torch_file(str(path), safe_load=True), {}
 
 
@@ -713,15 +707,7 @@ def load_flux_prompt_text_encoder(
         model_options=model_options,
     )
     tokenizer = FluxTokenizer(embedding_directory=embedding_directory)
-    patcher_cls = patching.NexModelPatcher
-    if model_options.get("_nex_gguf_text_encoder"):
-        from backend.gguf.patcher import GGUFModelPatcher
-        patcher_cls = GGUFModelPatcher
-    elif model_options.get("custom_operations") is GGMLOps:
-        from backend.gguf.patcher import GGUFModelPatcher
-        patcher_cls = GGUFModelPatcher
-
-    patcher = patcher_cls(cond_stage_model, load_device=load_device, offload_device=offload_device)
+    patcher = patching.NexModelPatcher(cond_stage_model, load_device=load_device, offload_device=offload_device)
 
     missing, unexpected = cond_stage_model.load_sd(clip_l_sd)
     if missing:

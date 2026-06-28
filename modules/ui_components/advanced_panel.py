@@ -114,6 +114,13 @@ def build_debug_tab():
         info='Max size of chunks to prefetch for Flux Fill (64MB or 128MB).'
     )
 
+    results['flux_fill_runtime_posture'] = gr.Radio(
+        label='Flux Fill Runtime Posture Override',
+        choices=['auto', 'streaming'],
+        value='auto',
+        info='Debug/benchmark override. Keep auto for normal use; force streaming only when benchmarking Flux Fill on high-RAM Colab sessions.'
+    )
+
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(
             label='Save Metadata to Images', 

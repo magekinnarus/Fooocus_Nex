@@ -17,8 +17,6 @@ from backend.flux_fill_v3.contracts import UNetSpineKind, T5PostureKind
 logger = logging.getLogger(__name__)
 
 FLUX_FILL_TIER_FP8 = "fp8"
-FLUX_FILL_TIER_Q8 = "q8_0"
-FLUX_FILL_TIER_Q4 = "q4_k_s"
 FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
 FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
@@ -26,18 +24,12 @@ FLUX_FILL_T5XXL_FP16_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.fp16"
 
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_FP8: "inpaint.flux_fill.unet.fp8",
-    FLUX_FILL_TIER_Q8: "inpaint.flux_fill.unet.q8_0",
-    FLUX_FILL_TIER_Q4: "inpaint.flux_fill.unet.q4_k_s",
 }
 FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT = {
     "flux_fill_fp8": FLUX_FILL_UNET_ASSET_BY_TIER[FLUX_FILL_TIER_FP8],
-    "flux_fill_q8": FLUX_FILL_UNET_ASSET_BY_TIER[FLUX_FILL_TIER_Q8],
-    "flux_fill_q4_k_s": FLUX_FILL_UNET_ASSET_BY_TIER[FLUX_FILL_TIER_Q4],
 }
 FLUX_FILL_MODEL_VARIANT_BY_TIER = {
     FLUX_FILL_TIER_FP8: "flux_fill_fp8",
-    FLUX_FILL_TIER_Q8: "flux_fill_q8",
-    FLUX_FILL_TIER_Q4: "flux_fill_q4_k_s",
 }
 
 
@@ -195,16 +187,6 @@ def resolve_flux_fill_total_vram_mb(source: Any | None = None) -> float:
 
 
 def _resolve_flux_fill_model_variant(task_state: Any) -> str:
-    explicit_variant = str(getattr(task_state, "flux_fill_model_variant", "") or "").strip()
-    if explicit_variant in FLUX_FILL_UNET_ASSET_BY_MODEL_VARIANT:
-        return explicit_variant
-
-    explicit_tier = _normalize_flux_fill_tier(
-        getattr(task_state, "flux_fill_tier", None) or getattr(task_state, "flux_tier", None)
-    )
-    if explicit_tier is not None:
-        return FLUX_FILL_MODEL_VARIANT_BY_TIER[explicit_tier]
-
     return "flux_fill_fp8"
 
 
@@ -295,6 +277,52 @@ def resolve_flux_fill_assets(task_state: Any) -> FluxFillActivationAssets | None
     return assets
 
 
+def resolve_flux_fill_spine_kind(task_state: Any) -> UNetSpineKind:
+    """ Resolves the greenfield UNetSpineKind from task state parameters. """
+    if task_state is None:
+        return UNetSpineKind.STREAMING
+
+    # Greenfield runtime posture option
+    posture = str(
+        getattr(task_state, "flux_fill_runtime_posture", None)
+        or getattr(task_state, "flux_fill_unet_spine", None)
+        or ""
+    ).strip().lower().replace("-", "_").replace(" ", "_")
+    if posture == "resident":
+        return UNetSpineKind.RESIDENT
+    if posture == "streaming":
+        return UNetSpineKind.STREAMING
+
+    try:
+        from backend.staging_manager import (
+            FLUX_RUNTIME_POSTURE_RESIDENT,
+            PlacementSolver,
+        )
+
+        total_vram_mb = resolve_flux_fill_total_vram_mb(task_state)
+        total_ram_mb = resolve_flux_fill_total_ram_gb(task_state) * 1024.0
+        requested_variant = _resolve_flux_fill_model_variant(task_state)
+        plan = PlacementSolver.solve(total_vram_mb, total_ram_mb, requested_variant)
+        runtime_posture = str(getattr(plan, "runtime_posture", "") or "").strip().lower()
+        if runtime_posture == FLUX_RUNTIME_POSTURE_RESIDENT:
+            return UNetSpineKind.RESIDENT
+    except Exception:
+        pass
+
+    return UNetSpineKind.STREAMING
+
+
+def resolve_flux_fill_request_t5_posture(
+    task_state: Any,
+    *,
+    spine_kind: UNetSpineKind | None = None,
+) -> T5PostureKind:
+    if spine_kind is None:
+        spine_kind = resolve_flux_fill_spine_kind(task_state)
+    total_ram_gb = resolve_flux_fill_total_ram_gb(task_state)
+    return resolve_flux_fill_t5_posture(spine_kind, total_ram_gb)
+
+
 def resolve_flux_fill_process_key(
     task_state: Any,
     *,
@@ -318,18 +346,15 @@ def resolve_flux_fill_process_key(
     if not is_flux_fill:
         return None
 
-    spine_kind = UNetSpineKind.STREAMING  # streaming only in flux_v3
+    spine_kind = resolve_flux_fill_spine_kind(task_state)
+    _assign_task_state_attr(task_state, "flux_fill_unet_spine", spine_kind.value)
+
     assets = resolve_flux_fill_assets(task_state)
     if assets is None:
         return None
 
-    t5_posture_kind = T5PostureKind.DISK_PAGED
+    t5_posture_kind = resolve_flux_fill_request_t5_posture(task_state, spine_kind=spine_kind)
     _assign_task_state_attr(task_state, "flux_fill_t5_posture", t5_posture_kind.value)
-
-    # Note: Category is intentionally excluded from the current coarse process key.
-    # W07R1 keeps the shared pinned-CPU UNet keyed to the common streaming model
-    # identity, while latent artifacts remain independently fingerprinted. Broader
-    # category-aware retention semantics are still a follow-up concern.
 
     # Normalize cache path for identity comparisons to avoid prompt resets
     identity_conditioning_path = assets.conditioning_cache_path
@@ -355,7 +380,7 @@ def resolve_flux_fill_process_key(
         family=PROCESS_FAMILY_FLUX_FILL,
         process_class=PROCESS_CLASS_FLUX_FILL,
         authoritative_identity=identity,
-        residency_class="streaming",
+        residency_class="resident" if spine_kind == UNetSpineKind.RESIDENT else "streaming",
         route_family="flux_fill",
     )
 
@@ -369,15 +394,26 @@ def sync_flux_fill_process_activation(
         requested_process_key is not None
         and requested_process_key.family == PROCESS_FAMILY_FLUX_FILL
     ):
-        # W07R1 retains the pinned-CPU streaming UNet through flux runtime_state,
-        # but the coarse process registry still marks safe_to_retain=False until
-        # category-aware retention semantics are tightened.
+        spine_kind = resolve_flux_fill_spine_kind(task_state)
+        safe_to_retain = (spine_kind == UNetSpineKind.RESIDENT)
         set_active_runtime(
             family=PROCESS_FAMILY_FLUX_FILL,
             key=requested_process_key,
             route_owner=route.route_id,
-            safe_to_retain=False,
+            safe_to_retain=safe_to_retain,
         )
     else:
         clear_active_runtime()
     return None
+
+
+def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
+    if total_ram_gb is None:
+        total_ram_gb = resolve_flux_fill_total_ram_gb()
+    # Paged on GTX 1050/Colab Free, prepared for future CPU-resident high headroom posture
+    threshold = 32.0 if unet_spine == UNetSpineKind.RESIDENT else 40.0
+    if total_ram_gb >= threshold:
+        return T5PostureKind.DISK_PAGED
+    return T5PostureKind.DISK_PAGED
+
+

@@ -38,6 +38,13 @@ def _normalize_flux_fill_prompt_cache_value(value: Any) -> str:
 def _normalize_objr_blend_mode_value(value: Any) -> str:
     return normalize_flux_fill_blend_mode(value)
 
+
+def _normalize_flux_fill_runtime_posture_value(value: Any) -> str:
+    normalized = str(value or 'auto').strip().lower().replace('-', '_').replace(' ', '_')
+    if normalized == 'streaming':
+        return 'streaming'
+    return 'auto'
+
 # Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
 # and are NOT listed as static ParamDefs here.
@@ -78,6 +85,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('objr_engine', 'objr_engine', OBJR_ENGINE_MAT, str),
     ParamDef('flux_fill_conditioning', 'flux_fill_conditioning', 'empty', _normalize_flux_fill_conditioning_value),
     ParamDef('flux_fill_prompt_cache', 'flux_fill_prompt_cache', 'temp', _normalize_flux_fill_prompt_cache_value),
+    ParamDef('flux_fill_runtime_posture', 'flux_fill_runtime_posture', 'auto', _normalize_flux_fill_runtime_posture_value),
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 16, int),
     ParamDef('objr_mask_blur', 'objr_mask_blur', 6, int),
     ParamDef('objr_blend_mode', 'objr_blend_mode', FLUX_FILL_BLEND_MORPHOLOGICAL, _normalize_objr_blend_mode_value),

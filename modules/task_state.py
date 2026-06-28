@@ -64,6 +64,7 @@ class TaskState:
     flux_fill_clip_l_path: str = ""
     flux_fill_t5_path: str = ""
     flux_fill_t5_posture: str = ""
+    flux_fill_runtime_posture: str = "auto"
     prefetch_depth: int = 1
     prefetch_chunk_mb: int = 64
     objr_mask_dilate: int = 16
@@ -113,6 +114,11 @@ class TaskState:
     runtime_route_id: str = ""
     runtime_route_family: str = ""
     runtime_route_display_name: str = ""
+    process_transition_action: str = ""
+    process_transition_reason: str = ""
+    process_transition_previous_family: str = ""
+    process_transition_requested_family: str = ""
+    process_transition_reuse_allowed: bool = False
     yields: List[Any] = field(default_factory=list)
     results: List[Any] = field(default_factory=list)
     last_stop: Union[bool, str] = False

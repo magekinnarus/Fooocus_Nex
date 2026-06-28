@@ -243,7 +243,19 @@ def handler(async_task: AsyncTask):
 
     print(f"[Route] {route.route_id}: {' -> '.join(describe_route(route))}")
 
-    process_transition.reconcile_runtime_state(route, task_state)
+    transition_decision = process_transition.reconcile_runtime_state(route, task_state)
+    if transition_decision is not None:
+        task_state.process_transition_action = str(getattr(transition_decision, "action", "") or "")
+        task_state.process_transition_reason = str(getattr(transition_decision, "reason", "") or "")
+        task_state.process_transition_previous_family = str(getattr(getattr(transition_decision, "current_key", None), "family", "") or "")
+        task_state.process_transition_requested_family = str(getattr(getattr(transition_decision, "requested_key", None), "family", "") or "")
+        task_state.process_transition_reuse_allowed = bool(getattr(transition_decision, "reuse_allowed", False))
+    else:
+        task_state.process_transition_action = ""
+        task_state.process_transition_reason = ""
+        task_state.process_transition_previous_family = ""
+        task_state.process_transition_requested_family = ""
+        task_state.process_transition_reuse_allowed = False
 
     route_context = PipelineRouteContext(
         async_task=async_task,

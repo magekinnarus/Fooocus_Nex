@@ -207,6 +207,23 @@ def _should_force_flux_host_cleanup() -> bool:
         return False
 
 
+def _should_aggressively_cleanup_flux_remove(task_state) -> bool:
+    if flags.remove_bg in getattr(task_state, "goals", ()):
+        return True
+
+    previous_family = str(getattr(task_state, "process_transition_previous_family", "") or "").strip().lower()
+    reuse_allowed = bool(getattr(task_state, "process_transition_reuse_allowed", False))
+
+    try:
+        from backend.process_transition import PROCESS_FAMILY_FLUX_FILL
+    except Exception:
+        return True
+
+    if previous_family != PROCESS_FAMILY_FLUX_FILL:
+        return True
+    return not reuse_allowed
+
+
 def sync_flux_fill_route_session(route: PipelineRoute, task_state, *, progress: bool = False):
     # Legacy Flux Fill is archived during the greenfield rebuild.
     # Shared route code keeps the symbol as a compatibility shim, but it no
@@ -678,7 +695,11 @@ class FluxFillInpaintStage(PipelineStage):
         from modules.pipeline.inference import get_sampling_callback
         from modules.pipeline.inpaint import InpaintPipeline
         from modules.pipeline.output import save_and_log
-        from backend.flux_fill_v3.activation import resolve_flux_fill_assets
+        from backend.flux_fill_v3.activation import (
+            resolve_flux_fill_assets,
+            resolve_flux_fill_request_t5_posture,
+            resolve_flux_fill_spine_kind,
+        )
         from backend.flux_fill_v3.contracts import FluxFillRequest, FluxFillPreviewContext, FluxFillCategory, UNetSpineKind
         from backend.flux_fill_v3.director import FluxAssemblyDirector
 
@@ -698,7 +719,8 @@ class FluxFillInpaintStage(PipelineStage):
         # Resolve prompt and assets using greenfield helpers
         prompt_text = _resolve_inpaint_prompt(task_state)
         assets = resolve_flux_fill_assets(task_state)
-        spine_kind = UNetSpineKind.STREAMING
+        spine_kind = resolve_flux_fill_spine_kind(task_state)
+        t5_posture = resolve_flux_fill_request_t5_posture(task_state, spine_kind=spine_kind)
 
         stitcher = InpaintPipeline()
         processed_count = 0
@@ -772,6 +794,7 @@ class FluxFillInpaintStage(PipelineStage):
                     prefetch_depth=int(getattr(task_state, 'prefetch_depth', 1)),
                     prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
                     unet_spine=spine_kind,
+                    t5_posture=t5_posture,
                     image=ctx.bb_image,
                     mask=ctx.bb_mask,
                     prompt=assets.prompt,
@@ -945,11 +968,20 @@ class RemovalStage(PipelineStage):
         task_state = context.task_state
         task_state.inpaint_context = None
         selected_engine = normalize_objr_engine(task_state.objr_engine)
+        use_flux_fill_removal_adapter = (
+            selected_engine == OBJR_ENGINE_FLUX_FILL and flags.remove_obj in task_state.goals
+        )
+        aggressive_flux_remove_cleanup = (
+            use_flux_fill_removal_adapter and _should_aggressively_cleanup_flux_remove(task_state)
+        )
         resources.begin_memory_phase('removal', notes={'goals': list(task_state.goals)})
         try:
-            if context.progressbar_callback is not None:
-                context.progressbar_callback(task_state, 5, 'Clearing VRAM for Removal Models...')
-            resources.cleanup_memory('removal_preflight', unload_models=True, force_cache=True, trim_host=True, notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.REMOVAL)
+            if flags.remove_bg in task_state.goals or not use_flux_fill_removal_adapter or aggressive_flux_remove_cleanup:
+                if context.progressbar_callback is not None:
+                    context.progressbar_callback(task_state, 5, 'Clearing VRAM for Removal Models...')
+                resources.cleanup_memory('removal_preflight', unload_models=True, force_cache=True, trim_host=True, notes={'goals': list(task_state.goals)}, target_phase=resources.MemoryPhase.REMOVAL)
+            elif context.progressbar_callback is not None:
+                context.progressbar_callback(task_state, 5, 'Preparing Flux Fill Removal...')
 
             if flags.remove_bg in task_state.goals:
                 if context.progressbar_callback is not None:
@@ -986,87 +1018,13 @@ class RemovalStage(PipelineStage):
                     task_state.remove_mask_image = mask_path
 
             if flags.remove_obj in task_state.goals:
-                if context.progressbar_callback is not None:
-                    context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
                 if selected_engine == OBJR_ENGINE_FLUX_FILL:
-                    from PIL import Image
-                    from backend.flux_fill_v3.activation import resolve_flux_fill_assets
-                    from backend.flux_fill_v3.contracts import FluxFillRequest, FluxFillPreviewContext, FluxFillCategory, UNetSpineKind
-                    from backend.flux_fill_v3.director import FluxAssemblyDirector
-                    from modules.pipeline.inference import get_sampling_callback
+                    from backend.flux_fill_v3.removal_adapter import execute_flux_fill_removal
 
-                    with Image.open(task_state.remove_base_image) as img_pil:
-                        image_np = np.array(img_pil.convert('RGB'))
-                    with Image.open(task_state.remove_mask_image) as mask_pil:
-                        mask_np = np.array(mask_pil.convert('L'))
-
-                    prepared_mask = objr_engine.prepare_flux_fill_mask(
-                        mask_np,
-                        grow=task_state.objr_mask_dilate,
-                        blur=task_state.objr_mask_blur
+                    result = execute_flux_fill_removal(
+                        context,
+                        progress_percent_start=60 if flags.remove_bg in task_state.goals else 10,
                     )
-
-                    assets = resolve_flux_fill_assets(task_state)
-                    spine_kind = UNetSpineKind.STREAMING
-
-                    logger.debug(
-                        "[Flux Telemetry] Removal route request image=%s mask=%s mask_fill=%.4f "
-                        "prompt_chars=%s preview_interval=%s seed=%s steps=%s sampler=%s "
-                        "scheduler=%s blend=%s",
-                        _shape_of_array(image_np),
-                        _shape_of_array(prepared_mask),
-                        _mask_fill_ratio(prepared_mask) or 0.0,
-                        len(str(assets.prompt or "")),
-                        getattr(task_state, "preview_update_interval", None),
-                        int(task_state.seed),
-                        int(task_state.steps),
-                        task_state.sampler_name,
-                        task_state.scheduler_name,
-                        getattr(task_state, "objr_blend_mode", None),
-                    )
-
-                    req = FluxFillRequest(
-                        unet_path=assets.unet_path,
-                        ae_path=assets.ae_path,
-                        conditioning_cache_path=assets.conditioning_cache_path,
-                        seed=int(task_state.seed),
-                        steps=int(task_state.steps),
-                        sampler=task_state.sampler_name,
-                        scheduler=task_state.scheduler_name,
-                        prefetch_depth=int(getattr(task_state, 'prefetch_depth', 1)),
-                        prefetch_chunk_mb=int(getattr(task_state, 'prefetch_chunk_mb', 64)),
-                        unet_spine=spine_kind,
-                        image=image_np,
-                        mask=prepared_mask,
-                        prompt=assets.prompt,
-                        blend_mode=task_state.objr_blend_mode,
-                        clip_l_path=assets.clip_l_path,
-                        t5_path=assets.t5_path,
-                        category=FluxFillCategory.REMOVAL,
-                    )
-
-                    preview_context = None
-
-                    def preview_transform(latent):
-                        nonlocal preview_context
-                        if preview_context is None:
-                            from ldm_patched.modules import latent_formats
-                            preview_context = FluxFillPreviewContext(latent_formats.Flux(), latent.device)
-                        return preview_context.decode(latent)
-
-                    callback = get_sampling_callback(
-                        task_state,
-                        context.progressbar_callback,
-                        0,
-                        1,
-                        0,
-                        int(task_state.steps),
-                        preview_transform=preview_transform,
-                    )
-
-                    director = FluxAssemblyDirector()
-                    assembly = director.select_assembly(req)
-                    result = assembly.execute(req, callback=callback)
 
                     persisted_res_path = _save_logged_output(
                         context,
@@ -1085,6 +1043,8 @@ class RemovalStage(PipelineStage):
                             do_not_show_finished_images=True,
                         )
                 else:
+                    if context.progressbar_callback is not None:
+                        context.progressbar_callback(task_state, 60 if flags.remove_bg in task_state.goals else 10, 'Object Removal Starting...')
                     res_path = objr_engine.remove_object_from_file(
                         image_path=task_state.remove_base_image,
                         mask_path=task_state.remove_mask_image,

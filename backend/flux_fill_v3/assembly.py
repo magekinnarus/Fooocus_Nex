@@ -14,7 +14,8 @@ from backend.flux_fill_v3.contracts import (
     T5PostureKind,
     VAEPostureKind,
 )
-from backend.flux_fill_v3.spine import StreamingUnetSpine
+from backend.flux_fill_v3.streaming_spine import StreamingUnetSpine
+from backend.flux_fill_v3.resident_spine import ResidentUnetSpine
 from backend.flux_fill_v3.t5_worker import DiskPagedTextWorker
 from backend.flux_fill_v3.vae_worker import TransientVaeWorker
 
@@ -26,7 +27,7 @@ class FluxAssembly:
 
     def __init__(
         self,
-        spine: StreamingUnetSpine,
+        spine: StreamingUnetSpine | ResidentUnetSpine,
         text_worker: DiskPagedTextWorker,
         vae_worker: TransientVaeWorker,
         *,
@@ -79,9 +80,10 @@ class FluxAssembly:
             output_image = self._stitch_image(request.image, request.mask, output_image)
             timings["stitch"] = time.perf_counter() - stitch_start
 
+        unet_spine_kind = UNetSpineKind.RESIDENT if isinstance(self.spine, ResidentUnetSpine) else UNetSpineKind.STREAMING
         runtime_identity = FluxRuntimeIdentity(
-            unet_spine=UNetSpineKind.STREAMING,
-            t5_posture=T5PostureKind.DISK_PAGED,
+            unet_spine=unet_spine_kind,
+            t5_posture=request.t5_posture,
             vae_posture=VAEPostureKind.TRANSIENT,
         )
 
