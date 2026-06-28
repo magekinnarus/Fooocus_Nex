@@ -30,10 +30,14 @@
     "vae_downloads": {
         "sdxl/sdxl_vae.safetensors": "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors"
     },
+    "default_sampler": "dpmpp_2m",
+    "default_scheduler": "beta",
     "default_styles": [
         "Dj Illustrious",
         "Dj Hyperrealism"
     ],
+    "default_aspect_ratio": "832*1216",
+    "default_overwrite_step": 30,
     "default_prompt_negative": "ugly, duplicate, mutilated, out of frame, hand, feet, fingers, mutation, deformed, blurry, out of focus, cropped",
     "default_prompt": "masterpiece, best quality, amazing quality, very aesthetic, promotional art, newest, dynamic angle, dramatic light, intricate details, cinematic, detailed background",
     "default_save_metadata_to_images": true,

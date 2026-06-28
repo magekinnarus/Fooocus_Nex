@@ -107,7 +107,7 @@ Covers:
 ### 3. Runtime-Centered Memory / Hardware / Flux Fill / Runtime-Surface Sanity
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests\test_memory_governor.py tests\test_w11_policy_simplification.py tests\test_async_worker_process_transition.py tests\test_flux_fill_v3.py tests\test_flux_fill_integration.py tests\test_runtime_surface_api.py -q
+.\venv\Scripts\python.exe -m pytest tests\test_memory_governor.py tests\test_w11_policy_simplification.py tests\test_async_worker_process_transition.py tests\test_flux_fill_v3.py tests\test_flux_fill_integration.py tests\test_runtime_surface_api.py tracked_tests\test_flux_fill_t5_gc_policy.py -q
 ```
 
 Covers:
@@ -115,6 +115,7 @@ Covers:
 - runtime-native memory policy
 - hardware-tier mapping
 - Flux Fill route/session sanity (v3 greenfield and legacy compatibility)
+- disk-paged T5 adaptive GC cadence with critical-headroom fallback
 - runtime-surface preview and completed-image API ownership
 - transition isolation behavior
 
@@ -155,6 +156,25 @@ Expected result:
 - background removal still takes the aggressive removal preflight
 - object refinement then hands off to the Flux Fill removal adapter cleanly
 - combined removal completes successfully after the non-Flux pre-stage
+
+### 3. Colab Free Disk-Paged T5 Replay
+
+Run this exact UI sequence:
+
+1. `Inpaint (cold)`
+2. `Inpaint (prompt change)`
+3. `Remove`
+4. `Remove (warm)`
+5. `Remove (bg remove + obj remove)`
+
+Expected result:
+
+- cache-miss prompt conditioning still completes with `disk_paged_t5`
+- the disk-paged T5 runtime defaults to periodic host GC and only tightens
+  toward every-block collection if live RAM headroom drops into the critical
+  band
+- queue-frozen route identity and removal goals remain stable across the full
+  mixed sequence, even if later queued work is txt2img
 
 ### 4. Tracked Route / Stage Smoke
 

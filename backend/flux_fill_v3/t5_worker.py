@@ -38,6 +38,10 @@ _T5_FIXED_LENGTH = 256
 _CLIP_L_KEY = "text_model.encoder.layers.1.mlp.fc1.weight"
 _T5_KEY = "encoder.block.23.layer.1.DenseReluDense.wi_1.weight"
 _T5_KEY_OLD = "encoder.block.23.layer.1.DenseReluDense.wi.weight"
+_T5_LAZY_GC_DEFAULT_INTERVAL = 4
+_T5_LAZY_GC_LOW_HEADROOM_INTERVAL = 2
+_T5_LAZY_GC_CRITICAL_INTERVAL = 1
+_T5_LAZY_GC_RECHECK_BLOCKS = 2
 
 
 def _describe_cache_path(path: Path) -> str:
@@ -46,6 +50,85 @@ def _describe_cache_path(path: Path) -> str:
         return f"exists={path.exists()} size={size_mb:.3f}MB"
     except OSError:
         return f"exists={path.exists()} size=n/a"
+
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        coerced = int(default)
+    return max(1, coerced)
+
+
+def _normalize_headroom_mb(value: Any) -> float | None:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return None
+    if normalized <= 0.0:
+        return None
+    return normalized
+
+
+def _resolve_disk_paged_t5_gc_interval(
+    *,
+    free_ram_mb: float | None,
+    low_headroom_mb: float | None,
+    critical_headroom_mb: float | None,
+    profile_name: str = "",
+) -> int:
+    if free_ram_mb is not None:
+        if critical_headroom_mb is not None and free_ram_mb < critical_headroom_mb:
+            return _T5_LAZY_GC_CRITICAL_INTERVAL
+        if low_headroom_mb is not None and free_ram_mb < low_headroom_mb:
+            return _T5_LAZY_GC_LOW_HEADROOM_INTERVAL
+        return _T5_LAZY_GC_DEFAULT_INTERVAL
+
+    if profile_name in {"colab_free", "local_low_vram"}:
+        return _T5_LAZY_GC_LOW_HEADROOM_INTERVAL
+    return _T5_LAZY_GC_DEFAULT_INTERVAL
+
+
+def _resolve_disk_paged_t5_gc_config() -> dict[str, Any]:
+    policy_summary: dict[str, Any] = {}
+    profile_name = ""
+    free_ram_mb: float | None = None
+
+    try:
+        policy_summary = dict(resources.memory_policy_summary() or {})
+    except Exception:
+        policy_summary = {}
+
+    try:
+        profile = resources.active_memory_environment_profile()
+        profile_name = str(getattr(profile, "name", "") or "").strip().lower()
+    except Exception:
+        profile_name = ""
+
+    low_headroom_mb = _normalize_headroom_mb(policy_summary.get("low_ram_headroom_mb")) or 3072.0
+    critical_headroom_mb = _normalize_headroom_mb(policy_summary.get("critical_ram_headroom_mb")) or 1536.0
+
+    try:
+        snapshot = resources.capture_memory_snapshot(notes={"tag": "disk_paged_t5_gc_config"})
+        free_ram_mb = _normalize_headroom_mb(getattr(snapshot, "free_ram_mb", None))
+    except Exception:
+        free_ram_mb = None
+
+    interval = _resolve_disk_paged_t5_gc_interval(
+        free_ram_mb=free_ram_mb,
+        low_headroom_mb=low_headroom_mb,
+        critical_headroom_mb=critical_headroom_mb,
+        profile_name=profile_name,
+    )
+    recheck_blocks = 1 if interval <= 1 else _T5_LAZY_GC_RECHECK_BLOCKS
+    return {
+        "interval": interval,
+        "recheck_blocks": recheck_blocks,
+        "low_headroom_mb": low_headroom_mb,
+        "critical_headroom_mb": critical_headroom_mb,
+        "initial_free_ram_mb": free_ram_mb,
+        "profile_name": profile_name,
+    }
 
 
 def flux_t5_tokenizer_path() -> Path:
@@ -374,9 +457,45 @@ class T5Stack(torch.nn.Module):
         optimized_attention = optimized_attention_for_device(x.device, mask=attention_mask is not None, small_input=True)
         past_bias = None
         use_gc = getattr(self, "_t5_lazy_runtime", False)
-        for block in self.block:
+        gc_interval = _coerce_positive_int(
+            getattr(self, "_t5_lazy_gc_interval", _T5_LAZY_GC_DEFAULT_INTERVAL),
+            _T5_LAZY_GC_DEFAULT_INTERVAL,
+        )
+        recheck_blocks = _coerce_positive_int(
+            getattr(self, "_t5_lazy_gc_recheck_blocks", _T5_LAZY_GC_RECHECK_BLOCKS),
+            _T5_LAZY_GC_RECHECK_BLOCKS,
+        )
+        low_headroom_mb = _normalize_headroom_mb(getattr(self, "_t5_lazy_gc_low_headroom_mb", None))
+        critical_headroom_mb = _normalize_headroom_mb(getattr(self, "_t5_lazy_gc_critical_headroom_mb", None))
+        total_blocks = len(self.block)
+
+        for index, block in enumerate(self.block, start=1):
             x, past_bias = block(x, mask=mask, past_bias=past_bias, optimized_attention=optimized_attention)
-            if use_gc:
+
+            if use_gc and gc_interval > 1 and index < total_blocks and index % recheck_blocks == 0:
+                try:
+                    snapshot = resources.capture_memory_snapshot(
+                        notes={
+                            "tag": "disk_paged_t5_gc_recheck",
+                            "block_index": index,
+                            "total_blocks": total_blocks,
+                            "gc_interval": gc_interval,
+                        }
+                    )
+                    free_ram_mb = _normalize_headroom_mb(getattr(snapshot, "free_ram_mb", None))
+                    next_interval = _resolve_disk_paged_t5_gc_interval(
+                        free_ram_mb=free_ram_mb,
+                        low_headroom_mb=low_headroom_mb,
+                        critical_headroom_mb=critical_headroom_mb,
+                    )
+                    if next_interval < gc_interval:
+                        gc_interval = next_interval
+                        if gc_interval <= 1:
+                            recheck_blocks = 1
+                except Exception:
+                    pass
+
+            if use_gc and ((index % gc_interval) == 0 or index == total_blocks):
                 gc.collect()
         return self.final_layer_norm(x), None
 
@@ -722,8 +841,24 @@ def load_flux_prompt_text_encoder(
         logger.debug("Flux T5 unexpected keys: %s", unexpected)
 
     encoder = FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
+    gc_config: dict[str, Any] = {}
     if low_ram_gc:
-        setattr(cond_stage_model.t5xxl.transformer.encoder, "_t5_lazy_runtime", True)
+        gc_config = _resolve_disk_paged_t5_gc_config()
+        t5_encoder = cond_stage_model.t5xxl.transformer.encoder
+        setattr(t5_encoder, "_t5_lazy_runtime", True)
+        setattr(t5_encoder, "_t5_lazy_gc_interval", gc_config["interval"])
+        setattr(t5_encoder, "_t5_lazy_gc_recheck_blocks", gc_config["recheck_blocks"])
+        setattr(t5_encoder, "_t5_lazy_gc_low_headroom_mb", gc_config["low_headroom_mb"])
+        setattr(t5_encoder, "_t5_lazy_gc_critical_headroom_mb", gc_config["critical_headroom_mb"])
+        logger.debug(
+            "[Flux Telemetry] Configured disk-paged T5 GC cadence profile=%s free_ram_mb=%s interval=%s recheck_blocks=%s low_headroom_mb=%s critical_headroom_mb=%s",
+            gc_config.get("profile_name") or "unknown",
+            gc_config.get("initial_free_ram_mb"),
+            gc_config["interval"],
+            gc_config["recheck_blocks"],
+            gc_config["low_headroom_mb"],
+            gc_config["critical_headroom_mb"],
+        )
     setattr(
         encoder,
         "_nex_load_metadata",
@@ -735,7 +870,13 @@ def load_flux_prompt_text_encoder(
             "t5_source_kind": "safetensors_lazy_runtime",
             "t5_full_state_dict_materialized": False,
             "t5_stream_runtime": True,
-            "t5_lazy_runtime": True,
+            "t5_lazy_runtime": bool(low_ram_gc),
+            "t5_lazy_gc_interval": gc_config.get("interval"),
+            "t5_lazy_gc_recheck_blocks": gc_config.get("recheck_blocks"),
+            "t5_lazy_gc_low_headroom_mb": gc_config.get("low_headroom_mb"),
+            "t5_lazy_gc_critical_headroom_mb": gc_config.get("critical_headroom_mb"),
+            "t5_lazy_gc_initial_free_ram_mb": gc_config.get("initial_free_ram_mb"),
+            "t5_lazy_gc_profile_name": gc_config.get("profile_name"),
             "t5_lazy_duplicate_source_keys": list(t5_options.get("lazy_duplicate_source_keys", [])),
         },
     )
