@@ -143,6 +143,52 @@ def _resolve_bucket_list(bucket_args: list[str] | None) -> list[tuple[int, int]]
     return [_parse_bucket(item) for item in flags.sdxl_aspect_ratios]
 
 
+def _normalize_runtime_posture(value: Any) -> str:
+    normalized = str(value or "auto").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"resident", "streaming"}:
+        return normalized
+    return "auto"
+
+
+def _resolve_runtime_posture(args: argparse.Namespace) -> str:
+    requested = _normalize_runtime_posture(getattr(args, "runtime_posture", None))
+    if requested != "auto":
+        return requested
+
+    try:
+        from backend.flux_fill_v3.activation import (
+            FLUX_FILL_MODEL_VARIANT_BY_TIER,
+            resolve_flux_fill_total_ram_gb,
+            resolve_flux_fill_total_vram_mb,
+        )
+        from backend.staging_manager import FLUX_RUNTIME_POSTURE_RESIDENT, PlacementSolver
+
+        model_variant = FLUX_FILL_MODEL_VARIANT_BY_TIER.get(str(args.tier), "flux_fill_fp8")
+        total_ram_mb = float(resolve_flux_fill_total_ram_gb()) * 1024.0
+        total_vram_mb = float(resolve_flux_fill_total_vram_mb())
+        plan = PlacementSolver.solve(total_vram_mb, total_ram_mb, model_variant)
+        runtime_posture = str(getattr(plan, "runtime_posture", "") or "").strip().lower()
+        if runtime_posture == str(FLUX_RUNTIME_POSTURE_RESIDENT).strip().lower():
+            return "resident"
+    except Exception:
+        pass
+
+    return "streaming"
+
+
+def _build_unet_spine(request: Any) -> Any:
+    from backend.flux_fill_v3.contracts import UNetSpineKind
+
+    if getattr(request, "unet_spine", None) == UNetSpineKind.RESIDENT:
+        from backend.flux_fill_v3.resident_spine import ResidentUnetSpine
+
+        return ResidentUnetSpine(request)
+
+    from backend.flux_fill_v3.streaming_spine import StreamingUnetSpine
+
+    return StreamingUnetSpine(request)
+
+
 def _latent_token_metrics(width: int, height: int) -> dict[str, int]:
     latent_w = width // 8
     latent_h = height // 8
@@ -258,6 +304,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ae-path", default=None, help="Optional explicit AE path.")
     parser.add_argument("--conditioning-cache-path", default=None, help="Optional explicit empty-conditioning cache path.")
     parser.add_argument("--attention-backend", default="auto", choices=("auto", "sdpa", "xformers", "xformers_only"))
+    parser.add_argument("--runtime-posture", default="auto", choices=("auto", "streaming", "resident"))
     parser.add_argument("--device", default=None, help="Optional torch device override.")
     parser.add_argument("--category", default="inpaint", choices=("inpaint", "removal"))
     parser.add_argument("--steps", type=int, default=8, help="Denoise steps per benchmark run.")
@@ -284,11 +331,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     os.environ["NEX_FLUX_ATTENTION_BACKEND"] = str(args.attention_backend)
+    sys.argv = [sys.argv[0]]
 
     import torch
     from backend import resources
-    from backend.flux_fill_v3.contracts import FluxFillRequest
-    from backend.flux_fill_v3.spine import StreamingUnetSpine
+    from backend.flux_fill_v3.contracts import FluxFillRequest, UNetSpineKind
     from backend.flux_fill_v3.t5_worker import DiskPagedTextWorker
 
     output_dir = Path(args.output_dir) if args.output_dir else REPO_ROOT / "outputs" / f"flux_bucket_bench_{_now_stamp()}"
@@ -297,6 +344,8 @@ def main() -> int:
     try:
         assets = _resolve_assets(args)
         buckets = _resolve_bucket_list(args.buckets)
+        effective_runtime_posture = _resolve_runtime_posture(args)
+        unet_spine = UNetSpineKind.RESIDENT if effective_runtime_posture == "resident" else UNetSpineKind.STREAMING
         request = FluxFillRequest(
             unet_path=assets["unet_path"],
             ae_path=assets["ae_path"],
@@ -308,13 +357,14 @@ def main() -> int:
             scheduler=str(args.scheduler),
             prefetch_depth=int(args.prefetch_depth),
             prefetch_chunk_mb=int(args.prefetch_chunk_mb),
+            unet_spine=unet_spine,
             device=args.device,
             prompt="",
             category=args.category,
         )
         text_worker = DiskPagedTextWorker(request)
         empty_conditioning = text_worker.get_conditioning()
-        spine = StreamingUnetSpine(request)
+        spine = _build_unet_spine(request)
 
         load_started = time.perf_counter()
         spine.start()
@@ -429,6 +479,9 @@ def main() -> int:
                 "spine_load_wall_seconds": round(spine_load_wall_seconds, 4),
                 "requested_attention_backend": args.attention_backend,
                 "effective_attention_backend": effective_attention_backend,
+                "requested_runtime_posture": _normalize_runtime_posture(args.runtime_posture),
+                "effective_runtime_posture": effective_runtime_posture,
+                "unet_spine": request.unet_spine.value,
                 "device": device_label,
                 "tier": args.tier,
                 "assets": assets,
@@ -439,7 +492,7 @@ def main() -> int:
                 "results": results,
                 "recommended_buckets": [item["bucket_label"] for item in results if item.get("recommended")],
                 "notes": (
-                    "Denoise-only sweep over the current Flux Fill v3 streaming spine. "
+                    "Denoise-only sweep over the current Flux Fill v3 runtime posture using empty conditioning. "
                     "Use exact-shape results to choose a Flux-specific bucket allowlist."
                 ),
             }
