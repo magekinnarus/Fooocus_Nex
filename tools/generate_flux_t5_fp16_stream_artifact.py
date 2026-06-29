@@ -107,6 +107,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--fp16-t5", default=str(DEFAULT_FP16_T5_PATH), help="Path to the fp16 T5 safetensors weights.")
     parser.add_argument("--embedding-directory", default=None, help="Optional embedding directory.")
     parser.add_argument("--metrics-json", default=None, help="Optional metrics JSON output path.")
+    parser.add_argument("--disk-paged-t5-gc-interval", type=int, default=None, help="Optional fixed disk-paged T5 GC interval override.")
     parser.add_argument("--traceback", action="store_true")
     return parser.parse_args()
 
@@ -154,6 +155,7 @@ def main() -> int:
                 embedding_directory=Path(args.embedding_directory) if args.embedding_directory else None,
                 t5_loader_policy="stream_safetensors_runtime",
                 low_ram_gc=True,
+                disk_paged_t5_gc_interval=args.disk_paged_t5_gc_interval,
             )
             model_load_wall = time.perf_counter() - load_start
             loader_metadata = dict(getattr(encoder, "_nex_load_metadata", {}) or {})
@@ -194,6 +196,7 @@ def main() -> int:
                     "text_encoder_resident": False,
                     "t5_loader_policy": "stream_safetensors_runtime",
                     "low_ram_gc": True,
+                    "disk_paged_t5_gc_interval": args.disk_paged_t5_gc_interval,
                     "posture": "disk_paged_t5",
                     "loader_metadata": loader_metadata,
                     "phase_snapshots": phase_snapshots,
@@ -230,6 +233,7 @@ def main() -> int:
             "pooled_dtype": str(conditioning.pooled_output.dtype),
             "loader_metadata": loader_metadata,
             "low_ram_gc": True,
+            "disk_paged_t5_gc_interval": args.disk_paged_t5_gc_interval,
             "t5_loader_policy": "stream_safetensors_runtime",
             "posture_label": "disk_paged_t5",
             "phase_snapshots": phase_snapshots,

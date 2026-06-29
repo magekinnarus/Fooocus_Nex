@@ -24,6 +24,11 @@ from backend.flux_fill_v3.t5_worker import (
 )
 
 logger = logging.getLogger(__name__)
+_EXPECTED_EAGER_T5_RESIDUAL_KEYS = frozenset({"encoder.embed_tokens.weight"})
+
+
+def _filter_expected_eager_t5_unexpected_keys(unexpected_keys: list[str]) -> list[str]:
+    return [key for key in unexpected_keys if key not in _EXPECTED_EAGER_T5_RESIDUAL_KEYS]
 
 
 def load_t5_state_dict_zero_copy(model: torch.nn.Module, sd: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -129,6 +134,7 @@ def load_flux_prompt_text_encoder_eager(
 
     # 4. Zero-copy load of T5 into model to prevent shadow copy/double peak memory
     missing, unexpected = load_t5_state_dict_zero_copy(cond_stage_model.t5xxl.transformer, t5_sd)
+    unexpected = _filter_expected_eager_t5_unexpected_keys(unexpected)
     if missing:
         logger.debug("Flux T5 missing keys: %s", missing)
     if unexpected:

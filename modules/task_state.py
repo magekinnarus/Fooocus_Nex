@@ -64,6 +64,7 @@ class TaskState:
     flux_fill_clip_l_path: str = ""
     flux_fill_t5_path: str = ""
     flux_fill_t5_posture: str = ""
+    flux_fill_disk_paged_t5_gc_interval: str = "auto"
     flux_fill_runtime_posture: str = "auto"
     prefetch_depth: int = 1
     prefetch_chunk_mb: int = 64

@@ -110,6 +110,26 @@ def normalize_t5_posture(value: Any) -> T5PostureKind:
     raise ValueError(f"Unknown Flux Fill T5 posture: {value}")
 
 
+def normalize_disk_paged_t5_gc_interval(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid disk-paged T5 GC interval override: {value}")
+
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"", "auto", "default", "none"}:
+        return None
+
+    try:
+        interval = int(normalized)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid disk-paged T5 GC interval override: {value}") from exc
+
+    if interval < 1:
+        raise ValueError(f"disk_paged_t5_gc_interval must be >= 1, got {interval}.")
+    return interval
+
+
 def normalize_category(value: Any) -> FluxFillCategory | None:
     if value is None:
         return None
@@ -151,6 +171,7 @@ class FluxFillRequest:
     prefetch_chunk_mb: int = 64
     unet_spine: UNetSpineKind = UNetSpineKind.STREAMING
     t5_posture: T5PostureKind | str = T5PostureKind.DISK_PAGED
+    disk_paged_t5_gc_interval: int | str | None = None
     device: str | torch.device | None = None
     image: np.ndarray | None = None
     mask: np.ndarray | None = None
@@ -163,6 +184,7 @@ class FluxFillRequest:
 
     def __post_init__(self) -> None:
         self.t5_posture = normalize_t5_posture(self.t5_posture)
+        self.disk_paged_t5_gc_interval = normalize_disk_paged_t5_gc_interval(self.disk_paged_t5_gc_interval)
         if self.category is not None:
             self.category = normalize_category(self.category)
 
@@ -204,6 +226,10 @@ class FluxFillRequest:
             raise ValueError(f"prefetch_depth must be >= 0, got {self.prefetch_depth}.")
         if self.prefetch_chunk_mb < 1:
             raise ValueError(f"prefetch_chunk_mb must be >= 1, got {self.prefetch_chunk_mb}.")
+        if self.disk_paged_t5_gc_interval is not None and self.disk_paged_t5_gc_interval < 1:
+            raise ValueError(
+                f"disk_paged_t5_gc_interval must be >= 1, got {self.disk_paged_t5_gc_interval}."
+            )
 
         if require_existing_assets:
             is_empty_cond = not str(self.prompt or "").strip()

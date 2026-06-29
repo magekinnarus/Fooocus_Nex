@@ -136,6 +136,13 @@ def build_debug_tab():
         info='Advanced opt-in. Default is disk_paged (lowest RAM overhead). cpu_resident requires minimum 32 GB RAM (or 45 GB+ RAM if combined with streaming UNet).'
     )
 
+    results['flux_fill_disk_paged_t5_gc_interval'] = gr.Radio(
+        label='Flux Fill Disk-Paged T5 GC Cadence',
+        choices=['auto', '4', '8', '16'],
+        value='auto',
+        info='Debug/benchmark override. auto keeps the adaptive 4/2/1 policy; fixed 8 or 16 only affects disk-paged prompt-cache misses and can raise RAM usage.'
+    )
+
     if not args_manager.args.disable_metadata:
         results['save_metadata_to_images'] = gr.Checkbox(
             label='Save Metadata to Images', 

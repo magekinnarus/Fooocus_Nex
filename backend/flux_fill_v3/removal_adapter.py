@@ -109,6 +109,7 @@ def execute_flux_fill_removal(context, *, progress_percent_start: int = 10):
             prefetch_chunk_mb=int(getattr(task_state, "prefetch_chunk_mb", 64)),
             unet_spine=spine_kind,
             t5_posture=t5_posture,
+            disk_paged_t5_gc_interval=getattr(task_state, "flux_fill_disk_paged_t5_gc_interval", "auto"),
             image=image_np,
             mask=prepared_mask,
             prompt=assets.prompt,

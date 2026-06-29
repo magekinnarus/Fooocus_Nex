@@ -52,6 +52,13 @@ def _normalize_flux_fill_t5_posture_value(value: Any) -> str:
         return 'cpu_resident'
     return 'disk_paged'
 
+
+def _normalize_flux_fill_disk_paged_t5_gc_interval_value(value: Any) -> str:
+    normalized = str(value or 'auto').strip().lower().replace('-', '_').replace(' ', '_')
+    if normalized in {'4', '8', '16'}:
+        return normalized
+    return 'auto'
+
 # Ordered list - order is for documentation, not for correctness.
 # Special dynamic groups (LoRA, ControlNet) are handled explicitly in async_worker 
 # and are NOT listed as static ParamDefs here.
@@ -94,6 +101,12 @@ PARAM_REGISTRY: List[ParamDef] = [
     ParamDef('flux_fill_prompt_cache', 'flux_fill_prompt_cache', 'temp', _normalize_flux_fill_prompt_cache_value),
     ParamDef('flux_fill_runtime_posture', 'flux_fill_runtime_posture', 'auto', _normalize_flux_fill_runtime_posture_value),
     ParamDef('flux_fill_t5_posture', 'flux_fill_t5_posture', 'disk_paged', _normalize_flux_fill_t5_posture_value),
+    ParamDef(
+        'flux_fill_disk_paged_t5_gc_interval',
+        'flux_fill_disk_paged_t5_gc_interval',
+        'auto',
+        _normalize_flux_fill_disk_paged_t5_gc_interval_value,
+    ),
     ParamDef('objr_mask_dilate', 'objr_mask_dilate', 16, int),
     ParamDef('objr_mask_blur', 'objr_mask_blur', 6, int),
     ParamDef('objr_blend_mode', 'objr_blend_mode', FLUX_FILL_BLEND_MORPHOLOGICAL, _normalize_objr_blend_mode_value),

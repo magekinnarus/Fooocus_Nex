@@ -76,20 +76,27 @@ def _resolve_disk_paged_t5_gc_interval(
     low_headroom_mb: float | None,
     critical_headroom_mb: float | None,
     profile_name: str = "",
+    healthy_interval: int | None = None,
 ) -> int:
+    resolved_healthy_interval = _coerce_positive_int(
+        healthy_interval if healthy_interval is not None else _T5_LAZY_GC_DEFAULT_INTERVAL,
+        _T5_LAZY_GC_DEFAULT_INTERVAL,
+    )
     if free_ram_mb is not None:
         if critical_headroom_mb is not None and free_ram_mb < critical_headroom_mb:
             return _T5_LAZY_GC_CRITICAL_INTERVAL
         if low_headroom_mb is not None and free_ram_mb < low_headroom_mb:
             return _T5_LAZY_GC_LOW_HEADROOM_INTERVAL
-        return _T5_LAZY_GC_DEFAULT_INTERVAL
+        return resolved_healthy_interval
 
+    if healthy_interval is not None:
+        return resolved_healthy_interval
     if profile_name in {"colab_free", "local_low_vram"}:
         return _T5_LAZY_GC_LOW_HEADROOM_INTERVAL
     return _T5_LAZY_GC_DEFAULT_INTERVAL
 
 
-def _resolve_disk_paged_t5_gc_config() -> dict[str, Any]:
+def _resolve_disk_paged_t5_gc_config(*, override_interval: int | None = None) -> dict[str, Any]:
     policy_summary: dict[str, Any] = {}
     profile_name = ""
     free_ram_mb: float | None = None
@@ -114,6 +121,26 @@ def _resolve_disk_paged_t5_gc_config() -> dict[str, Any]:
     except Exception:
         free_ram_mb = None
 
+    if override_interval is not None:
+        interval = _resolve_disk_paged_t5_gc_interval(
+            free_ram_mb=free_ram_mb,
+            low_headroom_mb=low_headroom_mb,
+            critical_headroom_mb=critical_headroom_mb,
+            profile_name=profile_name,
+            healthy_interval=override_interval,
+        )
+        return {
+            "interval": interval,
+            "healthy_interval": _coerce_positive_int(override_interval, _T5_LAZY_GC_DEFAULT_INTERVAL),
+            "recheck_blocks": 1 if interval <= 1 else _T5_LAZY_GC_RECHECK_BLOCKS,
+            "low_headroom_mb": low_headroom_mb,
+            "critical_headroom_mb": critical_headroom_mb,
+            "initial_free_ram_mb": free_ram_mb,
+            "profile_name": profile_name,
+            "adaptive": True,
+            "override_interval": interval,
+        }
+
     interval = _resolve_disk_paged_t5_gc_interval(
         free_ram_mb=free_ram_mb,
         low_headroom_mb=low_headroom_mb,
@@ -123,11 +150,14 @@ def _resolve_disk_paged_t5_gc_config() -> dict[str, Any]:
     recheck_blocks = 1 if interval <= 1 else _T5_LAZY_GC_RECHECK_BLOCKS
     return {
         "interval": interval,
+        "healthy_interval": interval,
         "recheck_blocks": recheck_blocks,
         "low_headroom_mb": low_headroom_mb,
         "critical_headroom_mb": critical_headroom_mb,
         "initial_free_ram_mb": free_ram_mb,
         "profile_name": profile_name,
+        "adaptive": True,
+        "override_interval": None,
     }
 
 
@@ -450,9 +480,14 @@ class T5Stack(torch.nn.Module):
         optimized_attention = optimized_attention_for_device(x.device, mask=attention_mask is not None, small_input=True)
         past_bias = None
         use_gc = getattr(self, "_t5_lazy_runtime", False)
+        adaptive_gc = bool(getattr(self, "_t5_lazy_gc_adaptive", True))
         gc_interval = _coerce_positive_int(
             getattr(self, "_t5_lazy_gc_interval", _T5_LAZY_GC_DEFAULT_INTERVAL),
             _T5_LAZY_GC_DEFAULT_INTERVAL,
+        )
+        healthy_gc_interval = _coerce_positive_int(
+            getattr(self, "_t5_lazy_gc_healthy_interval", gc_interval),
+            gc_interval,
         )
         recheck_blocks = _coerce_positive_int(
             getattr(self, "_t5_lazy_gc_recheck_blocks", _T5_LAZY_GC_RECHECK_BLOCKS),
@@ -465,7 +500,7 @@ class T5Stack(torch.nn.Module):
         for index, block in enumerate(self.block, start=1):
             x, past_bias = block(x, mask=mask, past_bias=past_bias, optimized_attention=optimized_attention)
 
-            if use_gc and gc_interval > 1 and index < total_blocks and index % recheck_blocks == 0:
+            if use_gc and adaptive_gc and gc_interval > 1 and index < total_blocks and index % recheck_blocks == 0:
                 try:
                     snapshot = resources.capture_memory_snapshot(
                         notes={
@@ -480,6 +515,7 @@ class T5Stack(torch.nn.Module):
                         free_ram_mb=free_ram_mb,
                         low_headroom_mb=low_headroom_mb,
                         critical_headroom_mb=critical_headroom_mb,
+                        healthy_interval=healthy_gc_interval,
                     )
                     if next_interval < gc_interval:
                         gc_interval = next_interval
@@ -787,6 +823,7 @@ def load_flux_prompt_text_encoder(
     embedding_directory: str | Path | None = None,
     t5_loader_policy: str | None = None,
     low_ram_gc: bool = False,
+    disk_paged_t5_gc_interval: int | None = None,
 ) -> FluxPromptTextEncoder:
     clip_l_path = Path(clip_l_path)
     t5_path = Path(t5_path)
@@ -802,6 +839,7 @@ def load_flux_prompt_text_encoder(
         raise ValueError("stream_safetensors_runtime requires a .safetensors T5 checkpoint.")
 
     t5_sd, t5_options = _build_lazy_t5_state_dict(t5_path)
+    detected_t5_dtype = _detect_t5_dtype(t5_sd)
 
     load_device = torch.device("cpu")
     offload_device = torch.device("cpu")
@@ -813,7 +851,7 @@ def load_flux_prompt_text_encoder(
     model_options["initial_device"] = initial_device
 
     cond_stage_model = FluxClipModel(
-        dtype_t5=_detect_t5_dtype(t5_sd),
+        dtype_t5=detected_t5_dtype,
         device=initial_device,
         dtype=dtype,
         model_options=model_options,
@@ -836,19 +874,24 @@ def load_flux_prompt_text_encoder(
     encoder = FluxPromptTextEncoder(cond_stage_model=cond_stage_model, tokenizer=tokenizer, patcher=patcher)
     gc_config: dict[str, Any] = {}
     if low_ram_gc:
-        gc_config = _resolve_disk_paged_t5_gc_config()
+        gc_config = _resolve_disk_paged_t5_gc_config(override_interval=disk_paged_t5_gc_interval)
         t5_encoder = cond_stage_model.t5xxl.transformer.encoder
         setattr(t5_encoder, "_t5_lazy_runtime", True)
+        setattr(t5_encoder, "_t5_lazy_gc_adaptive", bool(gc_config.get("adaptive", True)))
         setattr(t5_encoder, "_t5_lazy_gc_interval", gc_config["interval"])
+        setattr(t5_encoder, "_t5_lazy_gc_healthy_interval", gc_config.get("healthy_interval", gc_config["interval"]))
         setattr(t5_encoder, "_t5_lazy_gc_recheck_blocks", gc_config["recheck_blocks"])
         setattr(t5_encoder, "_t5_lazy_gc_low_headroom_mb", gc_config["low_headroom_mb"])
         setattr(t5_encoder, "_t5_lazy_gc_critical_headroom_mb", gc_config["critical_headroom_mb"])
         logger.debug(
-            "[Flux Telemetry] Configured disk-paged T5 GC cadence profile=%s free_ram_mb=%s interval=%s recheck_blocks=%s low_headroom_mb=%s critical_headroom_mb=%s",
+            "[Flux Telemetry] Configured disk-paged T5 GC cadence profile=%s free_ram_mb=%s adaptive=%s interval=%s healthy_interval=%s recheck_blocks=%s override_interval=%s low_headroom_mb=%s critical_headroom_mb=%s",
             gc_config.get("profile_name") or "unknown",
             gc_config.get("initial_free_ram_mb"),
+            gc_config.get("adaptive"),
             gc_config["interval"],
+            gc_config.get("healthy_interval"),
             gc_config["recheck_blocks"],
+            gc_config.get("override_interval"),
             gc_config["low_headroom_mb"],
             gc_config["critical_headroom_mb"],
         )
@@ -859,17 +902,20 @@ def load_flux_prompt_text_encoder(
             "clip_l_path": str(clip_l_path),
             "t5_path": str(t5_path),
             "t5_loader_policy": t5_loader_policy,
-            "t5_detected_dtype": str(_detect_t5_dtype(t5_sd)) if _detect_t5_dtype(t5_sd) is not None else None,
+            "t5_detected_dtype": str(detected_t5_dtype) if detected_t5_dtype is not None else None,
             "t5_source_kind": "safetensors_lazy_runtime",
             "t5_full_state_dict_materialized": False,
             "t5_stream_runtime": True,
             "t5_lazy_runtime": bool(low_ram_gc),
+            "t5_lazy_gc_adaptive": gc_config.get("adaptive"),
             "t5_lazy_gc_interval": gc_config.get("interval"),
+            "t5_lazy_gc_healthy_interval": gc_config.get("healthy_interval"),
             "t5_lazy_gc_recheck_blocks": gc_config.get("recheck_blocks"),
             "t5_lazy_gc_low_headroom_mb": gc_config.get("low_headroom_mb"),
             "t5_lazy_gc_critical_headroom_mb": gc_config.get("critical_headroom_mb"),
             "t5_lazy_gc_initial_free_ram_mb": gc_config.get("initial_free_ram_mb"),
             "t5_lazy_gc_profile_name": gc_config.get("profile_name"),
+            "t5_lazy_gc_override_interval": gc_config.get("override_interval"),
             "t5_lazy_duplicate_source_keys": list(t5_options.get("lazy_duplicate_source_keys", [])),
         },
     )
@@ -984,6 +1030,7 @@ def generate_flux_prompt_conditioning_artifact(
     clip_l_path: str | Path,
     t5_path: str | Path,
     cache_path: str | Path,
+    disk_paged_t5_gc_interval: int | None = None,
 ) -> dict[str, Any]:
     script_path = _flux_prompt_conditioning_generator_script()
     if not script_path.exists():
@@ -1007,9 +1054,17 @@ def generate_flux_prompt_conditioning_artifact(
         "--metrics-json",
         str(metrics_path),
     ]
+    if disk_paged_t5_gc_interval is not None:
+        command.extend(
+            [
+                "--disk-paged-t5-gc-interval",
+                str(int(disk_paged_t5_gc_interval)),
+            ]
+        )
 
     logger.debug(
-        "[Flux Telemetry] Launching isolated prompt-conditioning generator posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True cache_path=%s metrics_path=%s %s",
+        "[Flux Telemetry] Launching isolated prompt-conditioning generator posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True gc_interval_override=%s cache_path=%s metrics_path=%s %s",
+        disk_paged_t5_gc_interval,
         cache_path,
         metrics_path,
         format_flux_conditioning_memory_summary(tag="conditioning_generator_launch"),
@@ -1049,8 +1104,9 @@ def generate_flux_prompt_conditioning_artifact(
         )
 
     logger.debug(
-        "[Flux Telemetry] Isolated prompt-conditioning generator completed in %.3fs posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True output_path=%s metrics_path=%s %s",
+        "[Flux Telemetry] Isolated prompt-conditioning generator completed in %.3fs posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True gc_interval_override=%s output_path=%s metrics_path=%s %s",
         wall,
+        disk_paged_t5_gc_interval,
         payload.get("output_path") or payload.get("output") or str(cache_path),
         payload.get("metrics_path") or str(metrics_path),
         format_flux_conditioning_memory_summary(tag="conditioning_generator_complete"),
@@ -1067,11 +1123,13 @@ def _load_or_generate_prompt_conditioning(
     if not clip_l_path or not t5_path:
         raise ValueError("Prompt-conditioned Flux Fill requires explicit clip_l_path and t5_path in request.")
     t5_path = _require_disk_paged_t5_checkpoint(t5_path)
+    gc_interval_override = getattr(request, "disk_paged_t5_gc_interval", None)
 
     cache_path = _resolve_request_conditioning_cache_path(request)
     logger.debug(
-        "[Flux Telemetry] T5 conditioning begin posture=disk_paged_t5 prompt_len=%d low_ram_gc=True cache_path=%s %s %s",
+        "[Flux Telemetry] T5 conditioning begin posture=disk_paged_t5 prompt_len=%d low_ram_gc=True gc_interval_override=%s cache_path=%s %s %s",
         len(prompt_text),
+        gc_interval_override,
         cache_path,
         _describe_cache_path(cache_path),
         format_flux_conditioning_memory_summary(tag="conditioning_begin"),
@@ -1090,15 +1148,17 @@ def _load_or_generate_prompt_conditioning(
             raise
 
     logger.debug(
-        "[Flux Telemetry] Prompt conditioning cache MISS. Launching isolated artifact generator clip_l=%s t5=%s posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True",
+        "[Flux Telemetry] Prompt conditioning cache MISS. Launching isolated artifact generator clip_l=%s t5=%s posture=disk_paged_t5 policy=stream_safetensors_runtime low_ram_gc=True gc_interval_override=%s",
         clip_l_path,
         t5_path,
+        gc_interval_override,
     )
     generate_flux_prompt_conditioning_artifact(
         prompt_text=prompt_text,
         clip_l_path=clip_l_path,
         t5_path=t5_path,
         cache_path=cache_path,
+        disk_paged_t5_gc_interval=gc_interval_override,
     )
     logger.debug(
         "[Flux Telemetry] Prompt conditioning artifact ready posture=disk_paged_t5 cache_path=%s %s",
