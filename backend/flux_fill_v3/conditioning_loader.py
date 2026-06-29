@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import psutil
 import torch
 
 from backend import resources
@@ -14,6 +15,27 @@ logger = logging.getLogger(__name__)
 
 EMPTY_FLUX_CROSS_ATTN_SHAPE = (1, 256, 4096)
 EMPTY_FLUX_POOLED_SHAPE = (1, 768)
+
+
+def _append_process_memory_summary(parts: list[str]) -> None:
+    try:
+        process = psutil.Process()
+        process_info = process.memory_info()
+        process_rss_mb = float(process_info.rss) / (1024 * 1024)
+        parts.append(f"proc_rss={process_rss_mb:.1f}MB")
+
+        full_info = process.memory_full_info()
+        for label, attribute in (
+            ("proc_shared", "shared"),
+            ("proc_uss", "uss"),
+            ("proc_pss", "pss"),
+        ):
+            value = getattr(full_info, attribute, None)
+            if value is not None:
+                value_mb = float(value) / (1024 * 1024)
+                parts.append(f"{label}={value_mb:.1f}MB")
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -59,9 +81,9 @@ def format_flux_conditioning_memory_summary(*, tag: str | None = None) -> str:
         if snapshot.total_ram_mb is not None:
             parts.append(f"ram_total={snapshot.total_ram_mb:.1f}MB")
         if snapshot.free_ram_mb is not None:
-            parts.append(f"ram_free={snapshot.free_ram_mb:.1f}MB")
+            parts.append(f"ram_available={snapshot.free_ram_mb:.1f}MB")
         if snapshot.total_ram_mb is not None and snapshot.free_ram_mb is not None:
-            parts.append(f"ram_used={snapshot.total_ram_mb - snapshot.free_ram_mb:.1f}MB")
+            parts.append(f"ram_unavailable_est={snapshot.total_ram_mb - snapshot.free_ram_mb:.1f}MB")
         if snapshot.total_vram_mb is not None:
             parts.append(f"vram_total={snapshot.total_vram_mb:.1f}MB")
         if snapshot.free_vram_mb is not None:
@@ -69,13 +91,7 @@ def format_flux_conditioning_memory_summary(*, tag: str | None = None) -> str:
     except Exception:
         parts.append("memory_snapshot=unavailable")
 
-    try:
-        import psutil
-
-        process_rss_mb = float(psutil.Process().memory_info().rss) / (1024 * 1024)
-        parts.append(f"proc_rss={process_rss_mb:.1f}MB")
-    except Exception:
-        pass
+    _append_process_memory_summary(parts)
 
     return " ".join(parts)
 

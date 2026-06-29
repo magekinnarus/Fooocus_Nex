@@ -176,7 +176,31 @@ Expected result:
 - queue-frozen route identity and removal goals remain stable across the full
   mixed sequence, even if later queued work is txt2img
 
-### 4. Tracked Route / Stage Smoke
+### 4. High-RAM Resident T5 Replay
+
+Run this exact UI sequence after explicitly setting Flux Fill T5 posture to
+`cpu_resident` on a machine that exposes the option:
+
+1. `Inpaint (cold)`
+2. `Inpaint (prompt change)`
+3. `Inpaint (prompt change)`
+4. Switch T5 posture back to `disk_paged`
+5. `Inpaint (prompt change)`
+
+Expected result:
+
+- the first resident run logs `Loading eager T5 safetensors`
+- later prompt-changed resident runs log `Reusing cached CPU-resident text encoder`
+- process-aware telemetry shows a persistent resident footprint across the warm
+  resident runs through `proc_rss`, and when the platform provides them,
+  `proc_shared`, `proc_uss`, and `proc_pss`
+- do not use the Colab System RAM chart or `ram_available` alone as proof that
+  resident T5 is absent; those surfaces reflect available-memory accounting,
+  while the authoritative resident-worker truth is the process-aware telemetry
+- after switching back to `disk_paged`, the next request tears down the warm
+  CPU-resident text encoder before disk-paged execution begins
+
+### 5. Tracked Route / Stage Smoke
 
 ```powershell
 .\venv\Scripts\python.exe -m pytest tracked_tests\test_pipeline_routes.py tracked_tests\test_pipeline_stage_runtime.py tracked_tests\test_memory_residency.py -q
@@ -188,7 +212,7 @@ Covers:
 - stage runner execution contract
 - memory residency dispatch smoke
 
-### 5. Full Suite
+### 6. Full Suite
 
 ```powershell
 .\venv\Scripts\python.exe -m pytest tests\ --ignore=tests\test_bgr.py --ignore=tests\test_objr.py -q

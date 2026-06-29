@@ -159,6 +159,29 @@ def load_flux_prompt_text_encoder_eager(
     return encoder
 
 
+def _log_cpu_resident_encoder_state(
+    *,
+    event: str,
+    clip_l_path: Path | None = None,
+    t5_path: Path | None = None,
+    reused: bool | None = None,
+    level: int = logging.DEBUG,
+) -> None:
+    details: list[str] = [f"event={event}"]
+    if clip_l_path is not None:
+        details.append(f"clip_l={clip_l_path}")
+    if t5_path is not None:
+        details.append(f"t5={t5_path}")
+    if reused is not None:
+        details.append(f"reused={reused}")
+    details.append(format_flux_conditioning_memory_summary(tag=event))
+    logger.log(
+        level,
+        "[Flux Telemetry] CPU-resident text encoder state %s",
+        " ".join(details),
+    )
+
+
 class CpuResidentTextEncoderCache:
     """Thread-safe registry for acquiring, caching, and tearing down the eager T5 text encoder."""
     _lock = RLock()
@@ -173,6 +196,12 @@ class CpuResidentTextEncoderCache:
         with cls._lock:
             if cls._encoder is not None and cls._clip_l_path == clip_l_path and cls._t5_path == t5_path:
                 logger.debug("[Flux Telemetry] Reusing cached CPU-resident text encoder.")
+                _log_cpu_resident_encoder_state(
+                    event="cpu_resident_encoder_reuse",
+                    clip_l_path=clip_l_path,
+                    t5_path=t5_path,
+                    reused=True,
+                )
                 return cls._encoder, True
             
             cls.teardown()
@@ -183,6 +212,13 @@ class CpuResidentTextEncoderCache:
             )
             cls._clip_l_path = clip_l_path
             cls._t5_path = t5_path
+            _log_cpu_resident_encoder_state(
+                event="cpu_resident_encoder_ready",
+                clip_l_path=clip_l_path,
+                t5_path=t5_path,
+                reused=False,
+                level=logging.INFO,
+            )
             return cls._encoder, False
 
     @classmethod
@@ -190,6 +226,11 @@ class CpuResidentTextEncoderCache:
         with cls._lock:
             if cls._encoder is None:
                 return False
+            _log_cpu_resident_encoder_state(
+                event="cpu_resident_encoder_teardown_begin",
+                clip_l_path=cls._clip_l_path,
+                t5_path=cls._t5_path,
+            )
             logger.debug("[Flux Telemetry] Tearing down and releasing CPU-resident text encoder from RAM.")
             cls._encoder = None
             cls._clip_l_path = None
@@ -201,6 +242,7 @@ class CpuResidentTextEncoderCache:
             resources.soft_empty_cache(force=True)
         except Exception:
             pass
+        _log_cpu_resident_encoder_state(event="cpu_resident_encoder_teardown_complete")
         return True
 
 
