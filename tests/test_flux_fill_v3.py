@@ -790,7 +790,10 @@ class TestFluxFillV3NativeFillConditioning(unittest.TestCase):
         self.assertEqual(tuple(sigmas.shape), (2,))
         self.assertIsNone(prepare_mock.call_args.kwargs["latent_image"])
         self.assertIsNone(prepare_mock.call_args.kwargs["denoise_mask"])
-        self.assertIsNone(sample_mock.call_args.kwargs["latent_image"])
+        initialization_latent = sample_mock.call_args.kwargs["latent_image"]
+        self.assertIsInstance(initialization_latent, torch.Tensor)
+        self.assertEqual(tuple(initialization_latent.shape), (1, 16, 2, 3))
+        self.assertEqual(float(initialization_latent.abs().sum()), 0.0)
         self.assertIsNone(sample_mock.call_args.kwargs["denoise_mask"])
 
 

@@ -821,7 +821,10 @@ class FluxFillInpaintStage(PipelineStage):
                 preparation_steps,
                 all_steps,
                 preview_transform=preview_transform,
-                preview_stitch_context=ctx,
+                # Match SDXL Inpaint: show the decoded bounding-box work image
+                # during sampling. Full-image compositing is reserved for the
+                # final stitch below.
+                preview_stitch_context=None,
             )
 
             interrupted_action = None

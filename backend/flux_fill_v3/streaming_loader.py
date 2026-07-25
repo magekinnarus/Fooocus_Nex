@@ -371,12 +371,17 @@ def _sample_flux_fill_direct_streaming(
         quality=getattr(sampler_instance, "quality", {}),
         inner_model=getattr(unet_patcher, "model", None),
     )
+    # The shared flow sampler requires a tensor-valued initialization latent
+    # even for a full-denoise run. Use an explicit zero latent so the sampler
+    # computes pure-noise initialization without reintroducing the source
+    # latent or activating generic inpaint blending.
+    initialization_latent = torch.zeros_like(noise)
     samples = sampling.sample_prepared_sdxl(
         guider,
         noise,
         sampler_instance.sigmas,
         sampler=sampling.ksampler(sampler_name),
-        latent_image=None,
+        latent_image=initialization_latent,
         denoise_mask=None,
         callback=callback,
         disable_pbar=disable_pbar,

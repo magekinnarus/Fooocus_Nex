@@ -35,10 +35,15 @@ def test_flux_fill_inpaint_stage_honors_disable_preview_toggle(monkeypatch, disa
         prompt="replace the statue\na garden",
     ))
 
-    captured_preview_transforms = []
+    captured_preview_configs = []
 
     def mock_get_sampling_callback(*args, **kwargs):
-        captured_preview_transforms.append(kwargs.get("preview_transform"))
+        captured_preview_configs.append(
+            {
+                "transform": kwargs.get("preview_transform"),
+                "stitch_context": kwargs.get("preview_stitch_context"),
+            }
+        )
         return object()
 
     monkeypatch.setattr(inference, "get_sampling_callback", mock_get_sampling_callback)
@@ -94,5 +99,6 @@ def test_flux_fill_inpaint_stage_honors_disable_preview_toggle(monkeypatch, disa
     res = stage.execute(context)
 
     assert res.route_complete is True
-    assert len(captured_preview_transforms) == 1
-    assert (captured_preview_transforms[0] is not None) is expect_preview_transform
+    assert len(captured_preview_configs) == 1
+    assert (captured_preview_configs[0]["transform"] is not None) is expect_preview_transform
+    assert captured_preview_configs[0]["stitch_context"] is None
