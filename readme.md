@@ -34,6 +34,8 @@ and the record of what its constraints taught us.
 
 ## Built for the Edges
 
+![Built for edges](assets/images/built_for_edges.jpg)
+
 The project was developed around a simple belief:
 
 > ### Everyone should be able to use serious image AI, even on an old PC or no PC at all.
@@ -56,7 +58,7 @@ Designing there forced the pipeline to account for the resources it actually use
 
 The technical story is organized around three pillars. SDXL is the primary model and proving ground. Flux Fill and its T5 encoder are separate production runtimes that tested whether the same principles could survive a larger and more demanding model family.
 
-![The three engineering pillars of Nexfocus](assets/images/3_Pillars.png)
+![The three engineering pillars of Nexfocus](assets/images/3_Pillars.jpg)
 
 ### Pillar I: Full-Quality Models at the Edge
 
