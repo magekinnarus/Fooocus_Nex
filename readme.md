@@ -186,6 +186,8 @@ Much of contemporary AI development emphasizes scaling and increasingly universa
 
 ## The Next Scout Mission: Beneath PyTorch
 
+![next_mission](assets/images/next_mission.jpg)
+
 Nexfocus has reached the scope it set out to complete. Maintenance mode means that the application has entered a stable product boundary, with critical fixes remaining in scope; it does not mean that the infrastructure expedition has been abandoned. The work is continuing at the next layer where the limiting problems now live.
 
 SDXL and Flux Fill demonstrated that models much larger than available VRAM can run effectively when the application owns placement, movement, and lifecycle. They also exposed the boundary of what can be achieved while working through a general-purpose tensor framework. PyTorch makes advanced models broadly accessible, but its allocator, tensor ownership, and execution assumptions were not designed specifically for severe memory constraints.
