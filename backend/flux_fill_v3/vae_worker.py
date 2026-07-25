@@ -126,15 +126,16 @@ def _encode_vae_latents(
     concat_pixels = numpy_to_pytorch(bb_image_for_concat)
     concat_latent = backend_vae_encode.encode_preloaded_pixels(vae, concat_pixels)["samples"]
 
-    # 3. Build denoise_mask
+    # 3. Preserve the pixel-space mask expected by native Flux Fill.
+    # Flux packs each 8x8 pixel patch into 64 conditioning channels. Pooling
+    # to latent resolution here would irreversibly discard that information.
     mask_t = torch.from_numpy(mask).float() / 255.0
     if mask_t.ndim == 3:
         mask_t = mask_t[:, :, 0]
     mask_t = mask_t[None, None, :, :]
-    denoise_mask = torch.nn.functional.max_pool2d(mask_t, kernel_size=8)
-    denoise_mask = (denoise_mask > 0.5).float()
+    concat_mask = (mask_t > 0.5).float()
 
-    return source_latent, concat_latent, denoise_mask
+    return source_latent, concat_latent, concat_mask
 
 
 def _attach_vae(vae: Any, device: torch.device) -> None:
@@ -203,23 +204,23 @@ class TransientVaeWorker:
         if cached_bundle is not None:
             logger.debug(
                 "[Flux Telemetry] VAE latent artifacts cache hit fingerprint=%s image=%s mask=%s "
-                "source_latent=%s concat_latent=%s denoise_mask=%s request_mask_fill=%.4f "
-                "latent_mask_fill=%.4f category=%s blend=%s",
+                "source_latent=%s concat_latent=%s concat_mask=%s request_mask_fill=%.4f "
+                "concat_mask_fill=%.4f category=%s blend=%s",
                 fingerprint,
                 _shape_of_array(self.request.image),
                 _shape_of_array(self.request.mask),
                 _shape_of_tensor(cached_bundle.source_latent),
                 _shape_of_tensor(cached_bundle.concat_latent),
-                _shape_of_tensor(cached_bundle.denoise_mask),
+                _shape_of_tensor(cached_bundle.concat_mask),
                 _mask_fill_ratio(self.request.mask) or 0.0,
-                _mask_fill_ratio(cached_bundle.denoise_mask) or 0.0,
+                _mask_fill_ratio(cached_bundle.concat_mask) or 0.0,
                 self.request.category,
                 self.request.blend_mode,
             )
             return FluxLatentArtifactBundle(
                 source_latent=cached_bundle.source_latent,
                 concat_latent=cached_bundle.concat_latent,
-                denoise_mask=cached_bundle.denoise_mask,
+                concat_mask=cached_bundle.concat_mask,
                 fingerprint=cached_bundle.fingerprint,
                 vae_load_time=0.0,
                 vae_encode_time=0.0,
@@ -234,7 +235,7 @@ class TransientVaeWorker:
 
         try:
             encode_start = time.perf_counter()
-            source_latent, concat_latent, denoise_mask = _encode_vae_latents(
+            source_latent, concat_latent, concat_mask = _encode_vae_latents(
                 vae, self.request.image, self.request.mask, device
             )
             vae_encode_time = time.perf_counter() - encode_start
@@ -243,7 +244,7 @@ class TransientVaeWorker:
             bundle = FluxLatentArtifactBundle(
                 source_latent=source_latent,
                 concat_latent=concat_latent,
-                denoise_mask=denoise_mask,
+                concat_mask=concat_mask,
                 fingerprint=fingerprint,
                 vae_load_time=vae_load_time,
                 vae_encode_time=vae_encode_time,
@@ -251,16 +252,16 @@ class TransientVaeWorker:
             set_cached_latent_artifact_bundle(bundle)
             logger.debug(
                 "[Flux Telemetry] VAE latent artifacts generated and cached fingerprint=%s image=%s mask=%s "
-                "source_latent=%s concat_latent=%s denoise_mask=%s request_mask_fill=%.4f "
-                "latent_mask_fill=%.4f category=%s blend=%s load_time=%.3fs encode_time=%.3fs",
+                "source_latent=%s concat_latent=%s concat_mask=%s request_mask_fill=%.4f "
+                "concat_mask_fill=%.4f category=%s blend=%s load_time=%.3fs encode_time=%.3fs",
                 fingerprint,
                 _shape_of_array(self.request.image),
                 _shape_of_array(self.request.mask),
                 _shape_of_tensor(source_latent),
                 _shape_of_tensor(concat_latent),
-                _shape_of_tensor(denoise_mask),
+                _shape_of_tensor(concat_mask),
                 _mask_fill_ratio(self.request.mask) or 0.0,
-                _mask_fill_ratio(denoise_mask) or 0.0,
+                _mask_fill_ratio(concat_mask) or 0.0,
                 self.request.category,
                 self.request.blend_mode,
                 vae_load_time,

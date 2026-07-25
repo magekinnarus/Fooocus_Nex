@@ -180,7 +180,7 @@ Generative AI has a similar practical character. With a fixed seed and execution
 
 The expedition found the same pattern in execution. There is no single useful operating point for every combination of model, task, VRAM, RAM, storage, and transfer bandwidth. Nexfocus responds with locally effective worker assemblies, each adapted to its environment while honoring a shared contract.
 
-Much of contemporary AI development emphasizes scaling and increasingly universal frameworks. Scaling is powerful, and shared frameworks make complex systems accessible, but neither solves every problem of steering. LLMs reveal the same pressure: more parameters and larger contexts do not by themselves provide the right tools, memory, retrieval, or interaction structure for every task. Our experience suggests that future gains will also come from better environments—systems in which specialized forms of control can operate independently, interact deliberately, and adapt to local conditions.
+Much of contemporary AI development emphasizes scaling and increasingly universal frameworks. Scaling is powerful, and shared frameworks make complex systems accessible, but neither solves every problem of steering. LLMs reveal the same pressure: more parameters and larger contexts do not by themselves provide the right tools, memory, retrieval, or interaction structure for every task. Our experience suggests that future gains will also come from better environments—systems in which specialized forms of control can operate independently, interact deliberately, and adapt to usage conditions.
 
 ---
 
@@ -196,7 +196,7 @@ Video generation is the clearest next stress test. Video models multiply the sam
 
 The next scout mission therefore explores a native C++ tensor and memory layer built around explicit allocation, controlled movement across disk, RAM, and VRAM, shadow-copy avoidance, and specialized worker assemblies. The practical objective is the same one that shaped Nexfocus: make larger and higher-dimensional generative models usable on hardware that conventional execution treats as insufficient.
 
-Nexfocus remains the completed application and reference implementation produced by the first expedition. The next mission carries its edge-first principles into territory that the current framework cannot reach cleanly.
+Nexfocus remains the completed application produced by the first expedition. The next mission carries its edge-first principles into territory that the current framework cannot reach cleanly.
 
 ---
 

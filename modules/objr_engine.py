@@ -116,7 +116,12 @@ class _FluxFillPolicyContext:
 def inspect_flux_fill_hardware(profile: Any | None = None) -> Any:
     raise LegacyFluxArchivedError()
 
-def evaluate_flux_fill_text_encoder_residency(profile: Any | None = None, *, next_route_family: Any | None = None) -> Any:
+def evaluate_flux_fill_text_encoder_residency(
+    profile: Any | None = None,
+    *,
+    next_route_family: Any | None = None,
+    requested_posture: Any | None = None,
+) -> Any:
     from backend.flux_fill_v3.contracts import UNetSpineKind
     from backend.flux_fill_v3.activation import resolve_flux_fill_t5_posture
 
@@ -128,10 +133,14 @@ def evaluate_flux_fill_text_encoder_residency(profile: Any | None = None, *, nex
     if profile is not None and getattr(profile, "runtime_posture", None) == "resident":
         unet_spine = UNetSpineKind.RESIDENT
 
-    t5_posture = resolve_flux_fill_t5_posture(unet_spine, total_ram_gb)
+    t5_posture = resolve_flux_fill_t5_posture(
+        unet_spine,
+        total_ram_gb,
+        requested_posture=requested_posture,
+    )
 
     return {
-        "keep_resident": False,
+        "keep_resident": t5_posture.value == "cpu_resident",
         "t5_posture": t5_posture.value,
         "unet_spine": unet_spine.value,
     }

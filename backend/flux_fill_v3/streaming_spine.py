@@ -32,8 +32,6 @@ def _mask_fill_ratio(mask: torch.Tensor | None) -> float | None:
 class FluxFillConditioningPayloads:
     positive: list[list[Any]]
     negative: list[list[Any]]
-    latent_image: torch.Tensor
-    denoise_mask: torch.Tensor
     guidance: float
     batch_size: int
 
@@ -41,7 +39,7 @@ class FluxFillConditioningPayloads:
 def build_flux_fill_conditioning_payloads(
     empty_conditioning: Any,
     source_latent: torch.Tensor,
-    denoise_mask: torch.Tensor,
+    concat_mask: torch.Tensor,
     *,
     concat_latent: torch.Tensor | None = None,
     guidance: float = 15.0,
@@ -53,38 +51,35 @@ def build_flux_fill_conditioning_payloads(
         raise ValueError(f"Guidance must be > 0, got {guidance}.")
     if not isinstance(source_latent, torch.Tensor) or source_latent.ndim != 4 or int(source_latent.shape[1]) != 16:
         raise ValueError("source_latent must have shape [B, 16, H, W].")
-    if not isinstance(denoise_mask, torch.Tensor) or denoise_mask.ndim != 4 or int(denoise_mask.shape[1]) != 1:
-        raise ValueError("denoise_mask must have shape [B, 1, H, W].")
-    if source_latent.shape[0] != denoise_mask.shape[0] or source_latent.shape[-2:] != denoise_mask.shape[-2:]:
+    if not isinstance(concat_mask, torch.Tensor) or concat_mask.ndim != 4 or int(concat_mask.shape[1]) != 1:
+        raise ValueError("concat_mask must have shape [B, 1, H*8, W*8].")
+    expected_mask_shape = (int(source_latent.shape[-2]) * 8, int(source_latent.shape[-1]) * 8)
+    if source_latent.shape[0] != concat_mask.shape[0] or tuple(concat_mask.shape[-2:]) != expected_mask_shape:
         raise ValueError(
-            f"denoise_mask shape {list(denoise_mask.shape)} does not match source_latent {list(source_latent.shape)}."
+            f"concat_mask shape {list(concat_mask.shape)} must match the pixel-space shape "
+            f"[B, 1, {expected_mask_shape[0]}, {expected_mask_shape[1]}] for source_latent "
+            f"{list(source_latent.shape)}."
         )
 
     cond_image = concat_latent if concat_latent is not None else source_latent
 
     batch = int(batch_size or source_latent.shape[0])
     cross_attn, pooled_output = empty_conditioning.repeat(batch, device=device, dtype=dtype)
-    source = source_latent.detach().to(device=device or source_latent.device, dtype=dtype or source_latent.dtype)
     cond_img = cond_image.detach().to(device=device or cond_image.device, dtype=dtype or cond_image.dtype)
-    mask = denoise_mask.detach().to(device=device or denoise_mask.device, dtype=dtype or denoise_mask.dtype)
-    if int(source.shape[0]) != batch:
-        if int(source.shape[0]) != 1:
-            raise ValueError(f"Cannot repeat source_latent batch {source.shape[0]} to {batch}.")
-        source = source.repeat(batch, 1, 1, 1)
+    mask = concat_mask.detach().to(device=device or concat_mask.device, dtype=dtype or concat_mask.dtype)
     if int(cond_img.shape[0]) != batch:
         if int(cond_img.shape[0]) != 1:
             raise ValueError(f"Cannot repeat concat_latent batch {cond_img.shape[0]} to {batch}.")
         cond_img = cond_img.repeat(batch, 1, 1, 1)
     if int(mask.shape[0]) != batch:
         if int(mask.shape[0]) != 1:
-            raise ValueError(f"Cannot repeat denoise_mask batch {mask.shape[0]} to {batch}.")
+            raise ValueError(f"Cannot repeat concat_mask batch {mask.shape[0]} to {batch}.")
         mask = mask.repeat(batch, 1, 1, 1)
 
     payload = {
         "pooled_output": pooled_output,
         "guidance": float(guidance),
         "concat_latent_image": cond_img,
-        "denoise_mask": mask,
         "concat_mask": mask,
     }
     positive = [[cross_attn, payload.copy()]]
@@ -94,8 +89,6 @@ def build_flux_fill_conditioning_payloads(
     return FluxFillConditioningPayloads(
         positive=positive,
         negative=negative,
-        latent_image=source,
-        denoise_mask=mask,
         guidance=float(guidance),
         batch_size=batch,
     )
@@ -189,7 +182,7 @@ class StreamingUnetSpine:
         self,
         source_or_bundle: torch.Tensor | FluxLatentArtifactBundle,
         concat_latent: torch.Tensor | None = None,
-        denoise_mask: torch.Tensor | None = None,
+        concat_mask: torch.Tensor | None = None,
         empty_conditioning: Any | None = None,
         callback: Any | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -199,13 +192,13 @@ class StreamingUnetSpine:
         if isinstance(source_or_bundle, FluxLatentArtifactBundle):
             source = source_or_bundle.source_latent
             concat = source_or_bundle.concat_latent
-            mask = source_or_bundle.denoise_mask
+            mask = source_or_bundle.concat_mask
             if empty_conditioning is None:
                 empty_conditioning = concat_latent
         else:
             source = source_or_bundle
             concat = concat_latent
-            mask = denoise_mask
+            mask = concat_mask
 
         device = self.device
         source_device = source.to(device=device, dtype=torch.float32)
@@ -215,7 +208,7 @@ class StreamingUnetSpine:
 
         logger.debug(
             "[Flux Telemetry] Spine denoise payload category=%s source_latent=%s concat_latent=%s "
-            "denoise_mask=%s latent_mask_fill=%.4f device=%s seed=%s steps=%s guidance=%.2f "
+            "concat_mask=%s concat_mask_fill=%.4f device=%s seed=%s steps=%s guidance=%.2f "
             "sampler=%s scheduler=%s",
             self.request.category,
             _shape_of_tensor(source_device),
@@ -252,8 +245,6 @@ class StreamingUnetSpine:
             noise=noise,
             positive=payloads.positive,
             negative=payloads.negative,
-            latent_image=payloads.latent_image,
-            denoise_mask=payloads.denoise_mask,
             steps=self.request.steps,
             device=device,
             sampler_name=self.request.sampler,

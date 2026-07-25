@@ -684,6 +684,116 @@ class TestFluxFillV3ResidentMemoryContract(unittest.TestCase):
         mock_load_gpu.assert_called_once()
 
 
+class TestFluxFillV3NativeFillConditioning(unittest.TestCase):
+    class _Conditioning:
+        @staticmethod
+        def repeat(batch, device=None, dtype=None):
+            return (
+                torch.zeros((batch, 256, 4096), device=device, dtype=dtype),
+                torch.zeros((batch, 768), device=device, dtype=dtype),
+            )
+
+    def test_vae_worker_preserves_pixel_space_concat_mask(self):
+        from backend.flux_fill_v3.vae_worker import _encode_vae_latents
+
+        image = np.zeros((16, 24, 3), dtype=np.uint8)
+        mask = np.zeros((16, 24), dtype=np.uint8)
+        mask[1, 2] = 255
+        encoded = [
+            {"samples": torch.zeros((1, 16, 2, 3))},
+            {"samples": torch.ones((1, 16, 2, 3))},
+        ]
+
+        with patch("backend.flux_fill_v3.vae_worker._attach_vae"), patch(
+            "modules.core.numpy_to_pytorch",
+            side_effect=lambda value: torch.from_numpy(value).unsqueeze(0),
+        ), patch(
+            "backend.encode.encode_preloaded_pixels",
+            side_effect=encoded,
+        ):
+            source, concat, concat_mask = _encode_vae_latents(
+                MagicMock(),
+                image,
+                mask,
+                torch.device("cpu"),
+            )
+
+        self.assertEqual(tuple(source.shape), (1, 16, 2, 3))
+        self.assertEqual(tuple(concat.shape), (1, 16, 2, 3))
+        self.assertEqual(tuple(concat_mask.shape), (1, 1, 16, 24))
+        self.assertEqual(float(concat_mask[0, 0, 1, 2]), 1.0)
+        self.assertEqual(float(concat_mask.sum()), 1.0)
+
+    def test_both_spines_emit_only_native_pixel_concat_mask(self):
+        from backend.flux_fill_v3.resident_spine import (
+            build_flux_fill_conditioning_payloads as build_resident_payloads,
+        )
+        from backend.flux_fill_v3.streaming_spine import (
+            build_flux_fill_conditioning_payloads as build_streaming_payloads,
+        )
+
+        source = torch.zeros((1, 16, 2, 3))
+        concat = torch.ones((1, 16, 2, 3))
+        concat_mask = torch.zeros((1, 1, 16, 24))
+        concat_mask[:, :, 1, 2] = 1.0
+
+        for builder in (build_streaming_payloads, build_resident_payloads):
+            payloads = builder(
+                self._Conditioning(),
+                source,
+                concat_mask,
+                concat_latent=concat,
+                device="cpu",
+                dtype=torch.float32,
+            )
+            positive_payload = payloads.positive[0][1]
+            self.assertEqual(tuple(positive_payload["concat_mask"].shape), (1, 1, 16, 24))
+            self.assertNotIn("denoise_mask", positive_payload)
+            self.assertFalse(hasattr(payloads, "latent_image"))
+            self.assertFalse(hasattr(payloads, "denoise_mask"))
+
+    def test_flux_sampler_does_not_activate_generic_inpaint_blending(self):
+        from backend.flux_fill_v3.streaming_loader import _sample_flux_fill_direct_streaming
+
+        sampler_instance = MagicMock()
+        sampler_instance.sigmas = torch.tensor([1.0, 0.0])
+        sampler_instance.quality = {}
+        prepared_guider = MagicMock()
+
+        with patch("backend.sampling.KSampler", return_value=sampler_instance), patch(
+            "backend.sampling.prepare_sampler_conds",
+            return_value=prepared_guider,
+        ) as prepare_mock, patch(
+            "backend.sampling.sample_prepared_sdxl",
+            return_value=torch.zeros((1, 16, 2, 3)),
+        ) as sample_mock, patch(
+            "backend.sampling.ksampler",
+            return_value=MagicMock(),
+        ):
+            samples, sigmas = _sample_flux_fill_direct_streaming(
+                unet_patcher=MagicMock(model_options={}, model=MagicMock()),
+                noise=torch.zeros((1, 16, 2, 3)),
+                positive=[],
+                negative=[],
+                steps=2,
+                device=torch.device("cpu"),
+                sampler_name="euler",
+                scheduler_name="simple",
+                denoise=1.0,
+                cfg=1.0,
+                seed=1,
+                callback=None,
+                disable_pbar=True,
+            )
+
+        self.assertEqual(tuple(samples.shape), (1, 16, 2, 3))
+        self.assertEqual(tuple(sigmas.shape), (2,))
+        self.assertIsNone(prepare_mock.call_args.kwargs["latent_image"])
+        self.assertIsNone(prepare_mock.call_args.kwargs["denoise_mask"])
+        self.assertIsNone(sample_mock.call_args.kwargs["latent_image"])
+        self.assertIsNone(sample_mock.call_args.kwargs["denoise_mask"])
+
+
 class TestFluxFillV3CpuResidentWorker(unittest.TestCase):
     def setUp(self):
         from backend.flux_fill_v3.cpu_resident_text_worker import CpuResidentTextEncoderCache
@@ -693,8 +803,8 @@ class TestFluxFillV3CpuResidentWorker(unittest.TestCase):
         from backend.flux_fill_v3.cpu_resident_text_worker import CpuResidentTextEncoderCache
         CpuResidentTextEncoderCache.teardown()
 
-    def test_zero_copy_popping_sequence(self):
-        from backend.flux_fill_v3.cpu_resident_text_worker import load_t5_state_dict_zero_copy
+    def test_owned_cpu_popping_sequence_breaks_source_storage_aliases(self):
+        from backend.flux_fill_v3.cpu_resident_text_worker import load_t5_state_dict_owned_cpu
         
         model = torch.nn.Module()
         model.param1 = torch.nn.Parameter(torch.zeros(2, 3))
@@ -709,17 +819,21 @@ class TestFluxFillV3CpuResidentWorker(unittest.TestCase):
         model.named_parameters = named_parameters_mock
         model.named_buffers = named_buffers_mock
 
+        source_param = torch.ones(2, 3)
+        source_buffer = torch.ones(4) * 2
         sd = {
-            "param1": torch.ones(2, 3),
-            "buf1_buf": torch.ones(4) * 2,
+            "param1": source_param,
+            "buf1_buf": source_buffer,
             "extra_key": torch.ones(5)
         }
 
-        missing, unexpected = load_t5_state_dict_zero_copy(model, sd)
+        missing, unexpected = load_t5_state_dict_owned_cpu(model, sd)
         self.assertEqual(missing, [])
         self.assertEqual(unexpected, ["extra_key"])
         self.assertTrue(torch.allclose(model.param1.data, torch.ones(2, 3)))
         self.assertTrue(torch.allclose(model.buf1_buf, torch.ones(4) * 2))
+        self.assertNotEqual(model.param1.data.data_ptr(), source_param.data_ptr())
+        self.assertNotEqual(model.buf1_buf.data_ptr(), source_buffer.data_ptr())
         self.assertEqual(sd, {}) # cleared
 
     def test_eager_t5_loader_filters_expected_shared_embedding_residual(self):

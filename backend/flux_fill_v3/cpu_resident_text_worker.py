@@ -31,9 +31,14 @@ def _filter_expected_eager_t5_unexpected_keys(unexpected_keys: list[str]) -> lis
     return [key for key in unexpected_keys if key not in _EXPECTED_EAGER_T5_RESIDUAL_KEYS]
 
 
-def load_t5_state_dict_zero_copy(model: torch.nn.Module, sd: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Popping sequence to load state dict one parameter at a time.
-    Replaces param.data references directly to avoid duplicate CPU RAM allocation (shadow copy).
+def load_t5_state_dict_owned_cpu(model: torch.nn.Module, sd: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Materialize T5 into CPU-owned tensors one parameter at a time.
+
+    Safetensors CPU tensors are file-backed mappings. Assigning those tensors
+    directly leaves the nominally resident encoder reclaimable by the OS. This
+    loader copies one tensor at a time into owned CPU storage, then releases
+    the source view, avoiding a full state-dict shadow while making the
+    retained encoder materially resident in process memory.
     """
     missing_keys = []
     
@@ -47,10 +52,12 @@ def load_t5_state_dict_zero_copy(model: torch.nn.Module, sd: dict[str, Any]) -> 
                 val = torch.tensor(val)
             
             target_dtype = param.dtype
-            cast_val = val.to(device=param.device, dtype=target_dtype)
-            
-            # Direct data assignment to reuse safetensors memory
-            param.data = cast_val
+            if val.device == param.device and val.dtype == target_dtype:
+                owned_val = val.clone()
+            else:
+                owned_val = val.to(device=param.device, dtype=target_dtype)
+
+            param.data = owned_val
         else:
             missing_keys.append(name)
             
@@ -64,9 +71,12 @@ def load_t5_state_dict_zero_copy(model: torch.nn.Module, sd: dict[str, Any]) -> 
                 val = torch.tensor(val)
             
             target_dtype = buf.dtype
-            cast_val = val.to(device=buf.device, dtype=target_dtype)
-            
-            buf.copy_(cast_val)
+            if val.device == buf.device and val.dtype == target_dtype:
+                owned_val = val.clone()
+            else:
+                owned_val = val.to(device=buf.device, dtype=target_dtype)
+
+            buf.copy_(owned_val)
         else:
             missing_keys.append(name)
             
@@ -132,8 +142,9 @@ def load_flux_prompt_text_encoder_eager(
     if unexpected:
         logger.debug("Flux CLIP-L unexpected keys: %s", unexpected)
 
-    # 4. Zero-copy load of T5 into model to prevent shadow copy/double peak memory
-    missing, unexpected = load_t5_state_dict_zero_copy(cond_stage_model.t5xxl.transformer, t5_sd)
+    # 4. Materialize T5 into owned CPU tensors one parameter at a time. This
+    # avoids a full shadow state dict without retaining reclaimable mmap views.
+    missing, unexpected = load_t5_state_dict_owned_cpu(cond_stage_model.t5xxl.transformer, t5_sd)
     unexpected = _filter_expected_eager_t5_unexpected_keys(unexpected)
     if missing:
         logger.debug("Flux T5 missing keys: %s", missing)
@@ -152,6 +163,7 @@ def load_flux_prompt_text_encoder_eager(
             "t5_detected_dtype": str(detected_t5_dtype) if detected_t5_dtype is not None else None,
             "t5_source_kind": "safetensors_eager",
             "t5_full_state_dict_materialized": True,
+            "t5_storage_policy": "owned_cpu_sequential",
             "t5_stream_runtime": False,
             "t5_lazy_runtime": False,
         },

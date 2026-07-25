@@ -12,7 +12,7 @@ from backend.process_transition import (
     clear_active_runtime,
     set_active_runtime,
 )
-from backend.flux_fill_v3.contracts import UNetSpineKind, T5PostureKind
+from backend.flux_fill_v3.contracts import UNetSpineKind, T5PostureKind, normalize_t5_posture
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ FLUX_FILL_AE_ASSET_ID = "inpaint.flux_fill.ae"
 FLUX_FILL_EMPTY_CONDITIONING_ASSET_ID = "inpaint.flux_fill.empty_conditioning"
 FLUX_FILL_CLIP_L_ASSET_ID = "inpaint.flux_fill.text_encoder.clip_l"
 FLUX_FILL_T5XXL_FP16_ASSET_ID = "inpaint.flux_fill.text_encoder.t5xxl.fp16"
+MIN_CPU_RESIDENT_T5_RAM_GB = 31.0
 
 FLUX_FILL_UNET_ASSET_BY_TIER = {
     FLUX_FILL_TIER_FP8: "inpaint.flux_fill.unet.fp8",
@@ -319,11 +320,16 @@ def resolve_flux_fill_request_t5_posture(
 ) -> T5PostureKind:
     if task_state is not None:
         requested = str(getattr(task_state, "flux_fill_t5_posture", "disk_paged") or "").strip().lower()
-        if requested == "cpu_resident":
-            total_ram_gb = resolve_flux_fill_total_ram_gb(task_state)
-            if total_ram_gb >= 31.0:
-                return T5PostureKind.CPU_RESIDENT
-    return T5PostureKind.DISK_PAGED
+        return resolve_flux_fill_t5_posture(
+            spine_kind or resolve_flux_fill_spine_kind(task_state),
+            resolve_flux_fill_total_ram_gb(task_state),
+            requested_posture=requested,
+        )
+    return resolve_flux_fill_t5_posture(
+        spine_kind or UNetSpineKind.STREAMING,
+        None,
+        requested_posture=T5PostureKind.DISK_PAGED,
+    )
 
 
 def resolve_flux_fill_process_key(
@@ -409,7 +415,22 @@ def sync_flux_fill_process_activation(
     return None
 
 
-def resolve_flux_fill_t5_posture(unet_spine: UNetSpineKind, total_ram_gb: float | None = None) -> T5PostureKind:
+def resolve_flux_fill_t5_posture(
+    unet_spine: UNetSpineKind,
+    total_ram_gb: float | None = None,
+    *,
+    requested_posture: T5PostureKind | str | None = None,
+) -> T5PostureKind:
+    # T5 placement is a CPU policy. The UNet spine and GPU-only background
+    # removal posture do not alter it; the argument remains for call-site
+    # compatibility while request intent and host RAM are authoritative.
+    _ = unet_spine
+    requested = normalize_t5_posture(requested_posture)
+    if (
+        requested == T5PostureKind.CPU_RESIDENT
+        and total_ram_gb is not None
+        and float(total_ram_gb) >= MIN_CPU_RESIDENT_T5_RAM_GB
+    ):
+        return T5PostureKind.CPU_RESIDENT
     return T5PostureKind.DISK_PAGED
-
 

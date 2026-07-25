@@ -271,7 +271,7 @@ class FluxFillRequest:
 class FluxLatentArtifactBundle:
     source_latent: torch.Tensor
     concat_latent: torch.Tensor
-    denoise_mask: torch.Tensor
+    concat_mask: torch.Tensor
     fingerprint: str
     vae_load_time: float = 0.0
     vae_encode_time: float = 0.0

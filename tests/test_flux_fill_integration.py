@@ -370,10 +370,27 @@ def test_flux_fill_text_encoder_residency_policy_ignores_next_route_headroom():
     assert res["keep_resident"] is False
 
 
-def test_flux_fill_text_encoder_residency_policy_never_requests_resident_t5():
+def test_flux_fill_text_encoder_residency_policy_defaults_to_disk_paged_without_explicit_request():
     profile = SimpleNamespace(name='local_normal', total_ram_mb=49152, free_ram_mb=30000, total_vram_mb=24576, is_colab=False, runtime_posture='streaming')
     res = objr_engine.evaluate_flux_fill_text_encoder_residency(profile)
     assert res["keep_resident"] is False
+
+
+def test_flux_fill_text_encoder_residency_policy_honors_explicit_cpu_posture():
+    profile = SimpleNamespace(
+        name='colab_pro',
+        total_ram_mb=53248,
+        free_ram_mb=45000,
+        total_vram_mb=23000,
+        is_colab=True,
+        runtime_posture='resident',
+    )
+    res = objr_engine.evaluate_flux_fill_text_encoder_residency(
+        profile,
+        requested_posture='cpu_resident',
+    )
+    assert res["keep_resident"] is True
+    assert res["t5_posture"] == "cpu_resident"
 
 
 def test_generate_flux_fill_prompt_conditioning_uses_native_runtime_boundary(monkeypatch):
