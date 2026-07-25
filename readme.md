@@ -186,7 +186,7 @@ Much of contemporary AI development emphasizes scaling and increasingly universa
 
 ## The Next Scout Mission: Beneath PyTorch
 
-![next_mission](assets/images/next_mission.jpg)
+![next_mission](assets/images/next_scout.jpg)
 
 Nexfocus has reached the scope it set out to complete. Maintenance mode means that the application has entered a stable product boundary, with critical fixes remaining in scope; it does not mean that the infrastructure expedition has been abandoned. The work is continuing at the next layer where the limiting problems now live.
 
