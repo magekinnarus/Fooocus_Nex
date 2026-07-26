@@ -317,7 +317,13 @@ class Flux(BaseModel):
 
         image = utils.common_upscale(image.to(device), noise.shape[-1], noise.shape[-2], "bilinear", "center")
         image = utils.resize_to_batch_size(image, noise.shape[0])
-        image = self.process_latent_in(image)
+        # General callers provide raw VAE latents and require model-space
+        # normalization here. Flux Fill v3 encodes through backend.encode,
+        # whose public contract already applies latent_format.process_in().
+        # Respect its explicit marker to avoid scaling and shifting the
+        # masked-image conditioning latent a second time.
+        if not kwargs.get("concat_latent_image_is_model_space", False):
+            image = self.process_latent_in(image)
         if num_channels <= out_channels * 2:
             return image
 

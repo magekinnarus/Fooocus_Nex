@@ -748,9 +748,40 @@ class TestFluxFillV3NativeFillConditioning(unittest.TestCase):
             )
             positive_payload = payloads.positive[0][1]
             self.assertEqual(tuple(positive_payload["concat_mask"].shape), (1, 1, 16, 24))
+            self.assertTrue(positive_payload["concat_latent_image_is_model_space"])
             self.assertNotIn("denoise_mask", positive_payload)
             self.assertFalse(hasattr(payloads, "latent_image"))
             self.assertFalse(hasattr(payloads, "denoise_mask"))
+
+    def test_flux_concat_conditioning_does_not_renormalize_model_space_latent(self):
+        from ldm_patched.modules.model_base import Flux
+
+        process_latent_in = MagicMock(side_effect=lambda value: value + 100.0)
+        flux_model = SimpleNamespace(
+            diffusion_model=SimpleNamespace(
+                img_in=SimpleNamespace(weight=torch.empty((1, 384))),
+                patch_size=2,
+            ),
+            model_config=SimpleNamespace(
+                unet_config={"in_channels": 384, "out_channels": 64},
+            ),
+            process_latent_in=process_latent_in,
+        )
+        image = torch.ones((1, 16, 2, 3))
+        noise = torch.zeros_like(image)
+        mask = torch.zeros((1, 1, 16, 24))
+
+        concat = Flux.concat_cond(
+            flux_model,
+            concat_latent_image=image,
+            concat_latent_image_is_model_space=True,
+            concat_mask=mask,
+            noise=noise,
+            device=torch.device("cpu"),
+        )
+
+        process_latent_in.assert_not_called()
+        self.assertTrue(torch.equal(concat[:, :16], image))
 
     def test_flux_sampler_does_not_activate_generic_inpaint_blending(self):
         from backend.flux_fill_v3.streaming_loader import _sample_flux_fill_direct_streaming

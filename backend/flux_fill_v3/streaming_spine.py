@@ -80,6 +80,7 @@ def build_flux_fill_conditioning_payloads(
         "pooled_output": pooled_output,
         "guidance": float(guidance),
         "concat_latent_image": cond_img,
+        "concat_latent_image_is_model_space": True,
         "concat_mask": mask,
     }
     positive = [[cross_attn, payload.copy()]]
