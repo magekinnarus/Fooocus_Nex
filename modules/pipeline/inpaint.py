@@ -277,7 +277,54 @@ class InpaintPipeline:
         result[iy1:iy2, ix1:ix2] = content[content_y1:content_y2, content_x1:content_x2]
         return result
 
-    def stitch(self, context: InpaintContext, generated_image) -> np.ndarray:
+    def _build_bb_edge_window(self, context: InpaintContext, feather_radius: int) -> np.ndarray:
+        """Build a full-canvas window that tapers generated content at internal BB edges."""
+        H, W = context.original_image.shape[:2]
+        y1, y2, x1, x2 = context.bb
+        iy1, iy2 = max(0, y1), min(H, y2)
+        ix1, ix2 = max(0, x1), min(W, x2)
+        patch_h = max(0, iy2 - iy1)
+        patch_w = max(0, ix2 - ix1)
+        window = np.zeros((H, W), dtype=np.float32)
+        if patch_h == 0 or patch_w == 0:
+            return window
+
+        radius = max(0, int(feather_radius))
+        y_weight = np.ones((patch_h,), dtype=np.float32)
+        x_weight = np.ones((patch_w,), dtype=np.float32)
+
+        def apply_edge_taper(weight, *, fade_start, fade_end):
+            if radius <= 0:
+                return
+            edge_width = min(radius, int(weight.shape[0]))
+            if edge_width <= 1:
+                if fade_start or fade_end:
+                    weight[:] = 0.0
+                return
+            ramp = 0.5 * (
+                1.0
+                - np.cos(np.linspace(0.0, np.pi, edge_width, dtype=np.float32))
+            )
+            if fade_start:
+                weight[:edge_width] *= ramp
+            if fade_end:
+                weight[-edge_width:] *= ramp[::-1]
+
+        # Canvas edges have no adjacent source pixels and therefore cannot
+        # expose a crop seam. Internal BB edges must return to the original
+        # image before generated support ends.
+        apply_edge_taper(y_weight, fade_start=iy1 > 0, fade_end=iy2 < H)
+        apply_edge_taper(x_weight, fade_start=ix1 > 0, fade_end=ix2 < W)
+        window[iy1:iy2, ix1:ix2] = y_weight[:, None] * x_weight[None, :]
+        return window
+
+    def stitch(
+        self,
+        context: InpaintContext,
+        generated_image,
+        *,
+        bb_edge_feather: int = 0,
+    ) -> np.ndarray:
         """Preserve Fooocus's superior morphological blending for final outputs."""
         result = self.paste_back(context, generated_image)
         
@@ -290,6 +337,9 @@ class InpaintPipeline:
             context.blend_mask = blend_mask
         w = blend_mask[:, :, None].astype(np.float32) / 255.0
         w = blending.apply_sin2_curve(w)
+        if bb_edge_feather > 0:
+            edge_window = self._build_bb_edge_window(context, bb_edge_feather)
+            w *= edge_window[:, :, None]
         
         y = fg * w + bg * (1.0 - w)
         return y.clip(0, 255).astype(np.uint8)

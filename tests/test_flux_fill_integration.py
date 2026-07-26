@@ -171,6 +171,34 @@ def test_sampling_callback_pastes_preview_without_morphological_blend():
     assert np.all(preview[4:12, 4:12] == 9)
 
 
+def test_flux_stitch_tapers_mask_support_at_internal_bb_edges():
+    from modules.pipeline.inpaint import InpaintContext, InpaintPipeline
+
+    original = np.zeros((8, 8, 3), dtype=np.uint8)
+    generated = np.full((4, 4, 3), 255, dtype=np.uint8)
+    context = InpaintContext(
+        original_image=original,
+        original_mask=np.full((8, 8), 255, dtype=np.uint8),
+        bb=(2, 6, 2, 6),
+        bb_image=np.zeros((4, 4, 3), dtype=np.uint8),
+        bb_mask=np.full((4, 4), 255, dtype=np.uint8),
+        target_w=4,
+        target_h=4,
+        blend_mask=np.full((8, 8), 255, dtype=np.uint8),
+    )
+
+    stitched = InpaintPipeline().stitch(
+        context,
+        generated,
+        bb_edge_feather=2,
+    )
+
+    assert np.all(stitched[2, 2] == 0)
+    assert np.all(stitched[5, 5] == 0)
+    assert np.all(stitched[3, 3] == 255)
+    assert np.all(stitched[:2] == 0)
+
+
 def test_sampling_callback_emits_preview_images_on_configured_step_interval():
     task_state = SimpleNamespace(
         yields=[],

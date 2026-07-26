@@ -897,7 +897,15 @@ class FluxFillInpaintStage(PipelineStage):
 
             import logging
             logging.getLogger(__name__).debug(f"[Flux Telemetry] Applying final morphological blending and stitch-back for image {image_index + 1}/{total_count}")
-            stitched_image = stitcher.stitch(ctx, np.asarray(result.output_image))
+            stitched_image = stitcher.stitch(
+                ctx,
+                np.asarray(result.output_image),
+                # Native Flux Fill can alter the whole decoded BB. If the
+                # user mask reaches an internal BB edge, the ordinary
+                # outward morphological feather is truncated there. Taper
+                # generated support inside that edge to prevent a crop seam.
+                bb_edge_feather=32,
+            )
 
             if context.progressbar_callback is not None:
                 context.progressbar_callback(task_state, 100, f'Saving Flux Fill Inpaint {image_index + 1}/{total_count} to system ...')
