@@ -285,15 +285,32 @@ def _download_hf_file(
             repo_id = f"{path_parts[resolve_idx - 2]}/{path_parts[resolve_idx - 1]}"
             subpath = "/".join(path_parts[resolve_idx + 2:])
             try:
+                # Extract Bearer token from headers (set by HuggingFaceResolver
+                # via HUGGINGFACE_TOKEN) or fall back to the env var directly.
+                # hf_hub_download reads HF_TOKEN / HUGGINGFACE_HUB_TOKEN by
+                # default; HUGGINGFACE_TOKEN is app-specific and must be
+                # forwarded explicitly.
+                token = None
+                for key, value in headers:
+                    if key.lower() == 'authorization' and value.lower().startswith('bearer '):
+                        token = value[len('bearer '):]
+                        break
+                if token is None:
+                    token = os.environ.get('HUGGINGFACE_TOKEN')
+
                 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
                 from huggingface_hub import hf_hub_download
 
                 print(f"Downloading Hugging Face asset via hf_transfer ({repo_id}:{subpath})")
-                downloaded = hf_hub_download(
+                hf_kwargs = dict(
                     repo_id=repo_id,
                     filename=subpath,
                     local_dir=model_dir,
+                    local_dir_use_symlinks=False,
                 )
+                if token:
+                    hf_kwargs['token'] = token
+                downloaded = hf_hub_download(**hf_kwargs)
                 destination = os.path.abspath(os.path.join(model_dir, file_name))
                 if os.path.abspath(downloaded) != destination:
                     if os.path.exists(destination):
