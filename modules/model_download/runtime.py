@@ -53,12 +53,11 @@ def download_file(
         _cleanup_partial_download(destination)
 
     if _is_huggingface_download_url(url):
-        # HF downloads use one streaming GET. Aria2's redirect/Xet handling is
-        # intentionally bypassed, and stale Aria2 state is not resumed.
+        # HF downloads use hf_hub_download + hf_transfer when available, bypassing Aria2.
         if partial_download:
             _cleanup_partial_download(destination)
-        downloaded = load_file_from_url(
-            url=_with_download_query(url),
+        downloaded = _download_hf_file(
+            url=url,
             model_dir=model_dir,
             file_name=file_name,
             progress=progress,
@@ -266,6 +265,51 @@ def _is_huggingface_download_url(url: str) -> bool:
     host = (parsed.netloc or '').lower()
     mirror_host = urlparse(os.environ.get("HF_MIRROR", "")).netloc.lower()
     return host.endswith('huggingface.co') or (mirror_host and host == mirror_host)
+
+
+def _download_hf_file(
+    url: str,
+    *,
+    model_dir: str,
+    file_name: str,
+    progress: bool = True,
+    headers: Iterable[tuple[str, str]] = (),
+) -> str:
+    """Download HuggingFace asset using high-performance hf_transfer if available."""
+    parsed = urlparse(str(url or '').strip())
+    path_parts = [p for p in parsed.path.strip('/').split('/') if p]
+
+    if len(path_parts) >= 5 and 'resolve' in path_parts:
+        resolve_idx = path_parts.index('resolve')
+        if resolve_idx >= 2 and resolve_idx + 2 < len(path_parts):
+            repo_id = f"{path_parts[resolve_idx - 2]}/{path_parts[resolve_idx - 1]}"
+            subpath = "/".join(path_parts[resolve_idx + 2:])
+            try:
+                os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+                from huggingface_hub import hf_hub_download
+
+                print(f"Downloading Hugging Face asset via hf_transfer ({repo_id}:{subpath})")
+                downloaded = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=subpath,
+                    local_dir=model_dir,
+                )
+                destination = os.path.abspath(os.path.join(model_dir, file_name))
+                if os.path.abspath(downloaded) != destination:
+                    if os.path.exists(destination):
+                        os.remove(destination)
+                    shutil.move(downloaded, destination)
+                return destination
+            except Exception as exc:
+                print(f"hf_hub_download failed for {url}: {exc}. Falling back to standard streaming.")
+
+    return load_file_from_url(
+        url=_with_download_query(url),
+        model_dir=model_dir,
+        file_name=file_name,
+        progress=progress,
+        headers=headers,
+    )
 
 
 def _is_github_download_url(url: str) -> bool:
