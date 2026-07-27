@@ -200,58 +200,66 @@ Nexfocus remains the completed application produced by the first expedition. The
 
 ---
 
- ## Installation
- 
- ### System Requirements
- 
- All configurations require an NVIDIA GPU with updated drivers.
- 
- | Workload | GPU Minimum | RAM Minimum | Notes |
- |:---|:---|:---|:---|
- | SDXL Streaming | GTX 1050 3 GB | 32 GB | Default for GPUs with < 8 GB VRAM |
- | SDXL GPU Resident + CPU Text | 8 GB | 32 GB | |
- | SDXL GPU Resident + GPU Text | 12 GB | 16 GB | |
- | Flux Fill Streaming (T5 disk-paged) | GTX 1050 3 GB | 32 GB | Default for all GPUs |
- | Flux Fill Streaming (T5 CPU resident) | GTX 1050 3 GB | 45 GB | Faster prompt encoding |
- | Flux Fill GPU Resident + T5 CPU | Higher-headroom GPU | 32 GB | |
- 
-Expected disk usage: models and dependencies (SDXL checkpoint ~6.5 GB, Flux Fill ~12.7 GB, T5-XXL ~9.5 GB, plus supporting models).
+## Installation
 
- > **NVIDIA GPUs only.** Nexfocus currently supports NVIDIA GPUs exclusively.
- > If the next scout mission (a native C++ tensor and memory layer) succeeds,
- > it will remove the PyTorch dependency that limits us to NVIDIA hardware.
- 
+### System Requirements
+
+All configurations require an NVIDIA GPU with updated drivers.
+
+| Workload | GPU Minimum | RAM Minimum | Notes |
+|:---|:---|:---|:---|
+| SDXL Streaming | GTX 1050, 3 GB | 32 GB | Default below 8 GB VRAM |
+| SDXL GPU Resident + CPU Text | 8 GB | 32 GB | Design target; expected to work but not physically verified. Select streaming if issues arise |
+| SDXL GPU Resident + GPU Text | 16 GB | 16 GB | 16 GB GPU floor |
+| Flux Fill Streaming + T5 disk-paged | GTX 1050, 3 GB | 32 GB | Disk-paged T5 is the default text posture |
+| Flux Fill Streaming + T5 CPU resident | GTX 1050, 3 GB | 45 GB | Optional faster prompt encoding |
+| Flux Fill GPU resident + T5 disk-paged | 16 GB | 12.7 GB | Default text posture; validated on Colab Free T4 |
+| Flux Fill GPU resident + T5 CPU resident | 16 GB | 32 GB | Optional higher-RAM path |
+
+Storage depends on how many checkpoints and LoRAs you install. For orientation,
+one SDXL checkpoint is about 6.5 GB, Flux Fill is about 12.7 GB, and the
+FP16 T5-XXL encoder is about 9.5 GB, plus supporting models and dependencies.
+
+> **NVIDIA GPUs only.** Nexfocus currently supports NVIDIA GPUs exclusively.
+> If the next scout mission (a native C++ tensor and memory layer) succeeds,
+> it will remove the PyTorch dependency that limits us to NVIDIA hardware.
+
 ### Quick Start
 
- 1. Follow the step-by-step guide in [INSTALL.md](INSTALL.md).
- 2. Run the launch script to verify and start:
- 
-   **Windows:** `launch.bat`
-    **Linux:** `./launch.sh`
- 
- The launch script checks that Python, the virtual environment, PyTorch with CUDA, xformers, uv are correctly installed, then starts the application. It does not install anything other than Aria2, all installation steps are in INSTALL.md.
+1. Follow the step-by-step guide in [INSTALL.md](INSTALL.md).
+2. Run the launcher to verify the environment and start Nexfocus:
 
-  > **Why no portable version?** A portable bundle locks the environment to a fixed configuration, making it difficult to add components or adjust settings. It is also unnecessarily heavy, packaging an entire Python installation that most users already have. Following the steps in the installtion guide gives you a working setup you actually understand -- which makes it easier to tweak, troubleshoot, or adapt later.
- 
+   - **Windows:** `launch.bat`
+   - **Linux:** `./launch.sh`
+
+The launcher verifies Python 3.10+, the virtual environment, PyTorch with
+CUDA, xformers, and uv. It installs only Aria2; all other installation remains
+explicit in INSTALL.md.
+
+> **Why no portable version?** A portable bundle locks the environment to a
+> fixed configuration, makes components and settings harder to change, and
+> packages a complete Python installation. Following the installation guide
+> produces an environment you can understand, troubleshoot, and adapt.
+
 ### Run on Google Colab
- 
- | Colab | Info |
- | --- | --- |
- | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J7ZF8gu2fquNAcrhsw0U5ITMfp2muhtl?usp=sharing) | Nexfocus Official |
- 
- No local installation required. The notebook handles all setup automatically.
- 
----
- 
- ## Documentation
- 
- - [INSTALL.md](INSTALL.md) -- Full installation guide (Windows, Linux, Colab)
- - [HOTKEYS.md](HOTKEYS.md) -- Keyboard shortcuts and navigation controls
- - [CONTRIBUTING.md](CONTRIBUTING.md) -- Developer guidelines and test contract
- - [CHANGELOG.md](CHANGELOG.md) -- Version history and key milestones
 
- ---
- 
+| Colab | Info |
+| --- | --- |
+| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J7ZF8gu2fquNAcrhsw0U5ITMfp2muhtl?usp=sharing) | Nexfocus Official |
+
+No local installation required. The notebook handles all setup automatically.
+
+---
+
+## Documentation
+
+- [INSTALL.md](INSTALL.md) -- Full installation guide (Windows, Linux, Colab)
+- [HOTKEYS.md](HOTKEYS.md) -- Keyboard shortcuts and navigation controls
+- [CONTRIBUTING.md](CONTRIBUTING.md) -- Developer guidelines and test contract
+- [CHANGELOG.md](CHANGELOG.md) -- Version history and key milestones
+
+---
+
 ## Credits and License
 
 Nexfocus originated as a fork of [Fooocus](https://github.com/lllyasviel/Fooocus) by [lllyasviel](https://github.com/lllyasviel). We are grateful to its authors and to the wider open-source generative-AI community whose work made this expedition possible.

@@ -1,0 +1,2 @@
+launch.sh text eol=lf
+launch.bat text eol=crlf
