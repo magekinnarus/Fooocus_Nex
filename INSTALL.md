@@ -1,5 +1,14 @@
 # Installation Guide
 
+## Need help? Ask an AI assistant
+
+Copy and paste any installation step into an AI assistant and ask it to guide
+you through the step for Windows or Linux. Include any error message you
+receive, and ask the assistant to explain one command at a time.
+
+> **Never share API keys, tokens, passwords, or the contents of your `.env`
+> file with an AI assistant.**
+
 This guide walks through setting up Nexfocus from scratch. The launchers verify
 the environment and install Aria2 when needed; they do not install Python,
 PyTorch, xformers, uv, or the Python dependencies.
@@ -107,21 +116,40 @@ environment activated for Steps 4-8. For details, see the
 
 ## Step 4: Install PyTorch with CUDA
 
-The validated development floor is:
+Nexfocus supports compatible PyTorch/CUDA builds at or above the validated
+development floor:
 
 - PyTorch `2.5.1+cu124`
 - torchvision `0.20.1+cu124`
 - CUDA runtime `12.4`
 
 This combination was used throughout development from the GTX 1050 reference
-machine through newer NVIDIA GPUs. PyTorch wheels include the CUDA runtime; a
-separate CUDA Toolkit installation is not required.
+machine through newer NVIDIA GPUs. It is the safe baseline, not a requirement
+to stay on an older build. PyTorch wheels include the CUDA runtime; a separate
+CUDA Toolkit installation is not required.
+
+### Option A: Use the validated baseline
 
 **Windows and Linux, with the virtual environment activated:**
 
 ```bash
 python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
 ```
+
+### Option B: Use a newer compatible build
+
+Users with newer hardware may install a newer PyTorch and CUDA wheel. Open the
+[official PyTorch installation selector](https://pytorch.org/get-started/locally/),
+choose your operating system, Pip, Python, and the CUDA version appropriate for
+your hardware, then run the command it provides.
+
+If you are unsure, copy this section into an AI assistant and provide your
+operating system, Python version, and exact NVIDIA GPU name. Ask it to help
+select an official PyTorch build that is version 2.5.1 or newer.
+
+The Colab T4 environment has also been field-tested with PyTorch
+`2.11.0+cu128`, demonstrating that Nexfocus is not restricted to the local
+2.5.1/cu124 baseline.
 
 Verify:
 
@@ -138,22 +166,37 @@ not install a PyTorch version below 2.5.1.
 
 ## Step 5: Install xformers
 
-Install the xformers build validated with the PyTorch 2.5.1/cu124 baseline:
+The xformers build must be compatible with the PyTorch and CUDA build selected
+in Step 4.
+
+### If you installed the validated PyTorch 2.5.1/cu124 baseline
 
 ```bash
 python -m pip install xformers==0.0.28.post3 --index-url https://download.pytorch.org/whl/cu124
 ```
 
+### If you installed a newer PyTorch/CUDA build
+
+Follow the
+[official xformers installation instructions](https://github.com/facebookresearch/xformers#installing-xformers).
+The wheel index must match your PyTorch CUDA build. If you are unsure, give an
+AI assistant your operating system, Python version, PyTorch version (including
+the `+cu...` suffix), and GPU name, then ask it to derive the command from the
+official instructions.
+
+The Colab T4 field environment uses xformers `0.0.35` with PyTorch
+`2.11.0+cu128`.
+
 Verify:
 
 ```bash
-python -c "import xformers; print(xformers.__version__)"
+python -m xformers.info
 ```
 
-Expected result: `0.0.28.post3`. xformers is strongly recommended; without it,
-Nexfocus falls back to slower PyTorch attention. See the
-[xformers project](https://github.com/facebookresearch/xformers) for
-compatibility information.
+Confirm that `pytorch.cuda` is available and that at least one
+`memory_efficient_attention` implementation reports `available`. xformers is
+strongly recommended; without it, Nexfocus falls back to slower PyTorch
+attention.
 
 ---
 
@@ -198,21 +241,26 @@ the prerequisite header in
 
 ## Step 8: Set Up API Keys
 
-All tokens are optional. Open `.env_template` in a text editor:
+The CivitAI token is required for model downloads through the Nexfocus
+catalogue and CivitAI API. The Hugging Face and Zrok tokens are optional.
+
+Open `.env_template` in a text editor:
 
 - **Windows:** Notepad, Notepad++, or another text editor.
 - **Linux:** Text Editor, Gedit, Kate, or another text editor.
 
-Add the credentials you use, then choose **Save As** and save the file as
-`.env` in the Nexfocus repository folder. Ensure the editor does not append
-`.txt` to the filename. Leave credentials you do not use as empty strings;
-empty values remain disabled and do not cause authentication attempts.
+Add your CivitAI token and any optional credentials you use, then choose
+**Save As** and save the file as `.env` in the Nexfocus repository folder.
+Ensure the editor does not append `.txt` to the filename. Leave optional
+credentials you do not use as empty strings; empty values remain disabled and
+do not cause authentication attempts.
 
 Available keys:
 
 - `HUGGINGFACE_TOKEN` -- gated Hugging Face models:
   [generate a token](https://huggingface.co/settings/tokens).
-- `CIVITAI_TOKEN` -- authenticated CivitAI downloads:
+- `CIVITAI_TOKEN` -- **required** for catalogue/API model downloads from
+  CivitAI:
   [generate an API key](https://civitai.com/user/account).
 - `ZROK_TOKEN` -- optional Colab tunnel:
   [manage zrok credentials](https://api.zrok.io).
@@ -220,6 +268,12 @@ Available keys:
 Reopen `.env` in the text editor and confirm that it contains the
 `CIVITAI_TOKEN`, `HUGGINGFACE_TOKEN`, and `ZROK_TOKEN` lines and is saved in
 the same folder as `launch.py`.
+
+Without `CIVITAI_TOKEN`, Nexfocus cannot download CivitAI models through its
+catalogue. Manual downloads from the CivitAI website are possible, but the
+filename and destination must match Nexfocus's catalogue expectations. A file
+saved under a different name or model directory may not be recognized, so
+configuring the token and using the in-app catalogue is strongly recommended.
 
 ---
 
@@ -240,6 +294,43 @@ launch.bat
 The launcher reports `[OK]`, `[WARN]`, or `[FAIL]` for every check. It installs
 Aria2 automatically when possible and does not install the other prerequisites.
 If all hard requirements pass, it starts Nexfocus.
+
+### Optional: Create a Desktop Shortcut
+
+On Windows, you can double-click `launch.bat` in the Nexfocus repository
+whenever you want to start the application. To make a desktop shortcut:
+
+1. Open the Nexfocus repository in File Explorer.
+2. Right-click `launch.bat`. On Windows 11, select **Show more options** if
+   needed.
+3. Select **Send to > Desktop (create shortcut)**.
+4. On the desktop, right-click the new shortcut and select **Properties**.
+5. On the **Shortcut** tab, select **Change Icon > Browse**, then choose
+   `assets\images\Nexfocus_icon.ico` from the Nexfocus repository.
+6. Rename the shortcut to **Nexfocus** if desired.
+
+Linux desktops use `.desktop` launcher files instead of Windows shortcuts.
+Open a text editor, paste the following block, and replace every
+`/absolute/path/to/Nexfocus` with the full path to your cloned repository:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Nexfocus
+Comment=Launch Nexfocus
+Exec="/absolute/path/to/Nexfocus/launch.sh"
+Path=/absolute/path/to/Nexfocus
+Icon=/absolute/path/to/Nexfocus/assets/images/Nexfocus_icon.png
+Terminal=true
+Categories=Graphics;
+```
+
+Save the file as `Nexfocus.desktop` on your desktop. Then right-click it and
+enable **Allow executing file as program**, **Allow Launching**, or
+**Trust and Launch**. The wording varies between Linux desktop environments.
+If your desktop does not show launcher files, copy this section to an AI
+assistant and tell it which Linux distribution and desktop environment you
+use.
 
 The first launch downloads the selected model and required support files.
 Download time depends on your connection and model selection.

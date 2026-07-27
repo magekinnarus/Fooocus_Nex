@@ -224,6 +224,10 @@ FP16 T5-XXL encoder is about 9.5 GB, plus supporting models and dependencies.
 > If the next scout mission (a native C++ tensor and memory layer) succeeds,
 > it will remove the PyTorch dependency that limits us to NVIDIA hardware.
 
+The validated software floor is PyTorch `2.5.1+cu124`. Newer compatible
+PyTorch/CUDA and xformers builds are supported; see
+[INSTALL.md](INSTALL.md) for the baseline and current-build paths.
+
 ### Quick Start
 
 1. Follow the step-by-step guide in [INSTALL.md](INSTALL.md).
@@ -235,6 +239,10 @@ FP16 T5-XXL encoder is about 9.5 GB, plus supporting models and dependencies.
 The launcher verifies Python 3.10+, the virtual environment, PyTorch with
 CUDA, xformers, and uv. It installs only Aria2; all other installation remains
 explicit in INSTALL.md.
+
+A CivitAI API token is required for catalogue-driven CivitAI model downloads.
+See [INSTALL.md](INSTALL.md) for credential setup. Manually downloaded files
+must use the filename and destination expected by the Nexfocus catalogue.
 
 > **Why no portable version?** A portable bundle locks the environment to a
 > fixed configuration, makes components and settings harder to change, and
