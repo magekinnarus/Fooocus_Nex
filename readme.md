@@ -204,8 +204,7 @@ Nexfocus remains the completed application produced by the first expedition. The
  
  ### System Requirements
  
- All configurations require an NVIDIA GPU with updated drivers. PyTorch bundles
- its own CUDA runtime -- a separate CUDA Toolkit installation is not needed.
+ All configurations require an NVIDIA GPU with updated drivers.
  
  | Workload | GPU Minimum | RAM Minimum | Notes |
  |:---|:---|:---|:---|
@@ -216,14 +215,11 @@ Nexfocus remains the completed application produced by the first expedition. The
  | Flux Fill Streaming (T5 CPU resident) | GTX 1050 3 GB | 45 GB | Faster prompt encoding |
  | Flux Fill GPU Resident + T5 CPU | Higher-headroom GPU | 32 GB | |
  
-Expected disk usage: approximately 30 GB for models and dependencies
-(SDXL checkpoint ~6.5 GB, Flux Fill ~12.7 GB, T5-XXL ~9.5 GB, plus
-supporting models).
+Expected disk usage: models and dependencies (SDXL checkpoint ~6.5 GB, Flux Fill ~12.7 GB, T5-XXL ~9.5 GB, plus supporting models).
 
  > **NVIDIA GPUs only.** Nexfocus currently supports NVIDIA GPUs exclusively.
  > If the next scout mission (a native C++ tensor and memory layer) succeeds,
- > it will remove the PyTorch dependency that restricts us to NVIDIA hardware,
- > opening the door to AMD, Intel, and other GPU platforms.
+ > it will remove the PyTorch dependency that limits us to NVIDIA hardware.
  
 ### Quick Start
 
@@ -233,16 +229,15 @@ supporting models).
    **Windows:** `launch.bat`
     **Linux:** `./launch.sh`
  
- The launch script checks that Python, the virtual environment, PyTorch with
- CUDA, xformers, uv, and Aria2 are correctly installed, then starts the
- application. It does not install anything -- all installation steps are in
- INSTALL.md.
+ The launch script checks that Python, the virtual environment, PyTorch with CUDA, xformers, uv are correctly installed, then starts the application. It does not install anything other than Aria2, all installation steps are in INSTALL.md.
+
+  > **Why no portable version?** A portable bundle locks the environment to a fixed configuration, making it difficult to add components or adjust settings. It is also unnecessarily heavy, packaging an entire Python installation that most users already have. Following the steps in the installtion guide gives you a working setup you actually understand -- which makes it easier to tweak, troubleshoot, or adapt later.
  
 ### Run on Google Colab
  
  | Colab | Info |
  | --- | --- |
- | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J7ZF8gu2fquNAcrhsw0U5ITM2fp2muhtl#scrollTo=g8uPGq2Fgd5U) | Nexfocus Official |
+ | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J7ZF8gu2fquNAcrhsw0U5ITMfp2muhtl?usp=sharing) | Nexfocus Official |
  
  No local installation required. The notebook handles all setup automatically.
  
@@ -259,8 +254,7 @@ supporting models).
  
 ## Credits and License
 
-Nexfocus originated as a fork of [Fooocus](https://github.com/lllyasviel/Fooocus) by
-[lllyasviel](https://github.com/lllyasviel). We are grateful to its authors and to the wider open-source generative-AI community whose work made this expedition possible.
+Nexfocus originated as a fork of [Fooocus](https://github.com/lllyasviel/Fooocus) by [lllyasviel](https://github.com/lllyasviel). We are grateful to its authors and to the wider open-source generative-AI community whose work made this expedition possible.
 
 The project was developed through human-AI pair programming: the visual and systems intuition of an artist working with the implementation and analytical reach of agentic AI collaborators.
 
