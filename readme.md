@@ -200,6 +200,63 @@ Nexfocus remains the completed application produced by the first expedition. The
 
 ---
 
+ ## Installation
+ 
+ ### System Requirements
+ 
+ All configurations require an NVIDIA GPU with updated drivers. PyTorch bundles
+ its own CUDA runtime -- a separate CUDA Toolkit installation is not needed.
+ 
+ | Workload | GPU Minimum | RAM Minimum | Notes |
+ |:---|:---|:---|:---|
+ | SDXL Streaming | GTX 1050 3 GB | 32 GB | Default for GPUs with < 8 GB VRAM |
+ | SDXL GPU Resident + CPU Text | 8 GB | 32 GB | |
+ | SDXL GPU Resident + GPU Text | 12 GB | 16 GB | |
+ | Flux Fill Streaming (T5 disk-paged) | GTX 1050 3 GB | 32 GB | Default for all GPUs |
+ | Flux Fill Streaming (T5 CPU resident) | GTX 1050 3 GB | 45 GB | Faster prompt encoding |
+ | Flux Fill GPU Resident + T5 CPU | Higher-headroom GPU | 32 GB | |
+ 
+Expected disk usage: approximately 30 GB for models and dependencies
+(SDXL checkpoint ~6.5 GB, Flux Fill ~12.7 GB, T5-XXL ~9.5 GB, plus
+supporting models).
+
+ > **NVIDIA GPUs only.** Nexfocus currently supports NVIDIA GPUs exclusively.
+ > If the next scout mission (a native C++ tensor and memory layer) succeeds,
+ > it will remove the PyTorch dependency that restricts us to NVIDIA hardware,
+ > opening the door to AMD, Intel, and other GPU platforms.
+ 
+### Quick Start
+
+ 1. Follow the step-by-step guide in [INSTALL.md](INSTALL.md).
+ 2. Run the launch script to verify and start:
+ 
+   **Windows:** `launch.bat`
+    **Linux:** `./launch.sh`
+ 
+ The launch script checks that Python, the virtual environment, PyTorch with
+ CUDA, xformers, uv, and Aria2 are correctly installed, then starts the
+ application. It does not install anything -- all installation steps are in
+ INSTALL.md.
+ 
+### Run on Google Colab
+ 
+ | Colab | Info |
+ | --- | --- |
+ | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1J7ZF8gu2fquNAcrhsw0U5ITM2fp2muhtl#scrollTo=g8uPGq2Fgd5U) | Nexfocus Official |
+ 
+ No local installation required. The notebook handles all setup automatically.
+ 
+---
+ 
+ ## Documentation
+ 
+ - [INSTALL.md](INSTALL.md) -- Full installation guide (Windows, Linux, Colab)
+ - [HOTKEYS.md](HOTKEYS.md) -- Keyboard shortcuts and navigation controls
+ - [CONTRIBUTING.md](CONTRIBUTING.md) -- Developer guidelines and test contract
+ - [CHANGELOG.md](CHANGELOG.md) -- Version history and key milestones
+
+ ---
+ 
 ## Credits and License
 
 Nexfocus originated as a fork of [Fooocus](https://github.com/lllyasviel/Fooocus) by

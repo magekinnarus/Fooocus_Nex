@@ -1,3 +1,8 @@
+ # PyTorch and xformers must be installed BEFORE running this file.
+ # Run launch.bat (Windows) or launch.sh (Linux), or see INSTALL.md.
+ # Installing this file without PyTorch present may pull a CPU-only
+ # PyTorch as a transitive dependency.
+ 
 torchsde==0.2.6
 einops==0.8.0
 transformers>=4.42.4
