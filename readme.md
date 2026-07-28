@@ -172,18 +172,6 @@ The common thread is ownership. Frameworks remain useful mechanisms, but Nexfocu
 
 ---
 
-## Chaotic Systems and the Limits of a Universal Harness
-
-Chaotic systems are highly sensitive to initial conditions. Although their evolution may follow deterministic rules, small differences can be amplified through iteration into substantially different trajectories. The resulting patterns are shaped by initial conditions, boundary conditions, and environmental pressures rather than controlled by prescribing an exact endpoint.
-
-Generative AI has a similar practical character. With a fixed seed and execution state, a run may be repeatable, yet small changes to conditioning, masking, references, sampling, or model state can redirect its trajectory. Useful control therefore comes from shaping the environment around the iteration. Prompts, LoRAs, ControlNets, reference images, and inpainting masks each steer a different dimension of the process. A useful environment must allow these factors to operate independently while also coordinating their interactions. No single universal harness can replace that specificity.
-
-The expedition found the same pattern in execution. There is no single useful operating point for every combination of model, task, VRAM, RAM, storage, and transfer bandwidth. Nexfocus responds with locally effective worker assemblies, each adapted to its environment while honoring a shared contract.
-
-Much of contemporary AI development emphasizes scaling and increasingly universal frameworks. Scaling is powerful, and shared frameworks make complex systems accessible, but neither solves every problem of steering. LLMs reveal the same pressure: more parameters and larger contexts do not by themselves provide the right tools, memory, retrieval, or interaction structure for every task. Our experience suggests that future gains will also come from better environments—systems in which specialized forms of control can operate independently, interact deliberately, and adapt to usage conditions.
-
----
-
 ## The Next Scout Mission: Beneath PyTorch
 
 ![next_mission](assets/images/next_scout.jpg)
@@ -208,13 +196,13 @@ All configurations require an NVIDIA GPU with updated drivers.
 
 | Workload | GPU Minimum | RAM Minimum | Notes |
 |:---|:---|:---|:---|
-| SDXL Streaming | GTX 1050, 3 GB | 32 GB | Default below 8 GB VRAM |
-| SDXL GPU Resident + CPU Text | 8 GB | 32 GB | Design target; expected to work but not physically verified. Select streaming if issues arise |
-| SDXL GPU Resident + GPU Text | 16 GB | 16 GB | 16 GB GPU floor |
-| Flux Fill Streaming + T5 disk-paged | GTX 1050, 3 GB | 32 GB | Disk-paged T5 is the default text posture |
-| Flux Fill Streaming + T5 CPU resident | GTX 1050, 3 GB | 45 GB | Optional faster prompt encoding |
-| Flux Fill GPU resident + T5 disk-paged | 16 GB | 12.7 GB | Default text posture; validated on Colab Free T4 |
-| Flux Fill GPU resident + T5 CPU resident | 16 GB | 32 GB | Optional higher-RAM path |
+| SDXL Streaming | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 32&nbsp;GB | Default below 8 GB VRAM |
+| SDXL GPU Resident<br>+ CPU Text | 8&nbsp;GB | 32&nbsp;GB | Design target; expected to work but not physically verified. Select streaming if issues arise |
+| SDXL GPU Resident<br>+ GPU Text | 16&nbsp;GB | 16&nbsp;GB | 16 GB GPU floor |
+| Flux Fill Streaming<br>+ T5 disk-paged | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 32&nbsp;GB | Disk-paged T5 is the default text posture |
+| Flux Fill Streaming<br>+ T5 CPU resident | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 45&nbsp;GB | Optional faster prompt encoding |
+| Flux Fill GPU resident<br>+ T5 disk-paged | 16&nbsp;GB | 12.7&nbsp;GB | Default text posture; validated on Colab Free T4 |
+| Flux Fill GPU resident<br>+ T5 CPU resident | 16&nbsp;GB | 32&nbsp;GB | Optional higher-RAM path |
 
 Storage depends on how many checkpoints and LoRAs you install. For orientation,
 one SDXL checkpoint is about 6.5 GB, Flux Fill is about 12.7 GB, and the
