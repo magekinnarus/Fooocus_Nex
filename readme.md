@@ -196,13 +196,13 @@ All configurations require an NVIDIA GPU with updated drivers.
 
 | Workload | GPU Minimum | RAM Minimum | Notes |
 |:---|:---|:---|:---|
-| SDXL Streaming | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 32&nbsp;GB | Default below 8 GB VRAM |
-| SDXL GPU Resident<br>+ CPU Text | 8&nbsp;GB | 32&nbsp;GB | Design target; expected to work but not physically verified. Select streaming if issues arise |
-| SDXL GPU Resident<br>+ GPU Text | 16&nbsp;GB | 16&nbsp;GB | 16 GB GPU floor |
-| Flux Fill Streaming<br>+ T5 disk-paged | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 32&nbsp;GB | Disk-paged T5 is the default text posture |
-| Flux Fill Streaming<br>+ T5 CPU resident | GTX&nbsp;1050,&nbsp;3&nbsp;GB | 45&nbsp;GB | Optional faster prompt encoding |
-| Flux Fill GPU resident<br>+ T5 disk-paged | 16&nbsp;GB | 12.7&nbsp;GB | Default text posture; validated on Colab Free T4 |
-| Flux Fill GPU resident<br>+ T5 CPU resident | 16&nbsp;GB | 32&nbsp;GB | Optional higher-RAM path |
+| SDXL Streaming | GTX&nbsp;1050<br>3&nbsp;GB | 32&nbsp;GB | Default below 8 GB VRAM |
+| SDXL&nbsp;GPU&nbsp;Resident<br>+ CPU Text | 8&nbsp;GB | 32&nbsp;GB | Design target; expected to work but not physically verified. Select streaming if issues arise |
+| SDXL&nbsp;GPU&nbsp;Resident<br>+ GPU Text | 16&nbsp;GB | 16&nbsp;GB | 16 GB GPU floor |
+| Flux&nbsp;Fill&nbsp;Streaming<br>+ T5 disk-paged | GTX&nbsp;1050<br>3&nbsp;GB | 32&nbsp;GB | Disk-paged T5 is the default text posture |
+| Flux&nbsp;Fill&nbsp;Streaming<br>+ T5 CPU resident | GTX&nbsp;1050<br>3&nbsp;GB | 45&nbsp;GB | Optional faster prompt encoding |
+| Flux&nbsp;Fill&nbsp;GPU&nbsp;resident<br>+ T5 disk-paged | 16&nbsp;GB | 12.7&nbsp;GB | Default text posture; validated on Colab Free T4 |
+| Flux&nbsp;Fill&nbsp;GPU&nbsp;resident<br>+ T5 CPU resident | 16&nbsp;GB | 32&nbsp;GB | Optional higher-RAM path |
 
 Storage depends on how many checkpoints and LoRAs you install. For orientation,
 one SDXL checkpoint is about 6.5 GB, Flux Fill is about 12.7 GB, and the
