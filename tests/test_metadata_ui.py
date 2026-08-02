@@ -36,7 +36,7 @@ def test_load_parameter_button_click_uses_base_model_specific_resolution_labels(
     monkeypatch.setattr(
         metadata_ui.modules.config,
         'coerce_active_base_model_selection',
-        lambda base_model_name: 'sdxl/base/base_model.safetensors',
+        lambda base_model_name, **kwargs: 'sdxl/base/base_model.safetensors',
     )
     monkeypatch.setattr(
         metadata_ui.modules.config,
@@ -54,6 +54,69 @@ def test_load_parameter_button_click_uses_base_model_specific_resolution_labels(
 
     assert results[metadata_ui.METADATA_OUTPUT_INDEX['resolution']] == '1024x1024 (1:1)'
     assert results[metadata_ui.METADATA_OUTPUT_INDEX['base_model']] == 'sdxl/base/base_model.safetensors'
+
+
+def test_load_parameter_button_click_resolves_capture_model_stems(monkeypatch):
+    monkeypatch.setattr(
+        metadata_ui.modules.config,
+        'model_filenames',
+        ['sdxl/base/innovision_v10.safetensors', 'sdxl/illustrious/beretMixReal_v80.safetensors'],
+    )
+    monkeypatch.setattr(
+        metadata_ui.modules.config,
+        'lora_filenames',
+        [
+            'SDXL/illustrious/MythMagicalLines.safetensors',
+            'SDXL/illustrious/PeoplesWorks_v9.safetensors',
+            'SDXL/illustrious/stabilizer_v1.safetensors',
+        ],
+    )
+    monkeypatch.setattr(metadata_ui.modules.config, 'resolve_model_catalog_entry', lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        metadata_ui.modules.config,
+        'get_aspect_ratio_labels_for_model',
+        lambda base_model_name: ['832x1216 (13:19)'],
+    )
+
+    results = metadata_ui.load_parameter_button_click(
+        {
+            'metadata_version': 2,
+            'workflow': 'txt2img',
+            'base_model': 'beretMixReal_v80',
+            'resolution': '(832, 1216)',
+            'loras': [
+                ['MythMagicalLines', 0.5],
+                ['PeoplesWorks_v9', 0.6],
+                ['stabilizer_v1', 0.2],
+            ],
+        },
+        False,
+    )
+
+    assert results[metadata_ui.METADATA_OUTPUT_INDEX['base_model']] == 'sdxl/illustrious/beretMixReal_v80.safetensors'
+    assert results[metadata_ui.METADATA_OUTPUT_INDEX['loras_start']:metadata_ui.METADATA_OUTPUT_INDEX['loras_start'] + 9] == [
+        True,
+        'SDXL/illustrious/MythMagicalLines.safetensors',
+        0.5,
+        True,
+        'SDXL/illustrious/PeoplesWorks_v9.safetensors',
+        0.6,
+        True,
+        'SDXL/illustrious/stabilizer_v1.safetensors',
+        0.2,
+    ]
+
+
+def test_load_parameter_button_click_preserves_checkpoint_when_metadata_model_is_unknown(monkeypatch):
+    monkeypatch.setattr(metadata_ui.modules.config, 'model_filenames', ['sdxl/base/innovision_v10.safetensors'])
+    monkeypatch.setattr(metadata_ui.modules.config, 'resolve_model_catalog_entry', lambda *args, **kwargs: None)
+
+    results = metadata_ui.load_parameter_button_click(
+        {'metadata_version': 2, 'workflow': 'txt2img', 'base_model': 'missing_model'},
+        False,
+    )
+
+    assert results[metadata_ui.METADATA_OUTPUT_INDEX['base_model']] == {'__type__': 'update'}
 
 
 def test_load_parameter_button_click_does_not_emit_oversized_overwrite_resolution(monkeypatch):

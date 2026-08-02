@@ -33,6 +33,15 @@
   /* Narrow when minimized */
 }
 
+.floating-panel.minimized .panel-controls > button:not([id$="-toggle"]):not([id$="-close"]) {
+  display: none;
+}
+
+.floating-panel.minimized .panel-controls [id$="-toggle"] {
+  color: #fff;
+  min-width: 58px;
+}
+
 .floating-panel.drag-over {
   border: 2px dashed #00ffc3;
   background: rgba(0, 255, 195, 0.05);

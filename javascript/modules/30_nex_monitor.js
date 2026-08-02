@@ -93,9 +93,17 @@ class NexMonitor {
         document.addEventListener('mouseup', () => this.stopDragging());
 
         // Controls
-        this.panel.querySelector('#monitor-panel-toggle').addEventListener('click', () => {
-            this.isMinimized = this.panel.classList.toggle('minimized');
+        const toggleButton = this.panel.querySelector('#monitor-panel-toggle');
+        const setMinimized = (isMinimized) => {
+            this.isMinimized = isMinimized;
+            this.panel.classList.toggle('minimized', isMinimized);
+            toggleButton.textContent = isMinimized ? 'Restore' : '－';
+            toggleButton.title = isMinimized ? 'Restore Dashboard' : 'Minimize';
+            toggleButton.setAttribute('aria-label', toggleButton.title);
             if (this.isMinimized) snapToDefault();
+        };
+        toggleButton.addEventListener('click', () => {
+            setMinimized(!this.panel.classList.contains('minimized'));
         });
 
         this.panel.querySelector('#monitor-panel-close').addEventListener('click', () => {
@@ -109,7 +117,7 @@ class NexMonitor {
             if (launcher) {
                 this.panel.style.display = 'flex';
                 localStorage.setItem('monitor-panel-hidden', 'false');
-                this.panel.classList.remove('minimized');
+                setMinimized(false);
                 this.panel.style.transform = 'scale(1.05)';
                 setTimeout(() => this.panel.style.transform = 'scale(1)', 200);
             }

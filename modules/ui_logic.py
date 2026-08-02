@@ -721,7 +721,13 @@ def update_model_dependent_choices(base_model_name, current_aspect_ratio, curren
     lora_choices = get_active_lora_choices_for_model(base_model_name, *current_lora_models)
     lora_updates = []
     for current_lora_model in current_lora_models:
-        value = current_lora_model if current_lora_model in lora_choices else 'None'
+        value = modules.config.resolve_dropdown_choice(
+            current_lora_model,
+            lora_choices,
+            folder_paths=modules.config.paths_lora_discovery,
+            root_keys=('loras',),
+        )
+        value = value or 'None'
         lora_updates.append(gr.update(choices=lora_choices, value=value))
     return [aspect_ratio_update, gr.update(choices=vae_choices, value=vae_value)] + lora_updates
 

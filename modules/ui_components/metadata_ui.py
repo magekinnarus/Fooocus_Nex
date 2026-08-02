@@ -173,8 +173,18 @@ def get_lora(key: str, fallback: str | None, source_dict: dict, results: list):
     try:
         val = source_dict.get(key, source_dict.get(fallback))
         if isinstance(val, (list, tuple)) and len(val) >= 2:
+            name = val[0]
+            if name not in {'', 'None', None} and modules.config.lora_filenames:
+                name = modules.config.resolve_dropdown_choice(
+                    name,
+                    modules.config.lora_filenames,
+                    folder_paths=modules.config.paths_lora_discovery,
+                    root_keys=('loras',),
+                )
+                if name is None:
+                    raise ValueError('LoRA metadata identity is not installed')
             results.append(True)
-            results.append(val[0])
+            results.append(name)
             results.append(float(val[1]))
             return
         split_data = str(val).split(' : ')
@@ -185,6 +195,15 @@ def get_lora(key: str, fallback: str | None, source_dict: dict, results: list):
             enabled = split_data[0] == 'True'
             name = split_data[1]
             weight = split_data[2]
+        if name not in {'', 'None'} and modules.config.lora_filenames:
+            name = modules.config.resolve_dropdown_choice(
+                name,
+                modules.config.lora_filenames,
+                folder_paths=modules.config.paths_lora_discovery,
+                root_keys=('loras',),
+            )
+            if name is None:
+                raise ValueError('LoRA metadata identity is not installed')
         weight = float(weight)
         results.append(enabled)
         results.append(name)
@@ -233,8 +252,14 @@ def _load_parameter_button_click(raw_metadata: dict | str, is_generating: bool, 
     base_model_name = loaded_parameter_dict.get('base_model')
     active_base_model_name = None
     if isinstance(base_model_name, str) and workflow in ['txt2img', 'inpaint_sdxl', 'outpaint_sdxl', 'super_upscale', 'color_enhance']:
-        active_base_model_name = modules.config.coerce_active_base_model_selection(base_model_name)
-        loaded_parameter_dict['base_model'] = active_base_model_name
+        active_base_model_name = modules.config.coerce_active_base_model_selection(
+            base_model_name,
+            fallback_to_first=False,
+        )
+        if active_base_model_name is None:
+            loaded_parameter_dict.pop('base_model', None)
+        else:
+            loaded_parameter_dict['base_model'] = active_base_model_name
 
     resolution_labels = modules.config.get_aspect_ratio_labels_for_model(
         active_base_model_name or modules.config.default_base_model_name

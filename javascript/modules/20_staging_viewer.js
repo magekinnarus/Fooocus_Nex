@@ -339,12 +339,19 @@
         panel.querySelector('#staging-panel-refresh').addEventListener('click', fetchImages);
         panel.querySelector('#staging-panel-clear').addEventListener('click', clearStaging);
 
-        panel.querySelector('#staging-panel-toggle').addEventListener('click', () => {
-            const isMinimized = panel.classList.toggle('minimized');
+        const toggleButton = panel.querySelector('#staging-panel-toggle');
+        const setMinimized = (isMinimized) => {
+            panel.classList.toggle('minimized', isMinimized);
+            toggleButton.textContent = isMinimized ? 'Restore' : '-';
+            toggleButton.title = isMinimized ? 'Restore Palette' : 'Minimize';
+            toggleButton.setAttribute('aria-label', toggleButton.title);
             if (isMinimized) {
                 // Snap on minimize
                 snapToDefault();
             }
+        };
+        toggleButton.addEventListener('click', () => {
+            setMinimized(!panel.classList.contains('minimized'));
         });
 
         panel.querySelector('#staging-panel-close').addEventListener('click', () => {
@@ -387,7 +394,11 @@
             return;
         }
         panel.style.display = 'flex';
+        const toggleButton = panel.querySelector('#staging-panel-toggle');
         panel.classList.remove('minimized');
+        toggleButton.textContent = '-';
+        toggleButton.title = 'Minimize';
+        toggleButton.setAttribute('aria-label', 'Minimize');
         const wasDirty = panelDirty;
         if (wasDirty) {
             panelDirty = false;

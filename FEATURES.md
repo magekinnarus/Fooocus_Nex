@@ -6,17 +6,14 @@ become one of several queued candidates, move through external editing,
 receive structural or color guidance, expand beyond its original canvas, and
 finish as an upscaled image whose generation settings remain reusable.
 
-The video below shows that complete flow in motion. This page serves a
-different purpose: it pauses at each workspace so that its role, controls, and
-place in the larger process are easy to understand.
-
-[![Nexfocus walkthrough showing the connected image workflow](assets/images/walkthrough/video-thumbnail.png)](assets/images/walkthrough/Nexfocus_walkthrough.mp4)
-
-[Watch the fullscreen workflow walkthrough](assets/images/walkthrough/Nexfocus_walkthrough.mp4).
+The connected workflow video is featured in the README's [Feature
+Walkthrough](readme.md#feature-walkthrough). This page serves a different
+purpose: it pauses at each workspace so that its role, controls, and place in
+the larger process are easy to understand.
 
 ## 1. Preview and Queue
 
-![Nexfocus Preview workspace showing a running generation and its task queue](assets/images/walkthrough/01-preview.png)
+![Nexfocus Preview workspace showing a running generation and its task queue](assets/images/walkthrough/01-preview.jpg)
 
 **Preview** is the main generation surface. It keeps the active image large
 enough to evaluate while showing diffusion progress, the current workflow,
@@ -31,6 +28,15 @@ completed task keeps its output and identifying parameters together, and its
 images can be sent directly to the Staging Palette for selection or further
 work.
 
+Preview and queue presentation are also designed for bandwidth-limited public
+tunnels such as Cloudflare Tunnel or Gradio public sharing. The live Preview
+request is bounded to the visible panel dimensions, so the server can return a
+smaller image instead of sending a full-resolution frame through the tunnel.
+Completed queue entries keep the runtime state URL-based rather than embedding
+image bytes in every polling response; each thumbnail remains a link to its
+full-resolution image. This keeps the frequently refreshed queue metadata
+light while preserving access to the original result when it is needed.
+
 Nexfocus also tracks reusable work at a finer level than the visible task.
 When a later request keeps the same model and guidance inputs, unchanged model
 components and prepared guidance artifacts can remain reusable. A prompt-only
@@ -39,7 +45,7 @@ unchanged ControlNet preprocessor result or warm UNet to be recreated.
 
 ## 2. Model Browser
 
-![Nexfocus Model Browser with installed models, downloadable catalogue entries, and active model controls](assets/images/walkthrough/02-model-browser.png)
+![Nexfocus Model Browser with installed models, downloadable catalogue entries, and active model controls](assets/images/walkthrough/02-model-browser.jpg)
 
 The **Model Browser** brings model discovery and session setup into the
 application. Checkpoints, LoRAs, and other catalogue assets can be browsed by
@@ -61,7 +67,7 @@ configuration.
 
 ## 3. Upscale
 
-![Nexfocus Upscale workspace showing the source image, Upscale Target, and three processing methods](assets/images/walkthrough/03-upscale.png)
+![Nexfocus Upscale workspace showing the source image, Upscale Target, and three processing methods](assets/images/walkthrough/03-upscale.jpg)
 
 The **Upscale** workspace provides three related but distinct finishing paths.
 **Upscale** runs a selected dedicated upscale model and exposes its scale
@@ -83,11 +89,11 @@ low-frequency color with the target's high-frequency structure. The result
 retains the detail of the dedicated upscaler while recovering richer and more
 coherent color from SDXL.
 
-![Matched crop comparing the dedicated upscale result with Color Enhancement](assets/images/walkthrough/color_enhancement_example.jpg)
+![Color Enhanced and Upscaled outputs shown together in the Compare Viewer](assets/images/walkthrough/13-color_enhancement_example.jpg)
 
 ## 4. Remove
 
-![Nexfocus Remove workspace showing the base image, mask tools, removal passes, and edge controls](assets/images/walkthrough/04-remove.png)
+![Nexfocus Remove workspace showing both removal passes and red-circled holes in the mask](assets/images/walkthrough/04-remove.jpg)
 
 The **Remove** workspace treats background and object removal as preparation
 for continued artistic work, not merely as one-click cleanup. Background
@@ -101,15 +107,23 @@ mask dilation and blur controls shaping the region handed to the selected
 route. The optional prompt can tell Flux Fill what should replace the removed
 area rather than leaving that decision implicit.
 
-The practical result is a clean layer boundary. Subjects can move into a
-composite, unwanted objects can be replaced, and the prepared image can go
-through Staging to GIMP or directly into another Nexfocus image workflow.
-Layer separation and compositing are fundamental artist operations, so these
-tools are part of the main workflow rather than an accessory.
+The delivered capture intentionally shows **Background pass** and **Object
+pass** enabled together. The red circles mark holes in the resulting mask.
+This is the danger of the combined path: the two passes can interact in ways
+that leave missing regions. For predictable isolation, use one pass at a time
+when possible, and always inspect or refine the mask before running a combined
+pass.
+
+When a single pass is selected and the mask has been reviewed, the practical
+result is a clean layer boundary. Subjects can move into a composite,
+unwanted objects can be replaced, and the prepared image can go through
+Staging to GIMP or directly into another Nexfocus image workflow. Layer
+separation and compositing are fundamental artist operations, so these tools
+are part of the main workflow rather than an accessory.
 
 ## 5. ControlNet and Image Prompt
 
-![Nexfocus Controlnet workspace with structural PyraCanny and Depth guidance configured in separate slots](assets/images/walkthrough/05-controlnet.png)
+![Nexfocus Controlnet workspace with Depth and CPDS structural guidance configured in separate slots](assets/images/walkthrough/05-controlnet.jpg)
 
 The visible tab is named **Controlnet**. It provides four independent guidance
 slots, each with a channel, method, **Stop At**, and **Weight**. Structural
@@ -131,7 +145,7 @@ a separate route and does not accept the SDXL ControlNet overlay.
 
 ## 6. Outpaint
 
-![Nexfocus Outpaint workspace showing direction selection and prepared BB Image and BB Mask assets](assets/images/walkthrough/06-outpaint.png)
+![Nexfocus Outpaint workspace showing direction selection and prepared BB Image and BB Mask assets](assets/images/walkthrough/06-outpaint.jpg)
 
 The **Outpaint** workspace extends an image beyond its current canvas. The
 artist chooses a direction, an expansion size, a denoising
@@ -152,7 +166,7 @@ shows how little detail is needed before the model takes over.
 
 ## 7. Inpaint
 
-![Nexfocus Inpaint workspace showing the Context Mask, BB Image, BB Mask, and route controls](assets/images/walkthrough/07-inpaint.png)
+![Nexfocus Inpaint workspace showing the Context Mask, BB Image, BB Mask, and route controls](assets/images/walkthrough/07-inpaint.jpg)
 
 The **Inpaint** workspace separates region selection from inference context.
 First, the artist paints a **Context Mask** over the source image. That mask
@@ -178,7 +192,7 @@ This exposed-context workflow is also the basis of
 
 ## 8. Metadata
 
-![Nexfocus Metadata workspace with an image loaded, embedded parameters displayed, and Apply Metadata available](assets/images/walkthrough/08-metadata.png)
+![Nexfocus Metadata workspace with an image loaded, embedded parameters displayed, and Apply Metadata available](assets/images/walkthrough/08-metadata.jpg)
 
 The **Metadata** workspace turns a saved Nexfocus image back into a reusable
 generation record. Dropping an image into the metadata slot reveals its
@@ -200,7 +214,7 @@ editing can be collected there without changing the active generation tab.
 Staging is deliberately separate from the task queue: the queue records work,
 while Staging holds the images selected for the next artistic decision.
 
-![Nexfocus Staging Palette containing selected workflow images](assets/images/walkthrough/09-staging-palette.png)
+![Nexfocus Staging workflow reference showing selected images, markers, and GIMP targeting](assets/images/walkthrough/09-staging-palette.jpg)
 
 Selected staged images can open in the **Compare Viewer**, where synchronized
 zoom and pan keep the same details aligned while candidates are inspected.
@@ -208,7 +222,7 @@ This is useful for evaluating pose, edge quality, facial detail, lighting, or
 small differences between seeds before choosing a source for inpaint,
 outpaint, or upscale.
 
-![Nexfocus Compare Viewer showing four generated candidates with synchronized inspection](assets/images/walkthrough/10-compare-viewer.png)
+![Nexfocus Compare Viewer showing four generated candidates with synchronized inspection](assets/images/walkthrough/10-compare-viewer.jpg)
 
 The companion GIMP plug-in completes the round trip. Images targeted in
 Staging can be received as GIMP layers, and the active edited layer can be
@@ -232,7 +246,7 @@ painting does not need finished edges, texture, or correct internal detail.
 It supplies position, approximate shape, local colors, and surrounding
 context; the model supplies the rendering.
 
-![Color Guidance example comparing a roughly painted BB Image with the rendered inpaint result](assets/images/walkthrough/color_guidance_example.jpg)
+![Color Guidance example comparing a rough painted guide with the rendered inpaint result](assets/images/walkthrough/12-color_guidance_example.jpg)
 
 Color Guidance and ControlNet solve different problems. ControlNet is useful
 when a formal edge, depth, pose, or reference-image signal should guide
@@ -255,7 +269,7 @@ bright region should interrupt a dark one. The outpaint prompt identifies the
 scene, the edited BB Image establishes its spatial organization and palette,
 and the original image supplies continuity.
 
-![Boundary-Guided Outpaint from automatic edge preparation through rough edited boundaries to the generated extension](assets/images/walkthrough/boundary_guidance_example.jpg)
+![Boundary-Guided Outpaint from automatic edge preparation through rough boundaries to the generated extension](assets/images/walkthrough/11-boundary_guidance_example.jpg)
 
 Once the edited BB Image and BB Mask return to Nexfocus, the model replaces
 the temporary guide with rendered architecture, materials, lighting,

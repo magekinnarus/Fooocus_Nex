@@ -53,6 +53,35 @@ def test_resolve_dropdown_choice_matches_catalog_selector(monkeypatch):
     assert resolved == 'sdxl/illustrious/beretMixReal_v100_Q8.gguf'
 
 
+def test_resolve_dropdown_choice_matches_portable_metadata_stem():
+    choices = ['sdxl/illustrious/beretMixReal_v80.safetensors']
+
+    resolved = config.resolve_dropdown_choice('beretMixReal_v80', choices)
+
+    assert resolved == 'sdxl/illustrious/beretMixReal_v80.safetensors'
+
+
+def test_resolve_dropdown_choice_does_not_guess_ambiguous_metadata_stem():
+    choices = [
+        'sdxl/base/shared_name.safetensors',
+        'sdxl/illustrious/shared_name.safetensors',
+    ]
+
+    resolved = config.resolve_dropdown_choice('shared_name', choices)
+
+    assert resolved is None
+
+
+def test_coerce_active_base_model_selection_can_preserve_current_value_when_metadata_is_unknown():
+    resolved = config.coerce_active_base_model_selection(
+        'missing_model',
+        ['sdxl/base/base_model.safetensors'],
+        fallback_to_first=False,
+    )
+
+    assert resolved is None
+
+
 def test_filter_supported_sdxl_base_model_choices_excludes_legacy_gguf_and_flux_entries():
     filtered = config.filter_supported_sdxl_base_model_choices(
         [

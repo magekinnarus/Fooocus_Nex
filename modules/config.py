@@ -114,6 +114,26 @@ def _build_model_selector_candidates(name_or_path, folder_paths):
     return candidates
 
 
+def _build_model_selector_aliases(name_or_path, folder_paths=()):
+    aliases = []
+
+    def add_alias(value):
+        normalized = _normalize_model_selector(value)
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+
+    for candidate in _build_model_selector_candidates(name_or_path, folder_paths):
+        add_alias(candidate)
+        basename = os.path.basename(candidate)
+        add_alias(basename)
+        candidate_stem = os.path.splitext(candidate)[0]
+        basename_stem = os.path.splitext(basename)[0]
+        add_alias(candidate_stem)
+        add_alias(basename_stem)
+
+    return aliases
+
+
 def resolve_model_catalog_entry(name_or_path, root_keys=('checkpoints', 'unet'), folder_paths=None):
     if folder_paths is None:
         folder_paths = paths_checkpoints
@@ -167,6 +187,32 @@ def resolve_dropdown_choice(name_or_path, choices, *, folder_paths=None, root_ke
     for candidate in candidates:
         if candidate in normalized_choices:
             return normalized_choices[candidate]
+
+    # Metadata intentionally stores portable filename stems while dropdowns
+    # use installed relative paths. Resolve those aliases only when they map
+    # to one unique choice; never guess between duplicate basenames/stems.
+    alias_choices = {}
+    ambiguous_aliases = set()
+    for choice in list(choices or []):
+        for alias in _build_model_selector_aliases(choice):
+            alias_key = alias.casefold()
+            existing = alias_choices.get(alias_key)
+            if existing is not None and existing != choice:
+                ambiguous_aliases.add(alias_key)
+                alias_choices.pop(alias_key, None)
+            elif alias_key not in ambiguous_aliases:
+                alias_choices[alias_key] = choice
+
+    candidate_aliases = []
+    for candidate in candidates:
+        for alias in _build_model_selector_aliases(candidate, folder_paths or []):
+            alias_key = alias.casefold()
+            if alias_key not in candidate_aliases:
+                candidate_aliases.append(alias_key)
+
+    for alias_key in candidate_aliases:
+        if alias_key not in ambiguous_aliases and alias_key in alias_choices:
+            return alias_choices[alias_key]
 
     return None
 
@@ -1207,12 +1253,12 @@ def filter_supported_sdxl_base_model_choices(candidates):
     return filtered
 
 
-def coerce_active_base_model_selection(name_or_path, choices=None):
+def coerce_active_base_model_selection(name_or_path, choices=None, *, fallback_to_first=True):
     active_choices = list(choices if choices is not None else model_filenames or [])
     active_choices = filter_supported_sdxl_base_model_choices(active_choices)
 
     if not active_choices:
-        return 'None'
+        return 'None' if fallback_to_first else None
 
     resolved = resolve_dropdown_choice(
         name_or_path,
@@ -1220,7 +1266,9 @@ def coerce_active_base_model_selection(name_or_path, choices=None):
         folder_paths=paths_checkpoints,
         root_keys=('checkpoints', 'unet'),
     )
-    return resolved or active_choices[0]
+    if resolved is not None:
+        return resolved
+    return active_choices[0] if fallback_to_first else None
 
 
 def _filter_model_choices_for_architecture(candidates, architecture, *, root_keys, folder_paths=None):

@@ -96,7 +96,6 @@
                 selectedByRoot: {},
                 drawer: null,
                 jobs: {},
-                pendingActivations: {},
                 status: '',
                 statusTone: 'info',
                 thumbnailRevision: 0,
@@ -377,7 +376,6 @@
                     }
                     if (completed) {
                         await this.refreshAllData();
-                        await this.finalizePendingActivations();
                     }
                 } catch (error) {
                     this.setStatus(error.message || 'Download polling failed.', 'error');
@@ -563,85 +561,6 @@
                 }
             }
             this.state.drawer.form = form;
-        }
-
-        resolveActivationConfig(rootKey, promptTarget = '') {
-            if (rootKey === 'embeddings') {
-                if (promptTarget === 'positive') {
-                    return { promptTarget: '#positive_prompt', label: 'positive prompt' };
-                }
-                if (promptTarget === 'negative') {
-                    return { promptTarget: '#negative_prompt', label: 'negative prompt' };
-                }
-                return null;
-            }
-            if (rootKey === 'checkpoints') {
-                return { targetKey: 'base_model', acceptedRoots: ['checkpoints'] };
-            }
-            if (rootKey === 'vae') return { targetKey: 'vae_model', acceptedRoots: ['vae'] };
-            if (rootKey === 'loras') return { targetKey: this.resolvePreferredLoraTarget(), acceptedRoots: ['loras'] };
-            return null;
-        }
-
-        async finalizePendingActivations() {
-            const pendingEntries = Object.entries(this.state.pendingActivations || {});
-            for (const [key, activation] of pendingEntries) {
-                const jobStates = (activation.jobIds || []).map((jobId) => this.state.jobs[jobId]?.status).filter(Boolean);
-                if (!jobStates.length) continue;
-                if (jobStates.some((status) => status === 'failed')) {
-                    delete this.state.pendingActivations[key];
-                    continue;
-                }
-                if (!jobStates.every((status) => status === 'succeeded')) continue;
-
-                if (activation.promptTarget) {
-                    this.insertEmbeddingIntoTarget(activation.token, activation.promptTarget, activation.label);
-                } else {
-                    await this.applyDropToTarget({ selector: activation.selector, rootKey: activation.rootKey, token: '' }, activation.targetKey, activation.acceptedRoots);
-                }
-                delete this.state.pendingActivations[key];
-            }
-        }
-
-        async activateAvailableSelector(selector, rootKey, promptTarget = '') {
-            if (!selector || !rootKey) return;
-            const activation = this.resolveActivationConfig(rootKey, promptTarget);
-            if (!activation) {
-                this.setStatus(rootKey === 'embeddings'
-                    ? 'Choose whether to insert the embedding into the positive or negative prompt.'
-                    : `Activate is not supported for ${rootKey}.`, 'warning');
-                return;
-            }
-            this.setStatus('Queueing download and activation...', 'info');
-            try {
-                const payload = await fetchJson('/api/models/download', {
-                    method: 'POST',
-                    body: JSON.stringify({ selector }),
-                });
-                const jobs = payload.jobs || [];
-                jobs.forEach((job) => { this.state.jobs[job.job_id] = job; });
-                if (!jobs.length) {
-                    await this.refreshAllData();
-                    if (activation.promptTarget) {
-                        this.insertEmbeddingIntoTarget(this.embeddingToken(selector), activation.promptTarget, activation.label);
-                    } else {
-                        await this.applyDropToTarget({ selector, rootKey, token: '' }, activation.targetKey, activation.acceptedRoots);
-                    }
-                    return;
-                }
-                this.state.pendingActivations[selector] = {
-                    selector,
-                    rootKey,
-                    token: this.embeddingToken((this.getRecordById(selector)?.name) || selector),
-                    ...activation,
-                    jobIds: jobs.map((job) => job.job_id),
-                };
-                this.setStatus(`Queued ${jobs.length} download${jobs.length === 1 ? '' : 's'} and will activate when ready.`, 'success');
-                this.startPollingJobs();
-                this.render();
-            } catch (error) {
-                this.setStatus(error.message || 'Failed to queue activation download.', 'error');
-            }
         }
 
         getRecordById(selector) {
@@ -1309,20 +1228,7 @@
                     </div>
                 `;
             } else if (selectable) {
-                if (record.root_key === 'embeddings') {
-                    actions = `
-                        <div class="nmb-card__actions">
-                            <button type="button" class="nmb-primary nmb-card__action" data-action="activate-available-positive" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Positive</button>
-                            <button type="button" class="nmb-secondary nmb-card__action" data-action="activate-available-negative" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Negative</button>
-                        </div>
-                    `;
-                } else {
-                    actions = `
-                        <div class="nmb-card__actions">
-                            <button type="button" class="nmb-primary nmb-card__action" data-action="activate-available" data-selector="${escapeHtml(record.id)}" data-root-key="${escapeHtml(record.root_key)}">Download + Apply</button>
-                        </div>
-                    `;
-                }
+                actions = '';
             }
 
             return `
@@ -1613,9 +1519,6 @@
             if (action === 'refresh-suggestions') return this.refreshSuggestions();
             if (action === 'choose-suggestion') return this.chooseSuggestion(actionNode.dataset.selector);
             if (action === 'apply-installed-default') return this.applyInstalledSelector(actionNode.dataset.selector, actionNode.dataset.rootKey);
-            if (action === 'activate-available') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey);
-            if (action === 'activate-available-positive') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey, 'positive');
-            if (action === 'activate-available-negative') return this.activateAvailableSelector(actionNode.dataset.selector, actionNode.dataset.rootKey, 'negative');
             if (action === 'insert-embedding-positive') return this.insertEmbeddingIntoTarget(actionNode.dataset.token, '#positive_prompt', 'positive prompt');
             if (action === 'insert-embedding-negative') return this.insertEmbeddingIntoTarget(actionNode.dataset.token, '#negative_prompt', 'negative prompt');
             if (action === 'pick-thumbnail-file') {

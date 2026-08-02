@@ -185,6 +185,29 @@ def test_update_model_dependent_choices_filters_incompatible_lora_values(monkeyp
     assert updates[3]['value'] == 'None'
 
 
+def test_update_model_dependent_choices_normalizes_metadata_lora_path_separators(monkeypatch):
+    monkeypatch.setattr(ui_logic, 'default_model_manager', FakeModelManager())
+    monkeypatch.setattr(
+        ui_logic.modules.config,
+        'get_aspect_ratio_labels_for_model',
+        lambda base_model_name: ['1024x1024 (1:1)'],
+    )
+    monkeypatch.setattr(
+        ui_logic.modules.config,
+        'get_default_aspect_ratio_label_for_model',
+        lambda base_model_name: '1024x1024 (1:1)',
+    )
+
+    updates = ui_logic.update_model_dependent_choices(
+        'sdxl/base/base_model.safetensors',
+        '1024x1024 (1:1)',
+        'None',
+        'sdxl\\base\\compatible_lora.safetensors',
+    )
+
+    assert updates[2]['value'] == 'sdxl/base/compatible_lora.safetensors'
+
+
 def test_update_model_dependent_choices_preserves_active_preset_managed_lora(monkeypatch):
     monkeypatch.setattr(ui_logic, 'default_model_manager', FakeModelManager())
     monkeypatch.setattr(
@@ -310,6 +333,49 @@ def test_apply_model_browser_drop_preserves_enabled_slot_when_lora_is_reset_afte
     assert updates[0]['value'] == 'sdxl/base/base_model.safetensors'
     assert updates[3]['value'] is True
     assert updates[4]['value'] == 'None'
+
+
+def test_apply_model_browser_drop_applies_installed_lora_to_requested_slot(monkeypatch):
+    class InstalledLoraManager(FakeModelManager):
+        def get_entry(self, selector):
+            if selector == 'test.lora':
+                return types.SimpleNamespace(
+                    root_key='loras',
+                    relative_path='sdxl/base/compatible_lora.safetensors',
+                    name='compatible_lora.safetensors',
+                    architecture='sdxl',
+                )
+            return super().get_entry(selector)
+
+    monkeypatch.setattr(ui_logic, 'default_model_manager', InstalledLoraManager())
+    monkeypatch.setattr(ui_logic.modules.config, 'model_filenames', ['sdxl/base/base_model.safetensors'])
+    monkeypatch.setattr(ui_logic.modules.config, 'vae_filenames', ['vae.safetensors'])
+    monkeypatch.setattr(ui_logic.modules.config, 'clip_filenames', ['clip.safetensors'])
+    monkeypatch.setattr(ui_logic.modules.config, 'default_base_model_name', 'sdxl/base/base_model.safetensors')
+    monkeypatch.setattr(ui_logic.modules.config, 'default_max_lora_number', 1)
+    monkeypatch.setattr(
+        ui_logic.modules.config,
+        'get_aspect_ratio_labels_for_model',
+        lambda base_model_name: ['1024x1024 (1:1)'],
+    )
+    monkeypatch.setattr(
+        ui_logic.modules.config,
+        'get_default_aspect_ratio_label_for_model',
+        lambda base_model_name: '1024x1024 (1:1)',
+    )
+
+    updates = ui_logic.apply_model_browser_drop(
+        '{"selector":"test.lora","target":"lora_model:1","aspect_ratio":"1024x1024 (1:1)","ts":1}',
+        'sdxl/base/base_model.safetensors',
+        'None',
+        False,
+        'None',
+        0.75,
+    )
+
+    assert updates[3]['value'] is True
+    assert updates[4]['value'] == 'sdxl/base/compatible_lora.safetensors'
+    assert updates[5]['value'] == 0.75
 
 
 def test_apply_model_browser_drop_parses_json_bridge_payload(monkeypatch):
