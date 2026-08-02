@@ -178,6 +178,11 @@ The common thread is ownership. Frameworks remain useful mechanisms, but Nexfocu
 
 Nexfocus has reached the scope it set out to complete. Maintenance mode means that the application has entered a stable product boundary, with critical fixes remaining in scope; it does not mean that the infrastructure expedition has been abandoned. The work is continuing at the next layer where the limiting problems now live.
 
+
+![next_mission](assets/images/next_scout.jpg)
+
+Nexfocus has reached the scope it set out to complete. Maintenance mode means that the application has entered a stable product boundary, with critical fixes remaining in scope; it does not mean that the infrastructure expedition has been abandoned. The work is continuing at the next layer where the limiting problems now live.
+
 SDXL and Flux Fill demonstrated that models much larger than available VRAM can run effectively when the application owns placement, movement, and lifecycle. They also exposed the boundary of what can be achieved while working through a general-purpose tensor framework. PyTorch makes advanced models broadly accessible, but its allocator, tensor ownership, and execution assumptions were not designed specifically for severe memory constraints.
 
 Video generation is the clearest next stress test. Video models multiply the same pressures across temporal activations, frame sequences, attention state, and repeated transfers. If the answer remains sheer scaling, these models will continue to demand hardware beyond the reach of most users.
@@ -185,6 +190,17 @@ Video generation is the clearest next stress test. Video models multiply the sam
 The next scout mission therefore explores a native C++ tensor and memory layer built around explicit allocation, controlled movement across disk, RAM, and VRAM, shadow-copy avoidance, and specialized worker assemblies. The practical objective is the same one that shaped Nexfocus: make larger and higher-dimensional generative models usable on hardware that conventional execution treats as insufficient.
 
 Nexfocus remains the completed application produced by the first expedition. The next mission carries its edge-first principles into territory that the current framework cannot reach cleanly.
+
+---
+
+## Feature Walkthrough
+
+Experience the connected Nexfocus image creation and post-processing pipeline in action. The walkthrough video below demonstrates session-aware model management, GIMP layer exchange, ControlNet guidance, inpaint detail editing, directional outpainting, and dual-pass upscale refinement in a single continuous session.
+
+[![Fooocus_Nex Walkthrough Video](assets/images/walkthrough/video-thumbnail.png)](assets/images/walkthrough/Nexfocus_walkthrough.mp4)
+
+- **Watch the Connected Workflow:** [Open the walkthrough video](assets/images/walkthrough/Nexfocus_walkthrough.mp4)
+- **Explore the Feature Guide:** See [FEATURES.md](FEATURES.md) for a visual tour of the core workspaces and connected artist workflows.
 
 ---
 
@@ -249,6 +265,7 @@ No local installation required. The notebook handles all setup automatically.
 
 ## Documentation
 
+- [FEATURES.md](FEATURES.md) -- Detailed feature tour and tab-by-tab screenshot guide
 - [INSTALL.md](INSTALL.md) -- Full installation guide (Windows, Linux, Colab)
 - [HOTKEYS.md](HOTKEYS.md) -- Keyboard shortcuts and navigation controls
 - [CONTRIBUTING.md](CONTRIBUTING.md) -- Developer guidelines and test contract

@@ -19,7 +19,7 @@
             "sub_architecture": "none",
             "root_key": "vae",
             "asset_group_key": "base.sdxl_vae",
-            "thumbnail_library_relative": "thumbnails/vae/sdxl/sdxl_vae_sdxl_vae.png",
+            "thumbnail_library_relative": "thumbnails/vae/sdxl/sdxl_vae_sdxl_vae.jpg",
             "source_provider": "github",
             "source_version_id": "support_models",
             "visibility": "generic",

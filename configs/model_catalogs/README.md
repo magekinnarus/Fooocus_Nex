@@ -134,10 +134,8 @@ Recommended behavior:
 The repo thumbnail tree should mirror the effective model tree wherever grouping is meaningful.
 
 Examples:
-- `thumbnails/checkpoints/sd15/`
 - `thumbnails/checkpoints/sdxl/base/`
 - `thumbnails/checkpoints/sdxl/pony/`
-- `thumbnails/unet/sdxl/noob/`
 - `thumbnails/loras/sdxl/illustrious/`
 - `thumbnails/embeddings/sdxl/`
 - `thumbnails/vae/sdxl/`
@@ -145,7 +143,13 @@ Examples:
 ### Naming Convention
 
 Human-friendly thumbnail filenames should use:
-- `{code}_{slug}.png`
+
+- `{code}_{slug}.jpg` for curated active main-catalog thumbnails; and
+- `{code}_{slug}.png` for generated thumbnails, the default fallback, and
+  legacy entries that have not been migrated.
+
+Curated active SDXL main-catalog JPGs use a native 400x250 canvas so the Model
+Browser does not upscale a smaller square source into its landscape card.
 
 Where `code` is generated from taxonomy only when that taxonomy is actually meaningful for the model type:
 - SD15 all types: `{architecture}_{model_type}`
@@ -155,11 +159,9 @@ Where `code` is generated from taxonomy only when that taxonomy is actually mean
 
 Examples:
 - `default_0001.png`
-- `sd15_checkpoint_anything_v5.png`
-- `sdxl_base_checkpoint_stoiqo.png`
-- `sdxl_pony_lora_powerpuff.png`
-- `sdxl_noob_unet_homoveritas.png`
-- `sdxl_vae_sdxl_vae.png`
+- `sdxl_base_checkpoint_innovision.jpg`
+- `sdxl_pony_lora_powerpuff.jpg`
+- `sdxl_vae_sdxl_vae.jpg`
 
 The actual persisted binding should come from `thumbnail_library_relative`, not just filename matching.
 
@@ -169,7 +171,11 @@ Display names may be auto-generated from `name`, but catalogs can also override 
 
 If a user skips thumbnail selection entirely, the catalog entry should simply resolve to `thumbnails/default_0001.png`.
 
-PNG is the preferred thumbnail format for M06 so the library can grow into metadata-bearing thumbnails later without another format migration.
+`thumbnail_library_relative` is authoritative, so the runtime may resolve both
+formats. The current curated SDXL main catalogs use 400x250 JPGs. PNG remains
+valid for the default image and runtime-generated user thumbnails. The
+committed main catalogs contain no SD 1.5 entries and no PNG thumbnail
+references.
 
 ## CivitAI Download Convention
 
