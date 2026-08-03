@@ -282,3 +282,5 @@ better structure to resolve.
 - [README](readme.md): project identity, architecture story, and release overview
 - [Installation Guide](INSTALL.md): Windows, Linux, and Colab setup
 - [GIMP Plug-in Guide](plugins/gimp/README.md): GIMP 2.10 and 3.0 installation and round-trip workflow
+- [Usage Notes](USAGE.md): practical interactions, hotkeys, runtime behavior, and first-recovery guidance
+- [Prompt Presets](PROMPT_PRESETS.md): exact expansion text for every shipped prompt preset

@@ -262,7 +262,8 @@ No local installation required. The notebook handles all setup automatically.
 
 - [FEATURES.md](FEATURES.md) -- Visual feature guide to the core workspaces and connected artist workflows
 - [INSTALL.md](INSTALL.md) -- Full installation guide (Windows, Linux, Colab)
-- [HOTKEYS.md](HOTKEYS.md) -- Keyboard shortcuts and navigation controls
+- [USAGE.md](USAGE.md) -- Practical interactions, hotkeys, runtime behavior, and recovery notes
+- [PROMPT_PRESETS.md](PROMPT_PRESETS.md) -- Reference for every shipped prompt preset and its expansion text
 - [CONTRIBUTING.md](CONTRIBUTING.md) -- Developer guidelines and test contract
 - [CHANGELOG.md](CHANGELOG.md) -- Version history and key milestones
 
