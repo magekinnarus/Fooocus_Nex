@@ -39,11 +39,29 @@ time.
 - The Windows and Linux launchers verify Python 3.10+, the virtual
   environment, PyTorch with CUDA, xformers, and uv before launch, and only
   Aria2 is installed automatically.
+- Hugging Face model downloads now use the high-speed `hf_transfer` transport
+  when available, with fallback to the single-stream downloader. Aria2 paths
+  for CivitAI and GitHub downloads are unchanged.
 
 ### Fixed
 
 - Corrected README and navigation links to match the final document set,
   including routing hotkey and recovery guidance to `USAGE.md`.
+- Flux Fill inpaint now conditions on a pixel-resolution mask with native Fill
+  semantics instead of generic step-level inpaint blending, restoring sharp
+  inpaint detail. Intermediate sampling previews show the bounded work image,
+  with full-canvas stitch-back reserved for the saved result.
+- The CPU-resident T5 posture materializes its FP16 encoder into process-owned
+  CPU tensors instead of aliasing safetensors storage, so the resident encoder
+  is reused at a real host-RAM cost.
+- Metadata Apply now resolves saved checkpoint and LoRA stems to installed
+  dropdown paths instead of silently falling back to an unrelated checkpoint;
+  missing or ambiguous identities stay unselected.
+- Available-card Download+Apply actions were retired. Card selection plus the
+  top Download Selected action is the download workflow, and installed-card
+  Apply and Review remain unchanged.
+- Minimized Staging Palette and Resource Dashboard surfaces now expose a
+  visible Restore action.
 
 ### Removed
 
@@ -72,6 +90,8 @@ time.
   explicit compatibility bridges for retained legacy settings, queue-frozen
   execution plans, component-level fingerprints and invalidation, and
   controlled process transitions.
+- T5 posture resolution treats explicit request intent plus host RAM as
+  authoritative; UNet/GPU posture no longer decides CPU T5 placement.
 
 ## How to Add an Entry
 

@@ -108,6 +108,9 @@ def test_process_transition_flux_removal():
         remove_base_image=np.zeros((64, 64, 3), dtype=np.uint8),
         remove_obj_enabled=True,
         objr_engine=OBJR_ENGINE_FLUX_FILL,
+        # Mirror the UI's forced radio default; the posture normalizer
+        # rejects the empty TaskState default.
+        flux_fill_t5_posture="disk_paged",
     )
     route = _build_planned_route(state)
     

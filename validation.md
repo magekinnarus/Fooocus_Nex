@@ -24,10 +24,11 @@ Validated local W12 baseline:
 - `tokenizers==0.19.1`
 - `accelerate==1.13.0`
 
-Hugging Face model downloads use a single-stream Python `GET` through the
-project downloader. Requests append `download=true`, use the existing retry
-logic, and write only a temporary `.downloading` file before finalizing. Aria2,
-Hugging Face Hub, and `hf-xet` are not used for this path; interrupted HF
+Hugging Face model downloads route through `hf_hub_download` with the
+`hf_transfer` engine when available, falling back to the project's
+single-stream Python `GET` (which appends `download=true`, uses the existing
+retry logic, and writes only a temporary `.downloading` file before
+finalizing). Aria2 and `hf-xet` are not used for the HF path; interrupted HF
 downloads are not resumed.
 
 CivitAI and GitHub model downloads use Aria2 with 16 connections/splits.
