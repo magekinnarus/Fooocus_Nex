@@ -239,6 +239,17 @@ reloaded, transferred, or re-encoded, and the console reports the switch as it
 happens. This is expected behavior, not a hang. The change is captured when a
 task is submitted, so it never retroactively alters work already submitted.
 
+### LoRA Stacks Are Pre-Patched and Reused
+
+For streaming generations, the largest preparation cost is usually patching
+the UNet with the active LoRA stack and compiling it. Nexfocus keeps that
+pre-patched UNet warm and reuses it while the checkpoint, LoRA stack, and
+streaming settings stay unchanged and the runtime remains active. Load every
+LoRA you plan to use for a session at once, and keep the stack stable while
+you iterate, rather than swapping LoRAs between every generation. Changing
+the stack forces a fresh patch and compile before the next task, which shows
+up as a longer pause between submissions.
+
 ## Metadata, Logs, and First Recovery Steps
 
 - **Apply Metadata** (Metadata tab) restores the supported generation

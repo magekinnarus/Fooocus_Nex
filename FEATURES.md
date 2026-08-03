@@ -284,3 +284,5 @@ better structure to resolve.
 - [GIMP Plug-in Guide](plugins/gimp/README.md): GIMP 2.10 and 3.0 installation and round-trip workflow
 - [Usage Notes](USAGE.md): practical interactions, hotkeys, runtime behavior, and first-recovery guidance
 - [Prompt Presets](PROMPT_PRESETS.md): exact expansion text for every shipped prompt preset
+- [Contributing](CONTRIBUTING.md): developer guidelines, test contract, and contribution process
+- [Changelog](CHANGELOG.md): change history and key milestones

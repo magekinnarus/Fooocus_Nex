@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.x](https://img.shields.io/badge/pytorch-2.x-ee4c2c.svg)](https://pytorch.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Test Suite](https://img.shields.io/badge/tests-928%20passing-success.svg)](#production-hardening)
+[![Test Suite](https://img.shields.io/badge/tests-945%20maintained-blue.svg)](#production-hardening)
 
 > **A field notebook from a deep expedition into image-generation infrastructure, built for the edges and pressure-tested on constrained hardware.**
 
@@ -151,7 +151,7 @@ Users can browse model catalogues, inspect thumbnails, start background download
 
 ## Production Hardening
 
-Explicit memory ownership creates powerful behavior, but it also creates more contracts that must remain correct. Nexfocus is protected by 928 automated tests spanning unit, integration, workflow, compatibility, and runtime-policy surfaces.
+Explicit memory ownership creates powerful behavior, but it also creates more contracts that must remain correct. Nexfocus is protected by a maintained suite of automated tests spanning unit, integration, workflow, compatibility, and runtime-policy surfaces.
 
 The release baseline also includes:
 
