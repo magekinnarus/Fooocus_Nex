@@ -224,7 +224,7 @@ installation options.
 PyTorch and xformers must already be installed before this step:
 
 ```bash
-uv pip install -r requirements_versions.txt
+uv pip install -r requirements.txt
 ```
 
 Verify representative application dependencies:
@@ -235,7 +235,25 @@ python -c "import gradio, transformers, safetensors, dotenv; print('Dependencies
 
 If resolution fails, confirm that the virtual environment is active and review
 the prerequisite header in
-[requirements_versions.txt](requirements_versions.txt).
+[requirements.txt](requirements.txt).
+
+---
+
+## Optional: Create a Local Configuration File
+
+Nexfocus can launch without a local configuration file. The repository
+intentionally does not ship an official `config.txt`. To create one for model
+locations or other settings, copy the committed
+[config_template.txt](config_template.txt) to `config.txt` in the repository
+root, then edit the copy. The template is valid JSON and `config.txt` remains
+local ignored runtime state. Its top-level `_comment` field is reserved
+template metadata: Nexfocus validates it and excludes it from runtime settings.
+
+Path settings may be either one path or a JSON array of paths. For example,
+`path_checkpoints` and `path_loras` in the template show how to search both a
+Nexfocus model directory on `C:` and a Fooocus model directory on `D:`. Replace
+those example paths with directories that exist on your machine before using
+them. Keep credentials in `.env`, not in `config.txt`.
 
 ---
 

@@ -1,6 +1,5 @@
 import os
 import gradio as gr
-import modules.localization as localization
 import json
 
 
@@ -64,16 +63,12 @@ def sort_prompt_presets(selected):
     return gr.update(choices=sorted_prompt_presets, value=selected)
 
 
-def prompt_preset_localization_key(x):
-    return x + localization.current_translation.get(x, '')
-
-
 def search_prompt_presets(selected, query):
     selected = _dedupe_keep_order(selected or [])
     selected = [x for x in selected if x in all_prompt_presets]
     query = (query or "").strip()
     unselected = [y for y in all_prompt_presets if y not in selected]
-    matched = [y for y in unselected if query.lower() in prompt_preset_localization_key(y).lower()] if len(query) > 0 else []
+    matched = [y for y in unselected if query.lower() in y.lower()] if len(query) > 0 else []
     unmatched = [y for y in unselected if y not in matched]
     sorted_prompt_presets = _dedupe_keep_order(matched + selected + unmatched)
     return gr.update(choices=sorted_prompt_presets, value=selected)

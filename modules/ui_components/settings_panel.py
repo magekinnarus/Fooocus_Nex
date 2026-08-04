@@ -27,7 +27,11 @@ def build_settings_tab():
             interactive=True
         )
 
-    with gr.Accordion(label='Aspect Ratios', open=False, elem_id='aspect_ratios_accordion') as aspect_ratios_accordion:
+    with gr.Accordion(
+        label=f'Aspect Ratios {default_aspect_ratio_label}',
+        open=False,
+        elem_id='aspect_ratios_accordion',
+    ) as aspect_ratios_accordion:
         results['aspect_ratios_accordion'] = aspect_ratios_accordion
         results['aspect_ratios_selection'] = gr.Radio(
             label='Aspect Ratios',

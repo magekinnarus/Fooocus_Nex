@@ -41,8 +41,6 @@ config.txt
 /.agent/
 configs/model_catalogs/user/*.json
 config_old.txt
-/config_modification_tutorial.txt
-/config_colab_modification_tutorial.txt
 /archived/
 /backend/gguf/sdxl_glass_pipeline.py
 /thumbnails/private/

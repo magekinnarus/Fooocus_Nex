@@ -10,6 +10,7 @@ import modules.flags
 import modules.prompt_presets
 import modules.model_taxonomy
 import modules.model_catalog_index
+from modules.config_metadata import split_config_template_metadata
 from backend import environment_profile as memory_environment_profiles
 
 from modules.model_loader import load_file_from_url
@@ -27,14 +28,12 @@ def get_config_path(key, default_value):
     if getattr(args_manager.args, 'colab', False):
         if key == 'config_path' and default_value == "./config.txt":
             candidate = "./config_colab.txt"
-        elif key == 'config_example_path' and default_value == "config_modification_tutorial.txt":
-            candidate = "config_colab_modification_tutorial.txt"
 
     return os.path.abspath(candidate)
 
 config_path = get_config_path('config_path', "./config.txt")
-config_example_path = get_config_path('config_example_path', "config_modification_tutorial.txt")
 config_dict = {}
+config_template_metadata = {}
 always_save_keys = []
 visited_keys = []
 
@@ -263,7 +262,10 @@ config_dict.update(runtime_defaults)
 try:
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as json_file:
-            config_dict.update(json.load(json_file))
+            loaded_config, config_template_metadata = split_config_template_metadata(
+                json.load(json_file)
+            )
+            config_dict.update(loaded_config)
             always_save_keys = list(config_dict.keys())
 except Exception as e:
     print(f'Failed to load config file "{config_path}" . The reason is: {str(e)}')
@@ -1185,16 +1187,6 @@ if not os.path.exists(config_path):
     with open(config_path, "w", encoding="utf-8") as json_file:
         json.dump({k: config_dict[k] for k in always_save_keys}, json_file, indent=4)
 
-
-# Always write tutorials.
-with open(config_example_path, "w", encoding="utf-8") as json_file:
-    cpa = config_path.replace("\\", "\\\\")
-    json_file.write(f'You can modify your "{cpa}" using the below keys, formats, and examples.\n'
-                    f'Do not modify this file. Modifications in this file will not take effect.\n'
-                    f'This file is a tutorial and example. Please edit "{cpa}" to really change any settings.\n'
-                    + 'Remember to split the paths with "\\\\" rather than "\\", '
-                      'and there is no "," before the last "}". \n\n\n')
-    json.dump({k: config_dict[k] for k in visited_keys}, json_file, indent=4)
 
 model_filenames = []
 clip_filenames = []

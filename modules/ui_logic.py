@@ -1247,14 +1247,13 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
         outputs=prompt_preset_selections,
         queue=False,
         show_progress=False
-    ).then(update_prompt_preset_label, inputs=prompt_preset_selections, outputs=prompt_preset_selections_accordion, queue=False, show_progress=False).then(lambda: None, js='()=>{refresh_prompt_preset_localization();}', queue=False, show_progress=False)
+    ).then(update_prompt_preset_label, inputs=prompt_preset_selections, outputs=prompt_preset_selections_accordion, queue=False, show_progress=False)
 
     prompt_preset_search_bar.change(prompt_preset_sorter.search_prompt_presets,
                             inputs=[prompt_preset_selections, prompt_preset_search_bar],
                             outputs=prompt_preset_selections,
                             queue=False,
-                            show_progress=False).then(
-        lambda: None, js='()=>{refresh_prompt_preset_localization();}')
+                            show_progress=False)
 
     refresh_files_output = [base_model, aspect_ratios_selection, vae_model]
     if not args_manager.args.disable_preset_selection:
@@ -1281,8 +1280,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     if not args_manager.args.disable_preset_selection:
         preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating] + lora_ctrls, outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
-            .then(fn=prompt_preset_sorter.sort_prompt_presets, inputs=prompt_preset_selections, outputs=prompt_preset_selections, queue=False, show_progress=False) \
-            .then(lambda: None, js='()=>{refresh_prompt_preset_localization();}')
+            .then(fn=prompt_preset_sorter.sort_prompt_presets, inputs=prompt_preset_selections, outputs=prompt_preset_selections, queue=False, show_progress=False)
 
     output_format.change(
         update_history_link,

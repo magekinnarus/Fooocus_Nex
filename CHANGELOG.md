@@ -24,6 +24,12 @@ time.
 
 ### Changed
 
+- Configuration customization now starts from a committed JSON
+  `config_template.txt`; its reserved `_comment` metadata explains how to
+  create the intentionally untracked local `config.txt` and how to configure
+  multiple checkpoint and LoRA roots.
+- The canonical dependency manifest is now the conventional
+  `requirements.txt`, with the existing dependency constraints preserved.
 - Prompt presets now use canonical `prompt_presets` resource, UI, task, and
   metadata names throughout the unreleased application. Legacy `styles` and
   `Styles` metadata remains accepted only when importing older images.
@@ -48,6 +54,8 @@ time.
 
 ### Fixed
 
+- The Aspect Ratios accordion now retains and displays the selected resolution
+  during initial UI mounting instead of waiting for the first manual choice.
 - Corrected README and navigation links to match the final document set,
   including routing hotkey and recovery guidance to `USAGE.md`.
 - Flux Fill inpaint now conditions on a pixel-resolution mask with native Fill
@@ -68,6 +76,8 @@ time.
 
 ### Removed
 
+- The incomplete inherited localization mechanism and runtime-generated
+  configuration tutorial artifacts.
 - Deprecated upstream `troubleshoot.md` and its references; recovery guidance
   now lives in `USAGE.md`.
 

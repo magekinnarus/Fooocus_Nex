@@ -2,9 +2,6 @@
 
 import os
 import gradio as gr
-import args_manager
-
-from modules.localization import localization_js
 
 
 GradioTemplateResponseOriginal = gr.routes.templates.TemplateResponse
@@ -47,7 +44,7 @@ def get_module_assets(folder, extension):
 
 
 def javascript_html():
-    head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
+    head = ''
     
     # Load all modules from javascript/modules/ in alphabetical order
     js_files = get_module_assets('javascript/modules', '.js')

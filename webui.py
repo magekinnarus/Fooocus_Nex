@@ -13,7 +13,6 @@ import fooocus_version
 import modules.async_worker as worker
 import modules.constants as constants
 import modules.flags as flags
-import modules.gradio_hijack as grh
 import modules.meta_parser
 import modules.ui_components.metadata_panel as metadata_panel
 import modules.ui_components.settings_panel as settings_panel
@@ -739,13 +738,6 @@ with shared.gradio_root:
 
         ui_logic.register_all_events(ctrls_dict, currentTask, ui_elements)
 
-
-def dump_default_english_config():
-    from modules.localization import dump_english_config
-    dump_english_config(grh.all_components)
-
-
-# dump_default_english_config()
 
 # Hijack Gradio's app creation to mount our staging router
 import gradio.routes

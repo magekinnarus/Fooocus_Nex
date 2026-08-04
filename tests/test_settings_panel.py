@@ -50,7 +50,9 @@ def test_build_settings_tab_uses_active_base_model_for_startup_aspect_ratios(mon
     with gr.Blocks():
         results = settings_panel.build_settings_tab()
 
+    accordion = results['aspect_ratios_accordion']
     radio = results['aspect_ratios_selection']
+    assert accordion.label == 'Aspect Ratios 1024x1024 (1:1)'
     assert radio.choices == [('1024x1024 (1:1)', '1024x1024 (1:1)')]
     assert radio.value == '1024x1024 (1:1)'
     assert 'image_number' not in results

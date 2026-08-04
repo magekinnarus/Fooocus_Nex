@@ -52,16 +52,3 @@ class Image(gr.Image):
     if TYPE_CHECKING:
         from gradio.components import Timer
         from gradio.components.base import Component
-
-all_components = []
-
-# Hook into Gradio Component initialization to track all created components for localization.
-# In Gradio 5, we hook into gr.components.base.Component.
-if not hasattr(gr.components.base.Component, 'original_init'):
-    gr.components.base.Component.original_init = gr.components.base.Component.__init__
-    
-    def patched_init(self, *args, **kwargs):
-        all_components.append(self)
-        return self.original_init(*args, **kwargs)
-        
-    gr.components.base.Component.__init__ = patched_init

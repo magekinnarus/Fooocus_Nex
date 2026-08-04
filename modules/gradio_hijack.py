@@ -48,20 +48,6 @@ class Image(gr.Image):
         # Legacy method from Gradio 3
         return self
 
-all_components = []
-
-# Hook into Gradio Component initialization to track all created components for localization.
-# In Gradio 5, we hook into gr.components.base.Component.
-if not hasattr(gr.components.base.Component, 'original_init'):
-    gr.components.base.Component.original_init = gr.components.base.Component.__init__
-    
-    def patched_init(self, *args, **kwargs):
-        all_components.append(self)
-        return self.original_init(*args, **kwargs)
-        
-    gr.components.base.Component.__init__ = patched_init
-
-
 import gradio.routes
 import importlib
 gradio.routes.asyncio = importlib.reload(gradio.routes.asyncio)

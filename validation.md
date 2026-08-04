@@ -630,7 +630,7 @@ produce no output:
 ```powershell
 git ls-files archived backend/gguf modules/pipeline/gguf_runner.py presets/lcm.json presets/lightning.json presets/lightning_8step.json
 git ls-files .legacy_reference .agent
-git grep -n -E "backend\.gguf|modules\.pipeline\.gguf_runner|sample_lcm|path_loras_(lcm|lightning)|gguf>=|presets/(lcm|lightning)" -- backend modules configs requirements_versions.txt presets
+git grep -n -E "backend\.gguf|modules\.pipeline\.gguf_runner|sample_lcm|path_loras_(lcm|lightning)|gguf>=|presets/(lcm|lightning)" -- backend modules configs requirements.txt presets
 ```
 
 The only supported `.gguf` references are fail-closed boundary checks for
@@ -638,8 +638,8 @@ selection/loading, plus the Flux Fill v3 text-encoder rejection. Confirm that
 boundary and the absence of active owners with:
 
 ```powershell
-git grep -n -i "gguf" -- backend modules configs requirements_versions.txt
-git grep -n -E "from backend\.gguf|import backend\.gguf|gguf_runner|sample_lcm|opModelSamplingDiscrete|path_loras_lcm|path_loras_lightning" -- backend modules configs requirements_versions.txt
+git grep -n -i "gguf" -- backend modules configs requirements.txt
+git grep -n -E "from backend\.gguf|import backend\.gguf|gguf_runner|sample_lcm|opModelSamplingDiscrete|path_loras_lcm|path_loras_lightning" -- backend modules configs requirements.txt
 ```
 
 The first command is reviewed for boundary-only matches; the second must be
