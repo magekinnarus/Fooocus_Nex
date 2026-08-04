@@ -77,7 +77,7 @@ class TestSDXLOuterWiringW10c(unittest.TestCase):
             scheduler="normal",
             seed=42,
             clip_layer=-1,
-            style_selections=(),
+            prompt_preset_selections=(),
             prompt_payload_hash="prompt_hash_base",
             lora_specs=(),
             lora_stack_hash="lora_hash_base",

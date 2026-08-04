@@ -24,6 +24,9 @@ time.
 
 ### Changed
 
+- Prompt presets now use canonical `prompt_presets` resource, UI, task, and
+  metadata names throughout the unreleased application. Legacy `styles` and
+  `Styles` metadata remains accepted only when importing older images.
 - Documentation is split into focused root-level files instead of one
   comprehensive README. Hotkey and practical recovery guidance now lives in
   `USAGE.md`; installation remains in `INSTALL.md`.

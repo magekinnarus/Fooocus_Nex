@@ -23,7 +23,7 @@ import gradio as gr
 
 sys.modules.pop('modules.ui_components.models_panel', None)
 sys.modules.pop('modules.ui_components', None)
-sys.modules.pop('modules.ui_components.styles_panel', None)
+sys.modules.pop('modules.ui_components.prompt_presets_panel', None)
 
 import modules.config as config
 
@@ -48,7 +48,7 @@ def test_build_models_tab_filters_sd15_vae_and_omits_force_clip(monkeypatch):
         'get_compatible_vae_choices_for_model',
         lambda base_model_name: ['sdxl/base/vae.safetensors'],
     )
-    monkeypatch.setattr(models_panel.styles_panel, 'build_styles_tab', lambda: {}, raising=False)
+    monkeypatch.setattr(models_panel.prompt_presets_panel, 'build_prompt_presets_tab', lambda: {}, raising=False)
     monkeypatch.setattr(models_panel.modules.config, 'default_loras', [(True, 'None', 1.0)])
     monkeypatch.setattr(models_panel.modules.config, 'lora_filenames', [])
 

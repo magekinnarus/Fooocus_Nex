@@ -7,7 +7,7 @@ import time
 import args_manager
 import tempfile
 import modules.flags
-import modules.sdxl_styles
+import modules.prompt_presets
 import modules.model_taxonomy
 import modules.model_catalog_index
 from backend import environment_profile as memory_environment_profiles
@@ -838,13 +838,13 @@ default_vae = resolve_dropdown_choice(
     if str(default_vae or '').strip() in {'', 'Default (model)', 'Default (Same as model)'}
     else default_vae
 )
-default_styles = get_config_item_or_set_default(
-    key='default_styles',
+default_prompt_presets = get_config_item_or_set_default(
+    key='default_prompt_presets',
     default_value=[
         "Fooocus Enhance",
         "Fooocus Sharp"
     ],
-    validator=lambda x: isinstance(x, list) and all(y in modules.sdxl_styles.legal_style_names for y in x),
+    validator=lambda x: isinstance(x, list) and all(y in modules.prompt_presets.legal_prompt_preset_names for y in x),
     expected_type=list
 )
 default_prompt_negative = get_config_item_or_set_default(
@@ -1136,7 +1136,7 @@ possible_preset_keys = {
     "default_image_number": "image_number",
     "default_prompt": "prompt",
     "default_prompt_negative": "negative_prompt",
-    "default_styles": "styles",
+    "default_prompt_presets": "prompt_presets",
     "default_aspect_ratio": "resolution",
     "default_save_metadata_to_images": "default_save_metadata_to_images",
     "checkpoint_downloads": "checkpoint_downloads",

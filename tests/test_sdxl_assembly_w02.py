@@ -304,7 +304,7 @@ def test_build_assembly_request_smoke_resolves_frozen_snapshot(tmp_path, monkeyp
             cfg_scale=5.0,
             sampler_name='euler',
             clip_skip=1,
-            style_selections=[],
+            prompt_preset_selections=['Dj Dynamic'],
             sdxl_execution_policy=None,
             sharpness=2.0,
             adaptive_cfg=7.0,
@@ -343,6 +343,7 @@ def test_build_assembly_request_smoke_resolves_frozen_snapshot(tmp_path, monkeyp
     assert request.checkpoint.path == checkpoint_path
     assert request.prompt == 'prompt'
     assert request.negative_prompt == 'negative'
+    assert request.prompt_preset_selections == ('Dj Dynamic',)
     assert request.prefetch_chunk_mb == 64
     assert request.prefetch_depth == 1
 
@@ -376,7 +377,7 @@ def test_process_task_keeps_unified_runtime_until_w04_even_when_w02_seam_is_elig
             cfg_scale=5.0,
             sampler_name='euler',
             clip_skip=1,
-            style_selections=[],
+            prompt_preset_selections=[],
             sdxl_execution_policy=None,
             sharpness=2.0,
             adaptive_cfg=7.0,

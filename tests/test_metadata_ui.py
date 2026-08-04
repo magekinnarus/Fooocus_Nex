@@ -206,7 +206,7 @@ def test_metadata_list_and_resolution_parsing_never_executes_expressions(tmp_pat
     expression = f"__import__('pathlib').Path({str(marker)!r}).write_text('bad')"
 
     list_results = []
-    metadata_ui.get_list('styles', None, {'styles': expression}, list_results)
+    metadata_ui.get_list('prompt_presets', None, {'prompt_presets': expression}, list_results)
     resolution_results = []
     metadata_ui.get_resolution('resolution', None, {'resolution': expression}, resolution_results)
 

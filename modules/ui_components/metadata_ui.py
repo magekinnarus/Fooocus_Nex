@@ -15,7 +15,7 @@ OVERWRITE_DIMENSION_MAX = 2048
 METADATA_OUTPUT_INDEX = {
     'prompt': 0,
     'negative_prompt': 1,
-    'styles': 2,
+    'prompt_presets': 2,
     'steps': 3,
     'resolution': 4,
     'cfg_scale': 5,
@@ -60,7 +60,7 @@ def get_list(key: str, fallback: str | None, source_dict: dict, results: list, d
                 break
             h = parsed
         assert isinstance(h, list)
-        if key == 'styles':
+        if key == 'prompt_presets':
             h = [s for s in h if s != 'Fooocus V2']
         results.append(h)
     except Exception:
@@ -229,6 +229,8 @@ def _load_parameter_button_click(raw_metadata: dict | str, is_generating: bool, 
         or loaded_parameter_dict.get('metadata_version') == 1
     ):
         loaded_parameter_dict = modules.meta_parser.convert_v1_to_v2_metadata(loaded_parameter_dict)
+    else:
+        loaded_parameter_dict = modules.meta_parser.normalize_prompt_preset_metadata(loaded_parameter_dict)
 
     workflow = str(loaded_parameter_dict.get('workflow', 'txt2img'))
     results = []
@@ -277,9 +279,9 @@ def _load_parameter_button_click(raw_metadata: dict | str, is_generating: bool, 
     else:
         results.append(gr.update())
 
-    # 3. Styles
+    # 3. Prompt Presets
     if workflow in ['txt2img', 'inpaint_sdxl', 'outpaint_sdxl', 'super_upscale']:
-        get_list('styles', 'Styles', loaded_parameter_dict, results)
+        get_list('prompt_presets', 'Prompt Presets', loaded_parameter_dict, results)
     else:
         results.append(gr.update())
 
@@ -444,7 +446,7 @@ def parse_meta_from_preset(preset_content):
         else:
             preset_prepared[meta_key] = items[settings_key] if settings_key in items and items[settings_key] is not None else get_preset_key_fallback(settings_key)
 
-        if settings_key == "default_styles" or settings_key == "default_aspect_ratio":
+        if settings_key == "default_prompt_presets" or settings_key == "default_aspect_ratio":
             if meta_key in preset_prepared:
                 preset_prepared[meta_key] = str(preset_prepared[meta_key])
 

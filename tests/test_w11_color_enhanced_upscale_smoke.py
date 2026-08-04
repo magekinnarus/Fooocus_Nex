@@ -53,7 +53,7 @@ def test_w11c_color_enhanced_upscale_smoke(monkeypatch) -> None:
         scheduler_name="karras",
         steps=20,
         cfg_scale=7.0,
-        style_selections=[],
+        prompt_preset_selections=[],
         use_expansion=False,
         loras=[],
     )

@@ -182,7 +182,7 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
         if workflow_id != 'color_enhance':
             v2_record['sampler'] = task_state.sampler_name
             v2_record['cfg_scale'] = float(task_state.cfg_scale)
-            v2_record['styles'] = list(task_dict.get('styles', []) or [])
+            v2_record['prompt_presets'] = list(task_dict.get('prompt_presets', []) or [])
             v2_record['negative_prompt'] = str(task_dict.get('log_negative_prompt', '') or '')
 
         if workflow_id == 'txt2img' or workflow_id == 'super_upscale':
@@ -256,8 +256,8 @@ def save_and_log(task_state, height, width, images, task_dict, use_expansion, lo
             d.insert(0, ('Description', 'prompt_description', v2_record['prompt_description']))
         if 'negative_prompt' in v2_record and v2_record['negative_prompt']:
             d.append(('Negative Prompt', 'negative_prompt', v2_record['negative_prompt']))
-        if 'styles' in v2_record and v2_record['styles']:
-            d.append(('Styles', 'styles', str(v2_record['styles'])))
+        if 'prompt_presets' in v2_record and v2_record['prompt_presets']:
+            d.append(('Prompt Presets', 'prompt_presets', str(v2_record['prompt_presets'])))
         if 'steps' in v2_record:
             d.append(('Steps', 'steps', v2_record['steps']))
         if 'base_model' in v2_record and v2_record['base_model']:

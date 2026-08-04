@@ -15,11 +15,11 @@ How presets work:
   your prompt. A preset with an empty positive field adds no positive text.
 - Every selected preset also contributes its negative text to the negative
   prompt, on top of your own negative prompt.
-- **Random Style** is not a preset. It picks one of the presets at random at
+- **Random Preset** is not a preset. It picks one of the presets at random at
   generation time.
-- The shipped presets live in `sdxl_styles/sdxl_styles_fooocus.json` and
-  `sdxl_styles/sdxl_styles_dj.json`. Custom JSON files placed in the
-  `sdxl_styles/` folder are loaded as additional presets and follow the same
+- The shipped presets live in `prompt_presets/prompt_presets_fooocus.json` and
+  `prompt_presets/prompt_presets_dj.json`. Custom JSON files placed in the
+  `prompt_presets/` folder are loaded as additional presets and follow the same
   format.
 
 See [USAGE.md](USAGE.md) for the practical guidance on prompt ownership and

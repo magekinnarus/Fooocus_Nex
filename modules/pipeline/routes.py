@@ -205,7 +205,7 @@ def _save_logged_output(
             'log_negative_prompt': str(negative_prompt or ''),
             'positive': [],
             'negative': [],
-            'styles': list(getattr(task_state, 'style_selections', []) or []),
+            'prompt_presets': list(getattr(task_state, 'prompt_preset_selections', []) or []),
             'task_seed': getattr(task_state, 'seed', 0) if seed is None else seed,
             'description': description,
         },
@@ -915,7 +915,7 @@ class FluxFillInpaintStage(PipelineStage):
                 'log_negative_prompt': task_state.negative_prompt,
                 'positive': [],
                 'negative': [],
-                'styles': task_state.style_selections,
+                'prompt_presets': task_state.prompt_preset_selections,
                 'task_seed': seed,
                 'description': 'Flux Fill Inpaint',
             }
@@ -1022,7 +1022,7 @@ class UpscaleStage(PipelineStage):
                 'log_negative_prompt': task_state.negative_prompt,
                 'positive': [],
                 'negative': [],
-                'styles': task_state.style_selections,
+                'prompt_presets': task_state.prompt_preset_selections,
                 'task_seed': task_state.seed,
             },
             task_state.use_expansion,
@@ -1234,7 +1234,7 @@ class ColorEnhancedUpscaleStage(PipelineStage):
             'log_negative_prompt': task_state.negative_prompt,
             'positive': [],
             'negative': [],
-            'styles': task_state.style_selections,
+            'prompt_presets': task_state.prompt_preset_selections,
             'task_seed': task_state.seed,
         }
         enhanced_paths = save_and_log(

@@ -45,7 +45,7 @@ def _task_state(**overrides):
         cfg_scale=5.0,
         sampler_name='euler',
         clip_skip=1,
-        style_selections=[],
+        prompt_preset_selections=[],
         sdxl_execution_policy=None,
         sharpness=2.0,
         adaptive_cfg=7.0,

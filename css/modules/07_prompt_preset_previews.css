@@ -9,7 +9,7 @@
   display: none;
 }
 
-#stylePreviewOverlay {
+#promptPresetPreviewOverlay {
   opacity: 0;
   pointer-events: none;
   width: 128px;
@@ -27,35 +27,35 @@
   transition: transform 0.1s ease, opacity 0.3s ease;
 }
 
-#stylePreviewOverlay.lower-half {
+#promptPresetPreviewOverlay.lower-half {
   transform: translate(-140px, -140px);
 }
 
-/* scrollable box for style selections (Gradio 5 compatible selectors) */
-.style_selections {
+/* scrollable box for prompt-preset selections (Gradio 5 compatible selectors) */
+.prompt_preset_selections {
   min-height: 220px;
 }
 
-.style_selections .wrap[data-testid="checkbox-group"],
-.style_selections [data-testid="checkbox-group"] {
+.prompt_preset_selections .wrap[data-testid="checkbox-group"],
+.prompt_preset_selections [data-testid="checkbox-group"] {
   position: relative;
   overflow: auto;
   padding-right: 2px;
   max-height: min(62vh, 720px);
 }
 
-.style_selections .wrap[data-testid="checkbox-group"] label,
-.style_selections [data-testid="checkbox-group"] label {
+.prompt_preset_selections .wrap[data-testid="checkbox-group"] label,
+.prompt_preset_selections [data-testid="checkbox-group"] label {
   flex: calc(50% - 5px) !important;
 }
 
-.style_selections .wrap[data-testid="checkbox-group"] label span,
-.style_selections [data-testid="checkbox-group"] label span {
+.prompt_preset_selections .wrap[data-testid="checkbox-group"] label span,
+.prompt_preset_selections [data-testid="checkbox-group"] label span {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* styles preview tooltip */
+/* prompt-preset preview tooltip */
 .preview-tooltip {
   background-color: #fff8;
   font-family: monospace;

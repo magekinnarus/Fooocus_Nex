@@ -40,6 +40,30 @@ def _parse_list_value(value) -> list:
     return []
 
 
+def normalize_prompt_preset_metadata(metadata: dict) -> dict:
+    """Normalize legacy style metadata to the canonical prompt-preset key."""
+    if not isinstance(metadata, dict):
+        return {}
+
+    normalized = dict(metadata)
+    prompt_presets_value = _first_present(
+        normalized,
+        'prompt_presets',
+        'Prompt Presets',
+        'styles',
+        'Styles',
+    )
+    if prompt_presets_value is not None:
+        normalized['prompt_presets'] = _parse_list_value(prompt_presets_value)
+
+    # These are accepted only at this parser boundary; no downstream record
+    # or newly emitted metadata retains the legacy names.
+    normalized.pop('styles', None)
+    normalized.pop('Styles', None)
+    normalized.pop('Prompt Presets', None)
+    return normalized
+
+
 def _decode_exif_text(value):
     if isinstance(value, bytes):
         for encoding in ('utf-8', 'utf-16', 'latin-1'):
@@ -112,6 +136,8 @@ class FooocusMetadataParser(MetadataParser):
     def to_json(self, metadata: dict) -> dict:
         if isinstance(metadata, dict) and ('metadata_version' not in metadata or metadata.get('metadata_version') == 1):
             metadata = convert_v1_to_v2_metadata(metadata)
+        elif isinstance(metadata, dict):
+            metadata = normalize_prompt_preset_metadata(metadata)
 
         if isinstance(metadata, dict):
             for key, value in list(metadata.items()):
@@ -149,6 +175,8 @@ class FooocusMetadataParser(MetadataParser):
         if isinstance(metadata, dict):
             if 'metadata_version' not in metadata:
                 metadata = convert_v1_to_v2_metadata(metadata)
+            else:
+                metadata = normalize_prompt_preset_metadata(metadata)
             return json.dumps(metadata, indent=2)
 
         if isinstance(metadata, list):
@@ -184,7 +212,7 @@ def convert_v1_to_v2_metadata(v1_dict: dict) -> dict:
     if not isinstance(v1_dict, dict):
         return {}
     if v1_dict.get('metadata_version') == 2 and 'workflow' in v1_dict:
-        return v1_dict
+        return normalize_prompt_preset_metadata(v1_dict)
 
     workflow = 'txt2img'
     if 'inpaint_route' in v1_dict or 'Inpaint Route' in v1_dict or 'inpaint_prompt' in v1_dict:
@@ -229,9 +257,15 @@ def convert_v1_to_v2_metadata(v1_dict: dict) -> dict:
         if value is not None and str(value) not in ('', 'None'):
             v2_record[target_key] = str(value)
 
-    styles_value = _first_present(v1_dict, 'styles', 'Styles')
-    if styles_value is not None:
-        v2_record['styles'] = _parse_list_value(styles_value)
+    prompt_presets_value = _first_present(
+        v1_dict,
+        'prompt_presets',
+        'Prompt Presets',
+        'styles',
+        'Styles',
+    )
+    if prompt_presets_value is not None:
+        v2_record['prompt_presets'] = _parse_list_value(prompt_presets_value)
 
     numeric_fields = {
         'steps': (int, ('steps', 'Steps')),
@@ -332,6 +366,8 @@ def read_info_from_image(file_or_path) -> tuple[dict | str | None, MetadataSchem
         if isinstance(parameters, dict):
             if 'metadata_version' not in parameters or parameters.get('metadata_version') == 1:
                 parameters = convert_v1_to_v2_metadata(parameters)
+            else:
+                parameters = normalize_prompt_preset_metadata(parameters)
             if metadata_scheme is None:
                 metadata_scheme = MetadataScheme.FOOOCUS_NEX
 

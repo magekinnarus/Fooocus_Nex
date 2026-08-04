@@ -8,7 +8,7 @@ import modules.constants as constants
 import modules.core as core
 from backend import conditioning
 import modules.util as util
-from modules.sdxl_styles import apply_style, get_random_style, apply_arrays, random_style_name
+from modules.prompt_presets import apply_prompt_preset, get_random_prompt_preset, apply_arrays, random_prompt_preset_name
 from modules.util import safe_str, remove_empty_str, parse_lora_references_from_prompt
 
 # Retained compatibility shim for legacy tests patching preprocessing.pipeline.
@@ -50,7 +50,7 @@ def _clone_prompt_task(task):
         cloned['c'] = _clone_cond(cloned['c'])
     if cloned.get('uc') is not None:
         cloned['uc'] = _clone_cond(cloned['uc'])
-    for key in ('positive', 'negative', 'styles'):
+    for key in ('positive', 'negative', 'prompt_presets'):
         if isinstance(cloned.get(key), list):
             cloned[key] = list(cloned[key])
     return cloned
@@ -140,14 +140,14 @@ def patch_samplers(task_state):
     return task_state.scheduler_name
 def process_prompt(task_state, base_model_additional_loras, progressbar_callback=None, *, route_context=None, route_family=None, residency_class=None):
     """
-    Gathers prompts, styles, and LoRAs. Encodes prompts via CLIP.
+    Gathers prompts, prompt presets, and LoRAs. Encodes prompts via CLIP.
     """
     prompt = task_state.prompt
     negative_prompt = task_state.negative_prompt
     image_number = task_state.image_number
     disable_seed_increment = task_state.disable_seed_increment
     use_expansion = task_state.use_expansion
-    use_style = task_state.use_style
+    use_prompt_presets = task_state.use_prompt_presets
 
     prompts = remove_empty_str([safe_str(p) for p in prompt.splitlines()], default='')
     negative_prompts = remove_empty_str([safe_str(p) for p in negative_prompt.splitlines()], default='')
@@ -205,13 +205,13 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
         positive_basic_workloads = []
         negative_basic_workloads = []
 
-        task_styles = task_state.style_selections.copy()
-        if use_style:
-            for j, s in enumerate(task_styles):
-                if s == random_style_name:
-                    s = get_random_style(task_rng)
-                    task_styles[j] = s
-                p, n, _ = apply_style(s, positive=task_prompt)
+        task_prompt_presets = task_state.prompt_preset_selections.copy()
+        if use_prompt_presets:
+            for j, prompt_preset in enumerate(task_prompt_presets):
+                if prompt_preset == random_prompt_preset_name:
+                    prompt_preset = get_random_prompt_preset(task_rng)
+                    task_prompt_presets[j] = prompt_preset
+                p, n, _ = apply_prompt_preset(prompt_preset, positive=task_prompt)
                 positive_basic_workloads = positive_basic_workloads + p
                 negative_basic_workloads = negative_basic_workloads + n
 
@@ -240,7 +240,7 @@ def process_prompt(task_state, base_model_additional_loras, progressbar_callback
             negative_top_k=len(negative_basic_workloads),
             log_positive_prompt='\n'.join([task_prompt] + task_extra_positive_prompts),
             log_negative_prompt='\n'.join([task_negative_prompt] + task_extra_negative_prompts),
-            styles=task_styles
+            prompt_presets=task_prompt_presets
         ))
 
     prompt_fingerprint = _build_prompt_task_fingerprint(

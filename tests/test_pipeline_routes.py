@@ -50,6 +50,7 @@ def test_build_generation_route_maps_flux_fill_inpaint_family():
         current_tab='inpaint',
         inpaint_input_image=np.zeros((8, 8, 3), dtype=np.uint8),
         inpaint_route='flux',
+        prompt_preset_selections=['Dj Dynamic'],
     )
 
     route = build_generation_route(task_state)
@@ -60,6 +61,7 @@ def test_build_generation_route_maps_flux_fill_inpaint_family():
         'image_input_prepare',
         'flux_inpaint',
     ]
+    assert 'prompt_encode' not in describe_route(route)
 
 
 def test_build_generation_route_maps_controlnet_extensions_explicitly():
@@ -139,6 +141,7 @@ def test_build_generation_route_outpaint_no_controlnet_when_checkbox_off():
     route = build_generation_route(task_state)
 
     assert route.route_id == 'outpaint'
+    assert 'prompt_encode' in describe_route(route)
     assert 'structural_controlnet' not in describe_route(route)
     assert 'contextual_controlnet' not in describe_route(route)
 
@@ -155,6 +158,7 @@ def test_build_generation_route_outpaint_with_controlnet_when_checkbox_on():
     route = build_generation_route(task_state)
 
     assert route.route_id == 'outpaint'
+    assert 'prompt_encode' in describe_route(route)
     assert 'structural_controlnet' in describe_route(route)
     assert 'contextual_controlnet' not in describe_route(route)
 

@@ -47,7 +47,6 @@ def get_module_assets(folder, extension):
 
 
 def javascript_html():
-    samples_path = webpath(os.path.abspath('./sdxl_styles/samples/fooocus_v2.jpg'))
     head = f'<script type="text/javascript">{localization_js(args_manager.args.language)}</script>\n'
     
     # Load all modules from javascript/modules/ in alphabetical order
@@ -57,8 +56,6 @@ def javascript_html():
         content = read_asset(js_file)
         if content:
             head += f'<script type="text/javascript">{content}</script>\n'
-    head += f'<meta name="samples-path" content="{samples_path}">\n'
-
     head += '<style>footer { display: none !important; }</style>\n'
     return head
 

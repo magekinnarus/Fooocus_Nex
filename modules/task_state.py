@@ -14,7 +14,7 @@ class TaskState:
     generate_image_grid: bool = False
     prompt: str = ""
     negative_prompt: str = ""
-    style_selections: List[str] = field(default_factory=list)
+    prompt_preset_selections: List[str] = field(default_factory=list)
     steps: int = 30
     original_steps: int = 30
     aspect_ratios_selection: str = "1024x1024"
@@ -151,7 +151,7 @@ class TaskState:
     height: int = 1024
     use_expansion: bool = False
     inpaint_context: object = None
-    use_style: bool = True
+    use_prompt_presets: bool = True
     sdxl_execution_policy: object = None
     sdxl_execution_family: str = ""
     sdxl_residency_class: str = ""

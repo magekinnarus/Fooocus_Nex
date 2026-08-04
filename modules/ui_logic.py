@@ -1,7 +1,7 @@
 import gradio as gr
 import os
 
-gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
+gr.set_static_paths(paths=["javascript", "css", f"prompt_presets{os.sep}samples"])
 import random
 import os
 import json
@@ -17,7 +17,7 @@ import modules.runtime_surface_state as runtime_surface_state
 import modules.constants as constants
 import modules.flags as flags
 import modules.gradio_hijack as grh
-import modules.style_sorter as style_sorter
+import modules.prompt_preset_sorter as prompt_preset_sorter
 import modules.meta_parser
 from modules.flux_fill_surface import (
     OBJR_ENGINE_FLUX_FILL,
@@ -27,7 +27,6 @@ from modules.flux_fill_surface import (
 import modules.ui_components.metadata_ui as metadata_ui
 from modules.ui_components.metadata_preview import format_metadata_preview
 import modules.ui_components.settings_panel as settings_panel
-import modules.ui_components.styles_panel as styles_panel
 import modules.ui_components.models_panel as models_panel
 import modules.ui_components.advanced_panel as advanced_panel
 import modules.ui_components.control_panel as control_panel
@@ -38,7 +37,6 @@ import copy
 from modules.setup_utils import download_preset_models
 from modules.model_manager import default_model_manager
 
-from modules.sdxl_styles import legal_style_names
 from modules.private_logger import get_current_html_path
 from modules.ui_gradio_extensions import javascript_html, css_html
 from modules.auth import auth_enabled, check_auth
@@ -922,12 +920,12 @@ def apply_model_browser_drop(apply_data_json, current_base_model, current_vae_mo
     return results
 
 
-def update_style_label(selections):
+def update_prompt_preset_label(selections):
     if not selections or len(selections) == 0:
         return gr.update(label='Prompt Presets')
 
-    visible_styles = selections[:2]
-    label = f"Presets: {', '.join(visible_styles)}"
+    visible_prompt_presets = selections[:2]
+    label = f"Presets: {', '.join(visible_prompt_presets)}"
     if len(selections) > 2:
         label += f" ... (+{len(selections) - 2} more)"
 
@@ -1239,24 +1237,24 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     shared.gradio_root.load(update_history_link, outputs=history_link, queue=False, show_progress=False)
 
-    style_selections.change(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False)
+    prompt_preset_selections.change(update_prompt_preset_label, inputs=prompt_preset_selections, outputs=prompt_preset_selections_accordion, queue=False, show_progress=False)
 
     shared.gradio_root.load(
         lambda: gr.update(
-            choices=copy.deepcopy(style_sorter.all_styles),
-            value=[x for x in modules.config.default_styles if x in style_sorter.all_styles]
+            choices=copy.deepcopy(prompt_preset_sorter.all_prompt_presets),
+            value=[x for x in modules.config.default_prompt_presets if x in prompt_preset_sorter.all_prompt_presets]
         ),
-        outputs=style_selections,
+        outputs=prompt_preset_selections,
         queue=False,
         show_progress=False
-    ).then(update_style_label, inputs=style_selections, outputs=style_selections_accordion, queue=False, show_progress=False).then(lambda: None, js='()=>{refresh_style_localization();}', queue=False, show_progress=False)
+    ).then(update_prompt_preset_label, inputs=prompt_preset_selections, outputs=prompt_preset_selections_accordion, queue=False, show_progress=False).then(lambda: None, js='()=>{refresh_prompt_preset_localization();}', queue=False, show_progress=False)
 
-    style_search_bar.change(style_sorter.search_styles,
-                            inputs=[style_selections, style_search_bar],
-                            outputs=style_selections,
+    prompt_preset_search_bar.change(prompt_preset_sorter.search_prompt_presets,
+                            inputs=[prompt_preset_selections, prompt_preset_search_bar],
+                            outputs=prompt_preset_selections,
                             queue=False,
                             show_progress=False).then(
-        lambda: None, js='()=>{refresh_style_localization();}')
+        lambda: None, js='()=>{refresh_prompt_preset_localization();}')
 
     refresh_files_output = [base_model, aspect_ratios_selection, vae_model]
     if not args_manager.args.disable_preset_selection:
@@ -1283,8 +1281,8 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
     if not args_manager.args.disable_preset_selection:
         preset_selection.change(preset_selection_change, inputs=[preset_selection, state_is_generating] + lora_ctrls, outputs=load_data_outputs, queue=False, show_progress=True) \
             .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
-            .then(fn=style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False) \
-            .then(lambda: None, js='()=>{refresh_style_localization();}')
+            .then(fn=prompt_preset_sorter.sort_prompt_presets, inputs=prompt_preset_selections, outputs=prompt_preset_selections, queue=False, show_progress=False) \
+            .then(lambda: None, js='()=>{refresh_prompt_preset_localization();}')
 
     output_format.change(
         update_history_link,
@@ -1311,7 +1309,7 @@ def register_all_events(ctrls_dict, currentTask_component, ui_elements):
 
     metadata_import_button.click(trigger_metadata_import, inputs=[metadata_input_image_path, state_is_generating], outputs=load_data_outputs, queue=False, show_progress=True) \
         .then(update_model_dependent_choices, inputs=model_choice_inputs, outputs=model_choice_outputs, queue=False, show_progress=False) \
-        .then(style_sorter.sort_styles, inputs=style_selections, outputs=style_selections, queue=False, show_progress=False)
+        .then(prompt_preset_sorter.sort_prompt_presets, inputs=prompt_preset_selections, outputs=prompt_preset_selections, queue=False, show_progress=False)
 
     import modules.mask_processing as mask_proc
     inpaint_input_image_path.change(

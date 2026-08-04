@@ -7,7 +7,7 @@ from modules.extra_utils import get_files_from_folder
 from random import Random
 
 # cannot use modules.config - validators causing circular imports
-styles_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../sdxl_styles/'))
+prompt_presets_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../prompt_presets/'))
 
 
 def normalize_key(k):
@@ -22,42 +22,42 @@ def normalize_key(k):
     return k
 
 
-styles = {}
-styles_files = get_files_from_folder(styles_path, ['.json'])
+prompt_presets = {}
+prompt_preset_files = get_files_from_folder(prompt_presets_path, ['.json'])
 
-for x in ['sdxl_styles_fooocus.json',
-          'sdxl_styles_sai.json',
-          'sdxl_styles_mre.json',
-          'sdxl_styles_twri.json',
-          'sdxl_styles_diva.json',
-          'sdxl_styles_marc_k3nt3l.json']:
-    if x in styles_files:
-        styles_files.remove(x)
-        styles_files.append(x)
+for x in ['prompt_presets_fooocus.json',
+          'prompt_presets_sai.json',
+          'prompt_presets_mre.json',
+          'prompt_presets_twri.json',
+          'prompt_presets_diva.json',
+          'prompt_presets_marc_k3nt3l.json']:
+    if x in prompt_preset_files:
+        prompt_preset_files.remove(x)
+        prompt_preset_files.append(x)
 
-for styles_file in styles_files:
+for prompt_preset_file in prompt_preset_files:
     try:
-        with open(os.path.join(styles_path, styles_file), encoding='utf-8') as f:
+        with open(os.path.join(prompt_presets_path, prompt_preset_file), encoding='utf-8') as f:
             for entry in json.load(f):
                 name = normalize_key(entry['name'])
                 prompt = entry['prompt'] if 'prompt' in entry else ''
                 negative_prompt = entry['negative_prompt'] if 'negative_prompt' in entry else ''
-                styles[name] = (prompt, negative_prompt)
+                prompt_presets[name] = (prompt, negative_prompt)
     except Exception as e:
         print(str(e))
-        print(f'Failed to load style file {styles_file}')
+        print(f'Failed to load prompt preset file {prompt_preset_file}')
 
-style_keys = list(styles.keys())
-random_style_name = 'Random Style'
-legal_style_names = [random_style_name] + style_keys
-
-
-def get_random_style(rng: Random) -> str:
-    return rng.choice(list(styles.items()))[0]
+prompt_preset_keys = list(prompt_presets.keys())
+random_prompt_preset_name = 'Random Preset'
+legal_prompt_preset_names = [random_prompt_preset_name] + prompt_preset_keys
 
 
-def apply_style(style, positive):
-    p, n = styles[style]
+def get_random_prompt_preset(rng: Random) -> str:
+    return rng.choice(list(prompt_presets.items()))[0]
+
+
+def apply_prompt_preset(prompt_preset, positive):
+    p, n = prompt_presets[prompt_preset]
     return p.replace('{prompt}', positive).splitlines(), n.splitlines(), '{prompt}' in p
 
 

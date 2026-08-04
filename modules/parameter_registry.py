@@ -76,7 +76,7 @@ PARAM_REGISTRY: List[ParamDef] = [
     # --- Generation ---
     ParamDef('prompt', 'prompt', '', str),
     ParamDef('negative_prompt', 'negative_prompt', '', str),
-    ParamDef('style_selections', 'style_selections', [], list),
+    ParamDef('prompt_preset_selections', 'prompt_preset_selections', [], list),
     ParamDef('aspect_ratios_selection', 'aspect_ratios_selection', '1024x1024', str),
     ParamDef('output_format', 'output_format', 'png', str),
     ParamDef('image_seed', 'seed', -1, int),

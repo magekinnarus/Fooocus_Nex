@@ -4,7 +4,7 @@ import modules.localization as localization
 import json
 
 
-all_styles = []
+all_prompt_presets = []
 
 
 def _dedupe_keep_order(items):
@@ -20,60 +20,60 @@ def _dedupe_keep_order(items):
     return out
 
 
-def try_load_sorted_styles(style_names, default_selected):
-    global all_styles
+def try_load_sorted_prompt_presets(prompt_preset_names, default_selected):
+    global all_prompt_presets
 
-    all_styles = _dedupe_keep_order(style_names or [])
+    all_prompt_presets = _dedupe_keep_order(prompt_preset_names or [])
 
     try:
-        if os.path.exists('sorted_styles.json'):
-            with open('sorted_styles.json', 'rt', encoding='utf-8') as fp:
-                sorted_styles = []
+        if os.path.exists('sorted_prompt_presets.json'):
+            with open('sorted_prompt_presets.json', 'rt', encoding='utf-8') as fp:
+                sorted_prompt_presets = []
                 for x in json.load(fp):
-                    if x in all_styles:
-                        sorted_styles.append(x)
-                for x in all_styles:
-                    if x not in sorted_styles:
-                        sorted_styles.append(x)
-                all_styles = _dedupe_keep_order(sorted_styles)
+                    if x in all_prompt_presets:
+                        sorted_prompt_presets.append(x)
+                for x in all_prompt_presets:
+                    if x not in sorted_prompt_presets:
+                        sorted_prompt_presets.append(x)
+                all_prompt_presets = _dedupe_keep_order(sorted_prompt_presets)
     except Exception as e:
-        print('Load style sorting failed.')
+        print('Load prompt preset sorting failed.')
         print(e)
 
     default_selected = _dedupe_keep_order(default_selected or [])
-    default_selected = [x for x in default_selected if x in all_styles]
-    unselected = [y for y in all_styles if y not in default_selected]
-    all_styles = _dedupe_keep_order(default_selected + unselected)
+    default_selected = [x for x in default_selected if x in all_prompt_presets]
+    unselected = [y for y in all_prompt_presets if y not in default_selected]
+    all_prompt_presets = _dedupe_keep_order(default_selected + unselected)
 
     return
 
 
-def sort_styles(selected):
-    global all_styles
+def sort_prompt_presets(selected):
+    global all_prompt_presets
     selected = _dedupe_keep_order(selected or [])
-    selected = [x for x in selected if x in all_styles]
-    unselected = [y for y in all_styles if y not in selected]
-    sorted_styles = _dedupe_keep_order(selected + unselected)
+    selected = [x for x in selected if x in all_prompt_presets]
+    unselected = [y for y in all_prompt_presets if y not in selected]
+    sorted_prompt_presets = _dedupe_keep_order(selected + unselected)
     try:
-        with open('sorted_styles.json', 'wt', encoding='utf-8') as fp:
-            json.dump(sorted_styles, fp, indent=4)
+        with open('sorted_prompt_presets.json', 'wt', encoding='utf-8') as fp:
+            json.dump(sorted_prompt_presets, fp, indent=4)
     except Exception as e:
-        print('Write style sorting failed.')
+        print('Write prompt preset sorting failed.')
         print(e)
-    all_styles = sorted_styles
-    return gr.update(choices=sorted_styles, value=selected)
+    all_prompt_presets = sorted_prompt_presets
+    return gr.update(choices=sorted_prompt_presets, value=selected)
 
 
-def localization_key(x):
+def prompt_preset_localization_key(x):
     return x + localization.current_translation.get(x, '')
 
 
-def search_styles(selected, query):
+def search_prompt_presets(selected, query):
     selected = _dedupe_keep_order(selected or [])
-    selected = [x for x in selected if x in all_styles]
+    selected = [x for x in selected if x in all_prompt_presets]
     query = (query or "").strip()
-    unselected = [y for y in all_styles if y not in selected]
-    matched = [y for y in unselected if query.lower() in localization_key(y).lower()] if len(query) > 0 else []
+    unselected = [y for y in all_prompt_presets if y not in selected]
+    matched = [y for y in unselected if query.lower() in prompt_preset_localization_key(y).lower()] if len(query) > 0 else []
     unmatched = [y for y in unselected if y not in matched]
-    sorted_styles = _dedupe_keep_order(matched + selected + unmatched)
-    return gr.update(choices=sorted_styles, value=selected)
+    sorted_prompt_presets = _dedupe_keep_order(matched + selected + unmatched)
+    return gr.update(choices=sorted_prompt_presets, value=selected)

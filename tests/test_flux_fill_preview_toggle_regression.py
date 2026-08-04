@@ -75,7 +75,7 @@ def test_flux_fill_inpaint_stage_honors_disable_preview_toggle(monkeypatch, disa
         prompt='a garden',
         inpaint_additional_prompt='replace the statue',
         negative_prompt='',
-        style_selections=[],
+        prompt_preset_selections=[],
         loras=[],
         width=16,
         height=16,

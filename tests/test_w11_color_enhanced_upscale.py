@@ -617,7 +617,7 @@ def test_color_enhancement_request_freezes_workflow_contract(monkeypatch, tmp_pa
         sampler_name="dpmpp_2m",
         scheduler_name="sgm_uniform",
         clip_skip=1,
-        style_selections=[],
+        prompt_preset_selections=[],
         sdxl_execution_policy=None,
         sharpness=2.0,
         adaptive_cfg=7.0,
@@ -742,7 +742,7 @@ def test_color_enhanced_upscale_stage_execution(monkeypatch) -> None:
         scheduler_name="karras",
         steps=24,
         cfg_scale=7.0,
-        style_selections=[],
+        prompt_preset_selections=[],
         use_expansion=False,
         loras=["frozen-lora"],
     )
@@ -802,7 +802,7 @@ def test_color_enhanced_upscale_stage_execution(monkeypatch) -> None:
         scheduler_name="karras",
         steps=24,
         cfg_scale=7.0,
-        style_selections=[],
+        prompt_preset_selections=[],
         use_expansion=False,
         loras=[],
     )
@@ -841,7 +841,7 @@ def test_color_enhanced_upscale_stage_execution(monkeypatch) -> None:
         scheduler_name="karras",
         steps=24,
         cfg_scale=7.0,
-        style_selections=[],
+        prompt_preset_selections=[],
         use_expansion=False,
         loras=[],
     )

@@ -173,7 +173,7 @@ class TestSDXLAssemblyW08(unittest.TestCase):
                 cfg_scale=7.0,
                 sampler_name="euler",
                 clip_skip=1,
-                style_selections=[],
+                prompt_preset_selections=[],
                 tiled=False,
                 goals=["txt2img"],
                 sharpness=2.0,

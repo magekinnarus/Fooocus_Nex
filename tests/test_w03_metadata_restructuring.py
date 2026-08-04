@@ -49,7 +49,7 @@ def test_v2_schema_txt2img_serialization(tmp_path):
         'log_negative_prompt': "blurry, low quality",
         'positive': ["A majestic lion on a cliff"],
         'negative': ["blurry, low quality"],
-        'styles': ["Fooocus Sharp"],
+        'prompt_presets': ["Fooocus Sharp"],
         'task_seed': 12345,
     }
     dummy_img = (255 * pytest.importorskip("numpy").zeros((64, 64, 3), dtype="uint8"))
@@ -70,6 +70,8 @@ def test_v2_schema_txt2img_serialization(tmp_path):
     assert parameters.get("seed") == 12345
     assert parameters.get("base_model") == "sd_xl_base_1.0"
     assert parameters.get("version") == "Nexfocus V1.0.0"
+    assert parameters.get("prompt_presets") == ["Fooocus Sharp"]
+    assert "styles" not in parameters
     assert "base_model_hash" in parameters
     assert "sharpness" in parameters  # Stored in record as hidden field
 
@@ -107,7 +109,7 @@ def test_flux_fill_inpaint_schema_excludes_sdxl_fields(tmp_path):
     assert "clip_skip" not in parameters
     assert "vae" not in parameters
     assert "negative_prompt" not in parameters
-    assert "styles" not in parameters
+    assert "prompt_presets" not in parameters
     assert "base_model" not in parameters
     assert "loras" not in parameters
     assert parameters.get("t5") == "t5xxl_fp16"
@@ -157,7 +159,7 @@ def test_v1_backward_compatibility_shim():
     assert converted.get("prompt") == "A vintage car on route 66"
     assert converted.get("seed") == 54321
     assert converted.get("cfg_scale") == 7.5
-    assert converted.get("styles") == ["Fooocus Sharp"]
+    assert converted.get("prompt_presets") == ["Fooocus Sharp"]
 
 
 def test_prompt_routing_on_import():
@@ -168,7 +170,7 @@ def test_prompt_routing_on_import():
         "workflow": "txt2img",
         "prompt": "A beautiful sunset over mountains",
         "negative_prompt": "fog, clouds",
-        "styles": [],
+        "prompt_presets": [],
         "seed": 101,
     }
     res_txt = metadata_ui.load_parameter_button_click(txt2img_meta, is_generating=False)
@@ -205,6 +207,22 @@ def test_prompt_routing_on_import():
     assert res_out[metadata_ui.METADATA_OUTPUT_INDEX['inpaint_engine']] == {'__type__': 'update'}
 
 
+def test_v2_legacy_styles_key_is_normalized_at_metadata_boundary():
+    legacy_v2 = {
+        "metadata_version": 2,
+        "workflow": "txt2img",
+        "prompt": "A legacy record",
+        "styles": "['Fooocus Sharp']",
+    }
+
+    normalized = meta_parser.normalize_prompt_preset_metadata(legacy_v2)
+    assert normalized["prompt_presets"] == ["Fooocus Sharp"]
+    assert "styles" not in normalized
+
+    results = metadata_ui.load_parameter_button_click(legacy_v2, is_generating=False)
+    assert results[metadata_ui.METADATA_OUTPUT_INDEX["prompt_presets"]] == ["Fooocus Sharp"]
+
+
 @pytest.mark.parametrize(
     ('workflow', 'engine_field', 'engine_attr', 'prompt_attr'),
     [
@@ -229,7 +247,7 @@ def test_sdxl_image_input_engine_is_serialized(tmp_path, workflow, engine_field,
     )
     setattr(task_state, engine_attr, 'v2.6')
     setattr(task_state, prompt_attr, 'Repair or extend the image')
-    task_dict = {'task_seed': 123, 'styles': [], 'log_negative_prompt': ''}
+    task_dict = {'task_seed': 123, 'prompt_presets': [], 'log_negative_prompt': ''}
     dummy_img = (255 * pytest.importorskip('numpy').zeros((16, 16, 3), dtype='uint8'))
 
     img_path = save_and_log(
@@ -293,7 +311,7 @@ def test_v2_metadata_round_trips_all_supported_output_formats(tmp_path, monkeypa
         "log_negative_prompt": "",
         "positive": ["format round trip"],
         "negative": [],
-        "styles": [],
+        "prompt_presets": [],
         "task_seed": 42,
     }
     dummy_img = pytest.importorskip("numpy").zeros((16, 16, 3), dtype="uint8")
@@ -380,7 +398,7 @@ def test_serializer_preserves_workflow_owned_prompt(
         "log_negative_prompt": "",
         "positive": [],
         "negative": [],
-        "styles": [],
+        "prompt_presets": [],
         "task_seed": 7,
         "description": "route label, not user text",
     }
@@ -420,7 +438,7 @@ def test_serializer_uses_only_frozen_active_controlnet_tasks(monkeypatch):
         "log_negative_prompt": "",
         "positive": [],
         "negative": [],
-        "styles": [],
+        "prompt_presets": [],
         "task_seed": 1,
     }
 
@@ -447,7 +465,7 @@ def test_v1_conversion_does_not_execute_metadata(tmp_path):
     )
 
     assert not marker.exists()
-    assert converted["styles"] == []
+    assert converted["prompt_presets"] == []
 
 
 def test_v2_import_resolves_lora_stems_to_installed_filenames(monkeypatch):
@@ -503,7 +521,7 @@ def test_html_log_clipboard_uses_v2_when_image_embedding_is_disabled(tmp_path, m
         "log_negative_prompt": "",
         "positive": ["clipboard prompt"],
         "negative": [],
-        "styles": [],
+        "prompt_presets": [],
         "task_seed": 12,
     }
     dummy_img = pytest.importorskip("numpy").zeros((8, 8, 3), dtype="uint8")

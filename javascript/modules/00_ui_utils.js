@@ -97,10 +97,10 @@ function processNode(node) {
     }
 }
 
-function refresh_style_localization() {
-    const stylesNode = gradioApp().querySelector('.style_selections');
-    if (!stylesNode) return;
-    processNode(stylesNode);
+function refresh_prompt_preset_localization() {
+    const promptPresetsNode = gradioApp().querySelector('.prompt_preset_selections');
+    if (!promptPresetsNode) return;
+    processNode(promptPresetsNode);
 }
 
 function get_selected_aspect_ratio_value(fallbackValue) {

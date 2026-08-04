@@ -938,7 +938,7 @@ def build_assembly_request(
         seed=int(task_dict['task_seed']),
         original_scheduler_name=str(getattr(task_state, 'scheduler_name', '') or ''),
         clip_layer=-abs(int(getattr(task_state, 'clip_skip', 1) or 1)),
-        style_selections=tuple(getattr(task_state, 'style_selections', []) or []),
+        prompt_preset_selections=tuple(getattr(task_state, 'prompt_preset_selections', []) or []),
         prompt_payload_hash=prompt_payload_hash,
         lora_specs=lora_specs,
         lora_stack_hash=lora_stack_hash,

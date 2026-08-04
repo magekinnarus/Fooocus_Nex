@@ -86,13 +86,13 @@ def format_metadata_preview(parameters, metadata_scheme=None):
     hidden_keys = {'sharpness', 'clip_skip', 'adm_guidance', 'adaptive_cfg', 'base_model_hash', 'metadata_version', 'workflow', 'version', 'timestamp', 'created_by'}
 
     if workflow == 'txt2img':
-        deployable_keys = ['prompt', 'negative_prompt', 'styles', 'base_model', 'seed', 'resolution', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras']
+        deployable_keys = ['prompt', 'negative_prompt', 'prompt_presets', 'base_model', 'seed', 'resolution', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras']
         display_only_keys = ['vae', 'cn']
     elif workflow == 'inpaint_sdxl':
-        deployable_keys = ['prompt', 'inpaint_prompt', 'negative_prompt', 'styles', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras', 'inpaint_route', 'inpaint_engine']
+        deployable_keys = ['prompt', 'inpaint_prompt', 'negative_prompt', 'prompt_presets', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras', 'inpaint_route', 'inpaint_engine']
         display_only_keys = ['resolution', 'vae', 'cn']
     elif workflow == 'outpaint_sdxl':
-        deployable_keys = ['prompt', 'outpaint_prompt', 'negative_prompt', 'styles', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras', 'outpaint_engine']
+        deployable_keys = ['prompt', 'outpaint_prompt', 'negative_prompt', 'prompt_presets', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras', 'outpaint_engine']
         display_only_keys = ['resolution', 'vae', 'cn']
     elif workflow == 'flux_fill_inpaint':
         deployable_keys = ['prompt', 'inpaint_prompt', 'seed', 'steps', 'sampler', 'scheduler']
@@ -101,7 +101,7 @@ def format_metadata_preview(parameters, metadata_scheme=None):
         deployable_keys = ['prompt_description', 'seed', 'steps', 'sampler', 'scheduler']
         display_only_keys = ['t5', 'clip_l', 'ae', 'resolution', 'cn']
     elif workflow == 'super_upscale':
-        deployable_keys = ['prompt', 'negative_prompt', 'styles', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras']
+        deployable_keys = ['prompt', 'negative_prompt', 'prompt_presets', 'base_model', 'seed', 'sampler', 'scheduler', 'steps', 'cfg_scale', 'loras']
         display_only_keys = ['resolution', 'vae', 'cn']
     elif workflow == 'color_enhance':
         deployable_keys = ['prompt_description', 'base_model', 'seed', 'scheduler', 'steps', 'loras']

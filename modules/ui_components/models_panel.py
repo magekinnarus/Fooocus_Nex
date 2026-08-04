@@ -1,7 +1,7 @@
 import gradio as gr
 import modules.config
 import modules.flags as flags
-import modules.ui_components.styles_panel as styles_panel
+import modules.ui_components.prompt_presets_panel as prompt_presets_panel
 
 
 def build_models_tab():
@@ -50,10 +50,10 @@ def build_models_tab():
                 elem_id='model_vae_dropdown',
             )
 
-    with gr.Accordion(label='Prompt Presets', open=False, elem_id='style_selections_accordion') as style_selections_accordion:
-        results['style_selections_accordion'] = style_selections_accordion
-        styles_result = styles_panel.build_styles_tab()
-        results.update(styles_result)
+    with gr.Accordion(label='Prompt Presets', open=False, elem_id='prompt_preset_selections_accordion') as prompt_preset_selections_accordion:
+        results['prompt_preset_selections_accordion'] = prompt_preset_selections_accordion
+        prompt_presets_result = prompt_presets_panel.build_prompt_presets_tab()
+        results.update(prompt_presets_result)
 
     with gr.Group():
         lora_ctrls = []

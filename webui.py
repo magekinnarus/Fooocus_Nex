@@ -1,7 +1,7 @@
 import gradio as gr
 import os
 
-gr.set_static_paths(paths=["javascript", "css", f"sdxl_styles{os.sep}samples"])
+gr.set_static_paths(paths=["javascript", "css", f"prompt_presets{os.sep}samples"])
 import random
 import os
 import json
@@ -14,11 +14,9 @@ import modules.async_worker as worker
 import modules.constants as constants
 import modules.flags as flags
 import modules.gradio_hijack as grh
-import modules.style_sorter as style_sorter
 import modules.meta_parser
 import modules.ui_components.metadata_panel as metadata_panel
 import modules.ui_components.settings_panel as settings_panel
-import modules.ui_components.styles_panel as styles_panel
 import modules.ui_components.models_panel as models_panel
 import modules.ui_components.advanced_panel as advanced_panel
 import modules.ui_components.control_panel as control_panel
@@ -34,7 +32,6 @@ import args_manager
 import copy
 from modules.setup_utils import download_models
 
-from modules.sdxl_styles import legal_style_names
 from modules.private_logger import get_current_html_path
 from modules.ui_gradio_extensions import javascript_html, css_html
 from modules.auth import auth_enabled, check_auth
@@ -500,9 +497,9 @@ with shared.gradio_root:
                 models_panel_result = models_panel.build_models_tab()
                 base_model = models_panel_result['base_model']
                 vae_model = models_panel_result['vae_model']
-                style_search_bar = models_panel_result['style_search_bar']
-                style_selections = models_panel_result['style_selections']
-                style_selections_accordion = models_panel_result['style_selections_accordion']
+                prompt_preset_search_bar = models_panel_result['prompt_preset_search_bar']
+                prompt_preset_selections = models_panel_result['prompt_preset_selections']
+                prompt_preset_selections_accordion = models_panel_result['prompt_preset_selections_accordion']
 
                 lora_ctrls = models_panel_result['lora_ctrls']
                 refresh_files = models_panel_result['refresh_files']
@@ -541,7 +538,7 @@ with shared.gradio_root:
 
         state_is_generating = gr.State(False)
 
-        load_data_outputs = [prompt, negative_prompt, style_selections,
+        load_data_outputs = [prompt, negative_prompt, prompt_preset_selections,
                              steps, aspect_ratios_selection,
                              guidance_scale, sharpness, adm_scaler_positive,
                              adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip,
@@ -554,7 +551,7 @@ with shared.gradio_root:
         ctrls_dict = {
             'prompt': prompt,
             'negative_prompt': negative_prompt,
-            'style_selections': style_selections,
+            'prompt_preset_selections': prompt_preset_selections,
             'aspect_ratios_selection': aspect_ratios_selection,
             'output_format': output_format,
             'image_seed': image_seed,
@@ -668,7 +665,7 @@ with shared.gradio_root:
             'ip_tab': ip_tab,
             'metadata_tab': metadata_tab,
             'history_link': history_link,
-            'style_selections_accordion': style_selections_accordion,
+            'prompt_preset_selections_accordion': prompt_preset_selections_accordion,
             'state_is_generating': state_is_generating,
             'stop_button': stop_button,
            'skip_button': skip_button,
@@ -687,7 +684,7 @@ with shared.gradio_root:
             'ip_stops': ip_stops,
             'ip_weights': ip_weights,
             'lora_ctrls': lora_ctrls,
-            'style_search_bar': style_search_bar,
+            'prompt_preset_search_bar': prompt_preset_search_bar,
             'refresh_files': refresh_files,
             'inpaint_engine_state': inpaint_engine_state,
             'model_browser_apply_data': model_browser_apply_data,
@@ -781,7 +778,7 @@ shared.gradio_root.launch(
         modules.config.path_outputs,
         os.path.abspath('javascript'),
         os.path.abspath('css'),
-        os.path.abspath('sdxl_styles/samples')
+        os.path.abspath('prompt_presets/samples')
     ],
     blocked_paths=[constants.AUTH_FILENAME]
 )

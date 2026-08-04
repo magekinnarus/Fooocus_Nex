@@ -84,7 +84,7 @@ def _build_task_dict():
         'negative_top_k': 1,
         'log_positive_prompt': 'prompt',
         'log_negative_prompt': 'negative',
-        'styles': [],
+        'prompt_presets': [],
     }
 
 
@@ -237,7 +237,7 @@ def test_upscale_stage_passes_prompt_blueprint_to_tiled_refinement(monkeypatch):
         'negative': ['expanded negative', 'extra neg'],
         'positive_top_k': 3,
         'negative_top_k': 2,
-        'styles': ['cinematic'],
+        'prompt_presets': ['cinematic'],
     }
     context = PipelineRouteContext(
         async_task=None,
@@ -280,7 +280,7 @@ def test_tiled_refinement_uses_processed_prompt_blueprint(monkeypatch):
         'negative': ['expanded negative', 'extra neg'],
         'positive_top_k': 3,
         'negative_top_k': 2,
-        'styles': ['cinematic'],
+        'prompt_presets': ['cinematic'],
     }
     captured_requests = []
 

@@ -196,7 +196,7 @@ This exposed-context workflow is also the basis of
 
 The **Metadata** workspace turns a saved Nexfocus image back into a reusable
 generation record. Dropping an image into the metadata slot reveals its
-embedded prompt, seed, model, sampler, scheduler, style, resolution, LoRAs,
+embedded prompt, seed, model, sampler, scheduler, prompt presets, resolution, LoRAs,
 and workflow-specific values in a readable JSON view.
 
 **Apply Metadata** restores the supported values to the current session. This

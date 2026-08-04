@@ -15,7 +15,7 @@ import hashlib
 from PIL import Image
 
 import modules.config
-import modules.sdxl_styles
+import modules.prompt_presets
 
 
 LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
@@ -237,26 +237,27 @@ def unquote(text):
         return text
 
 
-def unwrap_style_text_from_prompt(style_text, prompt):
+def unwrap_prompt_preset_text_from_prompt(prompt_preset_text, prompt):
     """
-    Checks the prompt to see if the style text is wrapped around it. If so,
-    returns True plus the prompt text without the style text. Otherwise, returns
+    Checks the prompt to see if the prompt-preset text is wrapped around it. If
+    so, returns True plus the prompt text without the preset text. Otherwise,
+    returns
     False with the original prompt.
 
-    Note that the "cleaned" version of the style text is only used for matching
-    purposes here. It isn't returned; the original style text is not modified.
+    Note that the "cleaned" version of the prompt-preset text is only used for
+    matching purposes here. It isn't returned; the original text is not modified.
     """
     stripped_prompt = prompt
-    stripped_style_text = style_text
-    if "{prompt}" in stripped_style_text:
-        # Work out whether the prompt is wrapped in the style text. If so, we
-        # return True and the "inner" prompt text that isn't part of the style.
+    stripped_prompt_preset_text = prompt_preset_text
+    if "{prompt}" in stripped_prompt_preset_text:
+        # Work out whether the prompt is wrapped in the prompt-preset text. If
+        # so, return the "inner" prompt text that is not part of the preset.
         try:
-            left, right = stripped_style_text.split("{prompt}", 2)
+            left, right = stripped_prompt_preset_text.split("{prompt}", 2)
         except ValueError as e:
-            # If the style text has multple "{prompt}"s, we can't split it into
+            # If the prompt-preset text has multiple "{prompt}"s, we can't split it into
             # two parts. This is an error, but we can't do anything about it.
-            print(f"Unable to compare style text to prompt:\n{style_text}")
+            print(f"Unable to compare prompt-preset text to prompt:\n{prompt_preset_text}")
             print(f"Error: {e}")
             return False, prompt, ''
 
@@ -271,10 +272,10 @@ def unwrap_style_text_from_prompt(style_text, prompt):
                 prompt = prompt[:-2]
             return True, prompt, real_prompt
     else:
-        # Work out whether the given prompt starts with the style text. If so, we
-        # return True and the prompt text up to where the style text starts.
-        if stripped_prompt.endswith(stripped_style_text):
-            prompt = stripped_prompt[: len(stripped_prompt) - len(stripped_style_text)]
+        # Work out whether the given prompt ends with the prompt-preset text.
+        # If so, return the prompt text up to where the preset text starts.
+        if stripped_prompt.endswith(stripped_prompt_preset_text):
+            prompt = stripped_prompt[: len(stripped_prompt) - len(stripped_prompt_preset_text)]
             if prompt.endswith(", "):
                 prompt = prompt[:-2]
             return True, prompt, prompt
@@ -282,23 +283,24 @@ def unwrap_style_text_from_prompt(style_text, prompt):
     return False, prompt, ''
 
 
-def extract_original_prompts(style, prompt, negative_prompt):
+def extract_original_prompts(prompt_preset, prompt, negative_prompt):
     """
-    Takes a style and compares it to the prompt and negative prompt. If the style
-    matches, returns True plus the prompt and negative prompt with the style text
-    removed. Otherwise, returns False with the original prompt and negative prompt.
+    Takes a prompt preset and compares it to the prompt and negative prompt. If
+    the preset matches, returns True plus the prompt and negative prompt with the
+    preset text removed. Otherwise, returns False with the original prompt and
+    negative prompt.
     """
-    if not style.prompt and not style.negative_prompt:
+    if not prompt_preset.prompt and not prompt_preset.negative_prompt:
         return False, prompt, negative_prompt
 
-    match_positive, extracted_positive, real_prompt = unwrap_style_text_from_prompt(
-        style.prompt, prompt
+    match_positive, extracted_positive, real_prompt = unwrap_prompt_preset_text_from_prompt(
+        prompt_preset.prompt, prompt
     )
     if not match_positive:
         return False, prompt, negative_prompt, ''
 
-    match_negative, extracted_negative, _ = unwrap_style_text_from_prompt(
-        style.negative_prompt, negative_prompt
+    match_negative, extracted_negative, _ = unwrap_prompt_preset_text_from_prompt(
+        prompt_preset.negative_prompt, negative_prompt
     )
     if not match_negative:
         return False, prompt, negative_prompt, ''
@@ -306,40 +308,40 @@ def extract_original_prompts(style, prompt, negative_prompt):
     return True, extracted_positive, extracted_negative, real_prompt
 
 
-def extract_styles_from_prompt(prompt, negative_prompt):
+def extract_prompt_presets_from_prompt(prompt, negative_prompt):
     extracted = []
-    applicable_styles = []
+    applicable_prompt_presets = []
 
-    for style_name, (style_prompt, style_negative_prompt) in modules.sdxl_styles.styles.items():
-        applicable_styles.append(PromptStyle(name=style_name, prompt=style_prompt, negative_prompt=style_negative_prompt))
+    for prompt_preset_name, (prompt_preset_prompt, prompt_preset_negative_prompt) in modules.prompt_presets.prompt_presets.items():
+        applicable_prompt_presets.append(PromptPreset(name=prompt_preset_name, prompt=prompt_preset_prompt, negative_prompt=prompt_preset_negative_prompt))
 
     real_prompt = ''
 
     while True:
-        found_style = None
+        found_prompt_preset = None
 
-        for style in applicable_styles:
+        for prompt_preset in applicable_prompt_presets:
             is_match, new_prompt, new_neg_prompt, new_real_prompt = extract_original_prompts(
-                style, prompt, negative_prompt
+                prompt_preset, prompt, negative_prompt
             )
             if is_match:
-                found_style = style
+                found_prompt_preset = prompt_preset
                 prompt = new_prompt
                 negative_prompt = new_neg_prompt
                 if real_prompt == '' and new_real_prompt != '' and new_real_prompt != prompt:
                     real_prompt = new_real_prompt
                 break
 
-        if not found_style:
+        if not found_prompt_preset:
             break
 
-        applicable_styles.remove(found_style)
-        extracted.append(found_style.name)
+        applicable_prompt_presets.remove(found_prompt_preset)
+        extracted.append(found_prompt_preset.name)
 
     return list(reversed(extracted)), real_prompt, negative_prompt
 
 
-class PromptStyle(NamedTuple):
+class PromptPreset(NamedTuple):
     name: str
     prompt: str
     negative_prompt: str
