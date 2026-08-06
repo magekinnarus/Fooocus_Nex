@@ -17,11 +17,9 @@ investigation of how models load, how memory moves, how pipelines execute, and w
 
 Experience the connected Nexfocus image creation and post-processing pipeline in action. The walkthrough video demonstrates session-aware model management, GIMP layer exchange, ControlNet guidance, inpaint detail editing, directional outpainting, GAN upscaling, and SDXL-based color enhancement in a single continuous session.
 
-<video controls autoplay muted playsinline width="840">
-  <source src="assets/images/walkthrough/Nexfocus_walkthrough.mp4" type="video/mp4">
-  Your browser does not support the video tag. [Open the walkthrough video](https://raw.githubusercontent.com/magekinnarus/Nexfocus/main/assets/images/walkthrough/Nexfocus_walkthrough.mp4).
-</video>
+[![Nexfocus walkthrough video](https://img.youtube.com/vi/5fvIaZWMZE4/maxresdefault.jpg)](https://www.youtube.com/watch?v=5fvIaZWMZE4)
 
+- **Watch the Connected Workflow:** [Open the walkthrough video on YouTube](https://www.youtube.com/watch?v=5fvIaZWMZE4)
 - **Explore the Feature Guide:** See [FEATURES.md](FEATURES.md) for a visual tour of the core workspaces and connected artist workflows.
 - **Explore the Usage Guide:** See [USAGE.md](USAGE.md) for practical notes on shortcuts, masks, queue behavior, and runtime postures while using Nexfocus.
 
