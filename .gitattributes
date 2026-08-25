@@ -1,2 +1,3 @@
 launch.sh text eol=lf
 launch.bat text eol=crlf
+bootstrap/licenses/uv-MIT.txt text eol=lf

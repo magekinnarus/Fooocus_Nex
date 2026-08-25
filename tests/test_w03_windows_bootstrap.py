@@ -1177,6 +1177,13 @@ def test_release_input_contract_is_repository_pinned() -> None:
     assert contract["uv"]["version"] == "0.12.5"
     assert contract["uv"]["archive_name"] == "uv-x86_64-pc-windows-msvc.zip"
     assert contract["python"]["sha256"] != "a" * 64
+    uv_license = Path(str(contract["uv"]["license_source"]))
+    uv_license_bytes = uv_license.read_bytes()
+    assert hashlib.sha256(uv_license_bytes).hexdigest() == contract["uv"]["license_sha256"]
+    assert b"\r\n" not in uv_license_bytes
+    assert "bootstrap/licenses/uv-MIT.txt text eol=lf" in Path(".gitattributes").read_text(
+        encoding="utf-8"
+    ).splitlines()
     shared_lock = load_lock(Path(str(contract["shared_lock_source"])), require_hashes=False)
     assert shared_lock.pin("markdown-it-py").version == "4.2.0"
     assert shared_lock.pin("mdurl").version == "0.1.2"
