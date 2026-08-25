@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "manifest_filename": "wheel-artifact-manifest.json",
-  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "manifest_sha256": "001fa195b444075e068beb7841c36df318c55556560574fb576470928952d7cf",
   "approved_source_origins": [
     "https://files.pythonhosted.org/",
     "https://download.pytorch.org/whl/cu124/",
     "https://download.pytorch.org/whl/cu128/"
   ],
-  "status": "pending-director-approved-release-manifest",
-  "note": "Replace the sentinel digest with the SHA-256 of the Director-approved wheel-artifact-manifest.json in the same reviewed change before assembling a release candidate. The builder rejects the sentinel."
+  "status": "director-approved-release-manifest",
+  "note": "Director approval recorded on 2026-08-26 for the exact Nexfocus 0.1.0 wheel-artifact-manifest.json raw SHA-256."
 }
