@@ -252,7 +252,7 @@ def _pin(
     )
 
 
-# All three package digests are part of the checked-in release contract.  The
+# All package digests are part of the checked-in release contract.  The
 # PyTorch simple index does not publish a hash fragment for every wheel, so the
 # digest was independently recorded from the official wheel before being
 # admitted here.
@@ -294,6 +294,13 @@ MODERN_PROFILE = DependencyProfile(
     compute_capability_max_exclusive=None,
     pytorch_index=f"{PYTORCH_INDEX_ROOT}/cu128",
     packages=(
+        PackagePin(
+            name="sympy",
+            version="1.13.3",
+            index_url=PYPI_INDEX,
+            wheel_filename="sympy-1.13.3-py3-none-any.whl",
+            sha256="54612cf55a62755ee71824ce692986f23c88ffa77207b30c1368eda4a7060f73",
+        ),
         _pin(
             "torch",
             "2.11.0+cu128",
@@ -369,6 +376,14 @@ _CANONICAL_PROFILE_SPECS: Mapping[str, dict[str, object]] = MappingProxyType(
             "compute_capability_max_exclusive": None,
             "pytorch_index": f"{PYTORCH_INDEX_ROOT}/cu128",
             "packages": {
+                "sympy": {
+                    "name": "sympy",
+                    "version": "1.13.3",
+                    "index_url": PYPI_INDEX,
+                    "wheel_filename": "sympy-1.13.3-py3-none-any.whl",
+                    "sha256": "54612cf55a62755ee71824ce692986f23c88ffa77207b30c1368eda4a7060f73",
+                    "no_deps": True,
+                },
                 "torch": {
                     "name": "torch",
                     "version": "2.11.0+cu128",

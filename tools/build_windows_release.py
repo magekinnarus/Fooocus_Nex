@@ -35,6 +35,7 @@ from bootstrap.locks import LockSet, load_lock, profile_lock_from_profile, valid
 from bootstrap.profiles import (
     APPROVED_PROFILES,
     DependencyProfile,
+    PYPI_INDEX,
     normalize_package_name,
     validate_approved_profile,
 )
@@ -109,6 +110,8 @@ _NONEMPTY_ENV_CREDENTIAL = re.compile(
 )
 _WHEEL_MANIFEST_SCHEMA = 1
 _UNSUPPORTED_SHARED_PACKAGES = frozenset({"gguf"})
+_UNKNOWN_LICENSE_IDENTITIES = frozenset({"UNKNOWN", "NOASSERTION"})
+_MAX_LICENSE_IDENTITY_LENGTH = 200
 _WHEEL_METADATA_MEMBERS = ("METADATA", "WHEEL", "RECORD")
 _TARGET_PYTHON_VERSION = (3, 12)
 
@@ -505,17 +508,18 @@ def _wheel_tag_is_cp312_compatible(python_tag: str, abi_tag: str, platform_tag: 
     if not platform_tags.intersection({"any", "win_amd64"}):
         return False
     python_tags = set(python_tag.split("."))
-    if "py3" in python_tags and abi_tag == "none":
+    abi_tags = set(abi_tag.split("."))
+    if "py3" in python_tags and "none" in abi_tags:
         return True
     for tag in python_tags:
-        if tag.startswith("py") and tag[2:].isdigit() and abi_tag == "none":
+        if tag.startswith("py") and tag[2:].isdigit() and "none" in abi_tags:
             # A pure-Python wheel tagged for an older Python minor remains
             # usable on CPython 3.12.  Future-only tags do not.
             if int(tag[2:]) <= 312:
                 return True
-        if tag == "cp312" and abi_tag in {"cp312", "abi3", "none"}:
+        if tag == "cp312" and abi_tags.intersection({"cp312", "abi3", "none"}):
             return True
-        if tag.startswith("cp") and tag[2:].isdigit() and abi_tag == "abi3":
+        if tag.startswith("cp") and tag[2:].isdigit() and "abi3" in abi_tags:
             # abi3 is forward compatible, never backward compatible from a
             # future interpreter.  This specifically rejects cp313-abi3 for
             # the CPython 3.12 release target.
@@ -731,6 +735,26 @@ def _read_wheel_member_text(path: Path, member_path: str) -> str:
     raise ValueError(f"Wheel does not contain the declared license member: {path.name}:{member_path}")
 
 
+def _declared_license_identities(metadata: Any) -> tuple[str, ...]:
+    identities = [
+        str(value).strip()
+        for value in metadata.get_all("License-Expression", [])
+        if str(value).strip()
+    ]
+    identities.extend(
+        text
+        for value in metadata.get_all("License", [])
+        if (text := str(value).strip())
+        and "\n" not in text
+        and len(text) <= _MAX_LICENSE_IDENTITY_LENGTH
+    )
+    return tuple(
+        value
+        for value in identities
+        if value.upper() not in _UNKNOWN_LICENSE_IDENTITIES
+    )
+
+
 def _inspect_wheel(path: Path, pin: Any) -> dict[str, Any]:
     """Parse and validate the wheel container and its CP312 metadata."""
 
@@ -775,7 +799,12 @@ def _inspect_wheel(path: Path, pin: Any) -> dict[str, Any]:
     if not tags:
         raise ValueError(f"Wheel WHEEL metadata has no Tag entries: {path.name}")
     filename_parts = parsed_filename
-    filename_tag = "-".join(filename_parts[3:])
+    filename_tags = {
+        f"{python_tag}-{abi_tag}-{platform_tag}"
+        for python_tag in filename_parts[3].split(".")
+        for abi_tag in filename_parts[4].split(".")
+        for platform_tag in filename_parts[5].split(".")
+    }
     if not any(
         len(tag.split("-")) == 3
         and _wheel_tag_is_cp312_compatible(*tag.split("-"))
@@ -784,14 +813,9 @@ def _inspect_wheel(path: Path, pin: Any) -> dict[str, Any]:
         raise ValueError(f"Wheel WHEEL tags are not CPython 3.12 Windows compatible: {path.name}")
     if not _wheel_tag_is_cp312_compatible(*filename_parts[3:]):
         raise ValueError(f"Wheel filename tag is not CPython 3.12 Windows compatible: {path.name}")
-    if filename_tag not in tags:
-        raise ValueError(f"Wheel filename tag is absent from WHEEL metadata: {path.name}")
-    license_metadata = tuple(
-        value.strip()
-        for header in ("License-Expression", "License")
-        for value in metadata.get_all(header, [])
-        if str(value).strip()
-    )
+    if not filename_tags.issubset(tags):
+        raise ValueError(f"Wheel filename tag set is absent from WHEEL metadata: {path.name}")
+    license_metadata = _declared_license_identities(metadata)
     return {
         "name": name,
         "version": version,
@@ -801,7 +825,7 @@ def _inspect_wheel(path: Path, pin: Any) -> dict[str, Any]:
         "wheel_metadata_sha256": hashlib.sha256(wheel_bytes).hexdigest(),
         "requires_dist": tuple(str(value) for value in metadata.get_all("Requires-Dist", [])),
         "wheel_tags": tuple(tags),
-        "filename_tag": filename_tag,
+        "filename_tags": tuple(sorted(filename_tags)),
         "license_metadata": license_metadata,
     }
 
@@ -809,18 +833,56 @@ def _inspect_wheel(path: Path, pin: Any) -> dict[str, Any]:
 def _source_matches_index(source_url: str, index_url: str | None) -> bool:
     if not index_url:
         return True
+    if index_url.rstrip("/") == PYPI_INDEX.rstrip("/"):
+        return source_url.startswith("https://files.pythonhosted.org/")
     return source_url.rstrip("/").startswith(index_url.rstrip("/") + "/")
 
 
-def _version_key(value: str) -> tuple[object, ...]:
-    parts = re.split(r"[.+-]", value.lower())
-    result: list[object] = []
-    for part in parts:
-        if part.isdigit():
-            result.append(int(part))
-        else:
-            result.append(part)
-    return tuple(result)
+def _version_key(value: str, *, include_local: bool = True) -> tuple[object, ...]:
+    """Return a comparable key for the PEP 440 forms admitted by release locks."""
+
+    normalized = value.strip().lower().replace("-", ".").replace("_", ".")
+    public, separator, local = normalized.partition("+")
+    match = re.fullmatch(
+        r"(?:(?P<epoch>\d+)!)?"
+        r"(?P<release>\d+(?:\.\d+)*)"
+        r"(?:(?:\.)?(?P<pre>a|b|rc|alpha|beta|pre|preview)(?P<pre_n>\d*)?)?"
+        r"(?:(?:\.)?(?P<post>post|rev|r)(?P<post_n>\d*)?)?"
+        r"(?:(?:\.)?dev(?P<dev_n>\d*)?)?",
+        public,
+    )
+    if not match:
+        raise ValueError(f"Unsupported wheel dependency version: {value}")
+    release = tuple(int(part) for part in match.group("release").split("."))
+    while len(release) > 1 and release[-1] == 0:
+        release = release[:-1]
+    pre_name = match.group("pre")
+    pre_number = int(match.group("pre_n") or 0)
+    pre_rank = {
+        "a": 0,
+        "alpha": 0,
+        "b": 1,
+        "beta": 1,
+        "rc": 2,
+        "pre": 2,
+        "preview": 2,
+    }
+    dev_number = match.group("dev_n")
+    if pre_name is None and dev_number is not None:
+        pre = (-1, 0)
+    elif pre_name is None:
+        pre = (3, 0)
+    else:
+        pre = (pre_rank[pre_name], pre_number)
+    post = (0, int(match.group("post_n") or 0)) if match.group("post") else (-1, 0)
+    dev = (0, int(dev_number or 0)) if dev_number is not None else (1, 0)
+    local_key: tuple[tuple[int, object], ...] = ()
+    if include_local and separator:
+        local_key = tuple(
+            (1, int(part)) if part.isdigit() else (0, part)
+            for part in local.split(".")
+        )
+    return int(match.group("epoch") or 0), release, pre, post, dev, local_key
 
 
 def _specifier_satisfied(version: str, specifier: str) -> bool:
@@ -831,13 +893,25 @@ def _specifier_satisfied(version: str, specifier: str) -> bool:
         if not match:
             raise ValueError(f"Unsupported wheel dependency specifier: {specifier}")
         operator, expected = match.groups()
-        actual_key = _version_key(version)
-        expected_key = _version_key(expected)
-        if operator == "==" and version != expected and not (expected.endswith(".*") and version.startswith(expected[:-2])):
+        wildcard = expected.endswith(".*")
+        if wildcard:
+            expected_prefix = tuple(int(part) for part in expected[:-2].split("."))
+            actual_release = _version_key(version)[1]
+            wildcard_match = tuple(actual_release[:len(expected_prefix)]) == expected_prefix
+            if operator == "==" and not wildcard_match:
+                return False
+            if operator == "!=" and wildcard_match:
+                return False
+            if operator in {"==", "!="}:
+                continue
+        include_local = "+" in expected
+        actual_key = _version_key(version, include_local=include_local)
+        expected_key = _version_key(expected, include_local=include_local)
+        if operator == "==" and actual_key != expected_key:
             return False
         if operator == "===" and version != expected:
             return False
-        if operator == "!=" and version == expected:
+        if operator == "!=" and actual_key == expected_key:
             return False
         if operator == "<" and not actual_key < expected_key:
             return False
@@ -847,8 +921,14 @@ def _specifier_satisfied(version: str, specifier: str) -> bool:
             return False
         if operator == ">=" and not actual_key >= expected_key:
             return False
-        if operator == "~=" and not (actual_key >= expected_key and actual_key[:1] == expected_key[:1]):
-            return False
+        if operator == "~=":
+            expected_release = expected_key[1]
+            prefix_length = max(1, len(expected_release) - 1)
+            if not (
+                actual_key >= expected_key
+                and actual_key[1][:prefix_length] == expected_release[:prefix_length]
+            ):
+                return False
     return True
 
 
@@ -887,7 +967,7 @@ def _marker_applies(marker: str | None) -> bool:
     if len(and_parts) > 1:
         return all(_marker_applies(part) for part in and_parts)
     match = re.fullmatch(
-        r"(?P<name>python_version|python_full_version|sys_platform|platform_system|platform_machine|implementation_name|extra)\s*"
+        r"(?P<name>python_version|python_full_version|sys_platform|platform_system|platform_machine|platform_python_implementation|implementation_name|extra)\s*"
         r"(?P<operator>not in|in|==|!=|<=|>=|<|>)\s*['\"]?(?P<value>[^'\"]+)['\"]?",
         expression,
         flags=re.IGNORECASE,
@@ -900,6 +980,7 @@ def _marker_applies(marker: str | None) -> bool:
         "sys_platform": "win32",
         "platform_system": "Windows",
         "platform_machine": "AMD64",
+        "platform_python_implementation": "CPython",
         "implementation_name": "cpython",
         "extra": "",
     }
@@ -914,8 +995,8 @@ def _marker_applies(marker: str | None) -> bool:
         actual_value: object = _version_key(actual)
         expected_value: object = _version_key(expected)
     else:
-        actual_value = actual.lower()
-        expected_value = expected.lower()
+        actual_value = actual
+        expected_value = expected
     return {
         "==": actual_value == expected_value,
         "!=": actual_value != expected_value,
@@ -1291,7 +1372,7 @@ def validate_dependency_notice(
         if wheel_path is None or wheel_path.name != filename:
             raise ValueError(f"Notice record is not bound to the audited wheel bytes: {filename}")
         wheel_audit = _inspect_wheel(wheel_path, pin)
-        declared_license = tuple(str(value).strip() for value in wheel_audit.get("license_metadata", ()))
+        declared_license = tuple(wheel_audit.get("license_metadata", ()))
         if declared_license and license_id not in declared_license:
             raise ValueError(f"Notice license identity conflicts with wheel metadata: {filename}")
         if evidence == "wheel-member":

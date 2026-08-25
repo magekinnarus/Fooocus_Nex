@@ -30,7 +30,10 @@ from bootstrap.manifest import (
 from bootstrap.profiles import LEGACY_PROFILE, MODERN_PROFILE, PackagePin, select_profile
 from bootstrap.user_data import materialize_config, redact_text
 from tools.build_windows_release import (
+    _marker_applies,
     _payload_sha256,
+    _source_matches_index,
+    _specifier_satisfied,
     _validate_complete_shared_lock,
     _validate_untracked_workspace,
     build_release,
@@ -51,8 +54,45 @@ def test_profile_boundary_and_closed_profile_versions() -> None:
     assert select_profile("7.50").name == "modern-cu128"
     assert LEGACY_PROFILE.package("torch").version == "2.5.1+cu124"
     assert MODERN_PROFILE.package("torch").version == "2.11.0+cu128"
+    assert MODERN_PROFILE.package("sympy").version == "1.13.3"
     with pytest.raises(ProfileError):
         select_profile("cpu")
+
+
+def test_wheel_marker_supports_target_python_implementation() -> None:
+    assert _marker_applies('platform_python_implementation == "CPython"')
+    assert not _marker_applies('platform_python_implementation != "CPython"')
+    assert _marker_applies('platform_machine == "AMD64"')
+    assert not _marker_applies('platform_machine == "amd64"')
+    assert _source_matches_index(
+        "https://files.pythonhosted.org/packages/demo.whl",
+        "https://pypi.org/simple",
+    )
+    assert not _source_matches_index(
+        "https://example.invalid/demo.whl",
+        "https://pypi.org/simple",
+    )
+
+
+@pytest.mark.parametrize(
+    ("version", "specifier", "expected"),
+    [
+        ("0.47.0", "<0.48,>=0.47.0dev0", True),
+        ("2.5.1+cu124", "==2.5.1", True),
+        ("2.5.1+cu124", "==2.5.1+cu124", True),
+        ("0.0.28.post3", ">=0.0.28", True),
+        ("3.2.0", "!=3.2.0b1", True),
+        ("8.1.1", "!=8.1.*", False),
+        ("2.4.0", "~=2.3", True),
+        ("3.0.0", "~=2.3", False),
+    ],
+)
+def test_wheel_specifier_supports_release_graph_pep440_forms(
+    version: str,
+    specifier: str,
+    expected: bool,
+) -> None:
+    assert _specifier_satisfied(version, specifier) is expected
 
 
 @pytest.mark.parametrize(
@@ -135,6 +175,8 @@ def _make_test_wheel(
     tag: str = "cp312-cp312-win_amd64",
     requires: tuple[str, ...] = (),
     metadata_name: str | None = None,
+    metadata_license: str = "MIT",
+    metadata_tags: tuple[str, ...] | None = None,
 ) -> tuple[bytes, bytes]:
     normalized_name = name.replace("-", "_")
     dist_info = f"{normalized_name}-{version}.dist-info"
@@ -142,7 +184,7 @@ def _make_test_wheel(
         "Metadata-Version: 2.3",
         f"Name: {metadata_name or name}",
         f"Version: {version}",
-        "License: MIT",
+        f"License: {metadata_license}",
         *[f"Requires-Dist: {requirement}" for requirement in requires],
         "",
     ]
@@ -151,7 +193,7 @@ def _make_test_wheel(
         "Wheel-Version: 1.0\n"
         "Generator: nexfocus-test\n"
         "Root-Is-Purelib: false\n"
-        f"Tag: {tag}\n"
+        + "".join(f"Tag: {wheel_tag}\n" for wheel_tag in (metadata_tags or (tag,)))
     ).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     license_text = f"{name} redistribution license\n"
@@ -273,6 +315,7 @@ def _install_runner_factory(*, fail: bool = False):
         target = Path(command[command.index("--target") + 1])
         target.mkdir(parents=True, exist_ok=True)
         for name, version in (
+            ("sympy", "1.13.3"),
             ("torch", "2.11.0+cu128"),
             ("torchvision", "0.26.0+cu128"),
             ("xformers", "0.0.35"),
@@ -299,12 +342,14 @@ def _prepare_installer_inputs(layout, lock_root: Path) -> tuple[Path, Path]:
         [
             "packaging==24.1 --hash=sha256:" + "a" * 64,
             "insightface==0.7.3 --hash=sha256:" + "b" * 64,
+            "sympy==1.13.1 --hash=sha256:" + "c" * 64,
         ],
     )
     profile = _write_test_lock(
         lock_root / "modern.txt",
         "modern-cu128-py312-win-amd64",
         [
+            f"sympy==1.13.3 --hash=sha256:{MODERN_PROFILE.package('sympy').sha256}",
             f"torch==2.11.0+cu128 --hash=sha256:{MODERN_PROFILE.package('torch').sha256}",
             f"torchvision==0.26.0+cu128 --hash=sha256:{MODERN_PROFILE.package('torchvision').sha256}",
             f"xformers==0.0.35 --hash=sha256:{MODERN_PROFILE.package('xformers').sha256}",
@@ -343,6 +388,12 @@ def test_failed_install_has_no_ready_marker_and_success_reuses_runtime(tmp_path:
         profile_lock=profile,
         runner=runner,
     )
+    shared_without_overrides = installer._shared_without_profile_overrides(
+        load_lock(shared),
+        load_lock(profile),
+    )
+    assert {pin.name for pin in shared_without_overrides.pins} == {"packaging", "insightface"}
+    assert installer._profile_overrides(load_lock(profile)).pin("sympy").version == "1.13.3"
     result = installer.ensure()
     assert result.installed is True
     assert is_runtime_ready(result.runtime_dir)
@@ -350,13 +401,15 @@ def test_failed_install_has_no_ready_marker_and_success_reuses_runtime(tmp_path:
     reused = installer.ensure()
     assert reused.installed is False
     assert len(calls) == previous_call_count
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert all("--no-deps" in call for call in calls)
     assert all("--cache-dir" in call and "--no-cache" not in call for call in calls)
     assert calls[0][calls[0].index("--index-url") + 1] == MODERN_PROFILE.pytorch_index
     assert calls[1][calls[1].index("--index-url") + 1] == "https://pypi.org/simple"
-    assert calls[2][calls[2].index("--index-url") + 1] == MODERN_PROFILE.pytorch_index
-    assert "xformers" in calls[2][-1]
+    assert calls[2][calls[2].index("--index-url") + 1] == "https://pypi.org/simple"
+    assert "sympy" in calls[2][-1]
+    assert calls[3][calls[3].index("--index-url") + 1] == MODERN_PROFILE.pytorch_index
+    assert "xformers" in calls[3][-1]
 
 
 def test_interrupted_attempt_reuses_persistent_cache_and_emits_progress(tmp_path: Path) -> None:
@@ -379,6 +432,7 @@ def test_interrupted_attempt_reuses_persistent_cache_and_emits_progress(tmp_path
         target = Path(command[command.index("--target") + 1])
         target.mkdir(parents=True, exist_ok=True)
         for name, version in (
+            ("sympy", "1.13.3"),
             ("torch", "2.11.0+cu128"),
             ("torchvision", "0.26.0+cu128"),
             ("xformers", "0.0.35"),
@@ -400,7 +454,7 @@ def test_interrupted_attempt_reuses_persistent_cache_and_emits_progress(tmp_path
     )
     result = installer.install()
     assert result.installed is True
-    assert attempts == 4
+    assert attempts == 5
     assert any("42%" in event for event in events)
     assert (layout.download_cache_root / "uv-reused-wheel.whl").is_file()
 
@@ -536,6 +590,7 @@ def test_repair_preserves_user_data_and_profile_lock_rejects_cpu_drift(tmp_path:
             LockPin("torch", "2.11.0+cpu", ("a" * 64,)),
             LockPin("torchvision", "0.26.0+cu128", ("b" * 64,)),
             LockPin("xformers", "0.0.35", ("c" * 64,)),
+            LockPin("sympy", "1.13.3", ("d" * 64,)),
         ),
     )
     with pytest.raises(ProfileError):
@@ -845,6 +900,27 @@ def test_wheel_audit_rejects_fake_future_abi_metadata_and_digest_substitution(tm
         validate_wheelhouse(mismatch_lock, mismatch_root, label="demo", artifact_manifest=mismatch_manifest)
 
 
+def test_wheel_audit_expands_compressed_filename_tags(tmp_path: Path) -> None:
+    wheelhouse = tmp_path / "wheelhouse"
+    wheel = wheelhouse / "demo-1.0-py2.py3-none-any.whl"
+    _make_test_wheel(
+        wheel,
+        "demo",
+        "1.0",
+        tag="py2.py3-none-any",
+        metadata_tags=("py2-none-any", "py3-none-any"),
+    )
+    manifest = _make_test_wheel_manifest([wheel])
+    lock = LockSet(
+        name="shared",
+        python="3.12",
+        platform="win_amd64",
+        pins=(LockPin("demo", "1.0", (manifest["artifacts"][0]["sha256"],)),),
+    )
+
+    assert validate_wheelhouse(lock, wheelhouse, label="demo", artifact_manifest=manifest)
+
+
 def test_wheel_manifest_requires_detached_trust_root(tmp_path: Path) -> None:
     wheel = tmp_path / "demo-1.0-cp312-cp312-win_amd64.whl"
     _make_test_wheel(wheel, "demo", "1.0")
@@ -1024,6 +1100,45 @@ def test_structured_notices_cover_profile_wheels_and_reject_placeholder(tmp_path
     placeholder.write_text("sharedpkg==1.0\n", encoding="utf-8")
     with pytest.raises(ValueError, match="structured JSON"):
         validate_dependency_notice(shared, placeholder, artifact_manifest=manifest)
+
+
+@pytest.mark.parametrize(
+    "metadata_license",
+    ["UNKNOWN", "NOASSERTION", "complete license text " * 20],
+)
+def test_notice_accepts_evidence_backed_license_when_wheel_metadata_is_placeholder(
+    tmp_path: Path,
+    metadata_license: str,
+) -> None:
+    wheel = tmp_path / "demo-1.0-py3-none-any.whl"
+    _make_test_wheel(
+        wheel,
+        "demo",
+        "1.0",
+        tag="py3-none-any",
+        metadata_license=metadata_license,
+    )
+    manifest = _make_test_wheel_manifest([wheel])
+    record = manifest["artifacts"][0]
+    record["license"]["id"] = "MIT"
+    lock = LockSet(
+        name="shared",
+        python="3.12",
+        platform="win_amd64",
+        pins=(LockPin("demo", "1.0", (record["sha256"],)),),
+    )
+    notice = tmp_path / "notices.json"
+    _write_test_notice(
+        notice,
+        [("demo", "1.0", record["filename"], record["sha256"], record["source_url"])],
+    )
+
+    assert validate_dependency_notice(
+        lock,
+        notice,
+        artifact_manifest=manifest,
+        audited_wheels={("demo", "1.0"): wheel},
+    )["schema"] == 1
 
 
 def test_release_builder_rejects_fake_or_unversioned_external_inputs(tmp_path: Path) -> None:

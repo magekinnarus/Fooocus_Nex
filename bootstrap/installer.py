@@ -162,7 +162,20 @@ class PrivateRuntimeInstaller:
             # The shared graph is complete and already has the exact CUDA
             # packages in place.  No resolver may inspect its metadata and
             # replace them with CPU or another CUDA family.
-            self._install_lock(shared_lock, site_packages, index_url=PYPI_INDEX, no_deps=True)
+            self._install_lock(
+                self._shared_without_profile_overrides(shared_lock, profile_lock),
+                site_packages,
+                index_url=PYPI_INDEX,
+                no_deps=True,
+            )
+            profile_overrides = self._profile_overrides(profile_lock)
+            if profile_overrides.pins:
+                self._install_lock(
+                    profile_overrides,
+                    site_packages,
+                    index_url=PYPI_INDEX,
+                    no_deps=True,
+                )
             self._install_lock(
                 self._single_pin_lock(profile_lock, "xformers"),
                 site_packages,
@@ -384,15 +397,48 @@ class PrivateRuntimeInstaller:
             no_deps=True,
         )
 
+    @staticmethod
+    def _profile_overrides(lock: LockSet) -> LockSet:
+        core_names = {"torch", "torchvision", "xformers"}
+        pins = tuple(
+            pin
+            for pin in lock.pins
+            if pin.name.lower().replace("_", "-") not in core_names
+        )
+        suffix = "-".join(pin.name.lower().replace("_", "-") for pin in pins) or "none"
+        return LockSet(
+            name=f"{lock.name}-{suffix}-overrides",
+            python=lock.python,
+            platform=lock.platform,
+            pins=pins,
+            wheel_only=lock.wheel_only,
+            require_hashes=lock.require_hashes,
+        )
+
+    @staticmethod
+    def _shared_without_profile_overrides(shared: LockSet, profile: LockSet) -> LockSet:
+        override_names = {
+            pin.name.lower().replace("_", "-")
+            for pin in PrivateRuntimeInstaller._profile_overrides(profile).pins
+        }
+        return LockSet(
+            name=f"{shared.name}-{profile.name}",
+            python=shared.python,
+            platform=shared.platform,
+            pins=tuple(
+                pin
+                for pin in shared.pins
+                if pin.name.lower().replace("_", "-") not in override_names
+            ),
+            wheel_only=shared.wheel_only,
+            require_hashes=shared.require_hashes,
+        )
+
     def _validate_shared_lock(self, lock: LockSet) -> None:
         validate_lock(lock, require_hashes=True)
         if lock.pin("insightface").version != "0.7.3":
             raise ProfileError("Shared lock must pin insightface==0.7.3")
-        profile_names = {
-            package.normalized_name
-            for profile in (self.profile,)
-            for package in profile.packages
-        }
+        profile_names = {"torch", "torchvision", "xformers"}
         overlap = {
             pin.name.lower().replace("_", "-")
             for pin in lock.pins
