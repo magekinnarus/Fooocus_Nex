@@ -11,6 +11,19 @@ time.
 
 ### Added
 
+- A Windows x64/NVIDIA one-click release contract and stdlib-only bootstrap
+  with a private Python 3.12 runtime, uv, exact legacy-cu124/modern-cu128
+  profiles, compute-capability selection, driver diagnostics, transactional
+  install/repair, hash-verified wheel-only locks, user-data ownership, and
+  archive auditing. The reproducible builder requires external runtime and
+  approved wheel/hash inputs and never includes models or credentials.
+- W03 corrective validation now requires a repository-detached wheel-manifest
+  trust root with ZIP/METADATA/WHEEL/RECORD and dependency-closure checks,
+  wheel-bound or separately authenticated per-wheel license evidence,
+  persistent uv-cache retry/progress behavior with real-uv interruption/reuse
+  coverage, complete wheel-audit runtime provenance, and a structured
+  shared/profile JSON release checklist. Retired GGUF is absent from the
+  supported Windows dependency graph.
 - Full public documentation and launch-asset package: README, FEATURES,
   USAGE, PROMPT_PRESETS, INSTALL, CONTRIBUTING, and this changelog, plus
   Windows (`launch.bat`) and Linux (`launch.sh`) launchers and a safe
@@ -45,9 +58,10 @@ time.
   `ponyStandardVAE`.
 - Catalogue thumbnails were migrated from 256x256 PNG files to native 400x250
   JPG assets.
-- The Windows and Linux launchers verify Python 3.10+, the virtual
-  environment, PyTorch with CUDA, xformers, and uv before launch, and only
-  Aria2 is installed automatically.
+- The repository Windows and Linux manual launchers verify Python 3.10+, the
+  virtual environment, PyTorch with CUDA, xformers, and uv before launch, and
+  only Aria2 is installed automatically; the separate Windows release
+  launcher owns its private Python/runtime bootstrap.
 - Hugging Face model downloads now use the high-speed `hf_transfer` transport
   when available, with fallback to the single-stream downloader. Aria2 paths
   for CivitAI and GitHub downloads are unchanged.

@@ -1,0 +1,20 @@
+@echo off
+setlocal EnableExtensions
+cd /d "%~dp0"
+
+if not exist "runtime\python312\python.exe" (
+  echo Nexfocus private Python 3.12 is missing. Re-extract the complete release archive.
+  exit /b 1
+)
+
+pushd "app"
+"%~dp0runtime\python312\python.exe" -s -m bootstrap.launcher %*
+set "NEXFOCUS_EXIT=%ERRORLEVEL%"
+popd
+
+if not "%NEXFOCUS_EXIT%"=="0" (
+  echo.
+  echo Nexfocus setup or launch failed with exit code %NEXFOCUS_EXIT%.
+  pause
+)
+exit /b %NEXFOCUS_EXIT%

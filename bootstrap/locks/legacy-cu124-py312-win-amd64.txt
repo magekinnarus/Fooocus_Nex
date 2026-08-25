@@ -1,0 +1,8 @@
+# Nexfocus lock: legacy-cu124-py312-win-amd64
+# Python: 3.12; platform: win_amd64
+# The profile lock is complete and hash-verified. The corresponding wheel
+# identity and METADATA/WHEEL audit remains independently recorded in the
+# release wheel artifact manifest.
+torch==2.5.1+cu124 --hash=sha256:3c3f705fb125edbd77f9579fa11a138c56af8968a10fc95834cdd9fdf4f1f1a6
+torchvision==0.20.1+cu124 --hash=sha256:0f6c7b3b0e13663fb3359e64f3604c0ab74c2b4809ae6949ace5635a5240f0e5
+xformers==0.0.28.post3 --hash=sha256:3a3a0b8b12fadff6a111effcdc3573c6a584a8d71fbd5ead77999fec658ab919

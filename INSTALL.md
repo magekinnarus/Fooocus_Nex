@@ -9,9 +9,44 @@ receive, and ask the assistant to explain one command at a time.
 > **Never share API keys, tokens, passwords, or the contents of your `.env`
 > file with an AI assistant.**
 
-This guide walks through setting up Nexfocus from scratch. The launchers verify
-the environment and install Aria2 when needed; they do not install Python,
-PyTorch, xformers, uv, or the Python dependencies.
+This guide covers the manual/advanced path. For the supported Windows x64
+NVIDIA path, use the [one-click release archive](https://github.com/magekinnarus/Nexfocus/releases/latest)
+first; the repository `launch.bat` described below remains available when you
+need a source checkout, custom dependencies, or Colab/Linux instructions.
+
+## Windows one-click setup
+
+1. Download `Nexfocus-OneClick-Windows-x64.zip` from the latest GitHub Release.
+2. Extract it to a writable folder and run `Nexfocus.bat`.
+3. Keep an internet connection and several GB of free disk space available for
+   the first-run wheel installation and any models you choose later.
+
+The bootstrap probes `nvidia-smi` and selects exactly one of the supported
+profiles: `legacy-cu124` for compute capability `< 7.5`, or `modern-cu128` for
+`>= 7.5`. It requires an externally installed current NVIDIA driver and never
+installs drivers, the CUDA Toolkit, a compiler, or global Python tooling.
+
+The archive contains private Python 3.12 and uv but no models or user state.
+Credentials, configuration, models, outputs, user catalogs, user thumbnails,
+temporary files, and logs live under `%LOCALAPPDATA%\Nexfocus`; the built-in
+catalogues and their thumbnails remain application-owned. A failed or
+interrupted setup can be retried; `Nexfocus.bat --repair` removes incomplete
+runtime staging and bounds old ready-runtime retention while preserving that
+user-owned data. A second normal launch reuses the ready runtime and does not
+resolve dependencies.
+
+For GPU/driver errors, run `nvidia-smi` in PowerShell and install/update the
+NVIDIA driver through the GPU vendor before retrying. CPU, AMD, Intel, ROCm,
+macOS, ARM, and unsupported CUDA profiles are outside this release.
+
+---
+
+## Manual/advanced installation
+
+The steps below use the repository's existing Python environment and do not
+install global Python, PyTorch, xformers, uv, or the other Python dependencies
+automatically. They are retained for maintainers, Linux users, Colab, and
+custom environments.
 
 ## Prerequisites
 

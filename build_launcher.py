@@ -1,26 +1,19 @@
-import os
+"""Compatibility shim for the retired inherited Fooocus launcher generator.
 
-win32_root = os.path.dirname(os.path.dirname(__file__))
-python_embeded_path = os.path.join(win32_root, 'python_embeded')
-
-is_win32_standalone_build = os.path.exists(python_embeded_path) and os.path.isdir(python_embeded_path)
-
-win32_cmd = r'''
-.\python_embeded\python.exe -s Fooocus\entry_with_update.py {cmds} %*
-pause
-'''
+The Windows one-click launcher is now a checked-in ``bootstrap`` module and
+is invoked by the release batch file. Keeping this import-safe no-op avoids
+breaking third-party scripts that imported ``build_launcher`` while ensuring
+the old code can never write stale ``run_*.bat`` files into the repository.
+"""
 
 
-def build_launcher():
-    if not is_win32_standalone_build:
-        return
+is_win32_standalone_build = False
 
-    presets = [None, 'anime', 'realistic']
 
-    for preset in presets:
-        win32_cmd_preset = win32_cmd.replace('{cmds}', '' if preset is None else f'--preset {preset}')
-        bat_path = os.path.join(win32_root, 'run.bat' if preset is None else f'run_{preset}.bat')
-        if not os.path.exists(bat_path):
-            with open(bat_path, "w", encoding="utf-8") as f:
-                f.write(win32_cmd_preset)
-    return
+def build_launcher() -> None:
+    """Retained for source compatibility; release launchers are prebuilt."""
+
+    return None
+
+
+__all__ = ["build_launcher", "is_win32_standalone_build"]

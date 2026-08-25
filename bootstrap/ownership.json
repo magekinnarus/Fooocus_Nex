@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "immutable_archive": [
+    "app/",
+    "runtime/python312/",
+    "runtime/uv.exe",
+    "Nexfocus.bat"
+  ],
+  "mutable_user_data_default": "%LOCALAPPDATA%/Nexfocus",
+  "user_owned": [
+    "config/",
+    "credentials/",
+    "models/",
+    "outputs/",
+    "catalogs/",
+    "thumbnails/",
+    "temp/",
+    "logs/"
+  ],
+  "repair_preserves_user_owned": true,
+  "archive_excludes": [
+    "models/",
+    "outputs/",
+    "config.txt",
+    ".env",
+    "credentials/",
+    "venv/",
+    "__pycache__/"
+  ]
+}

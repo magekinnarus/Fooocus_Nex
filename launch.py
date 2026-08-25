@@ -22,10 +22,8 @@ if "GRADIO_SERVER_PORT" not in os.environ:
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
-import platform
 import fooocus_version
 
-from build_launcher import build_launcher
 from modules.launch_util import delete_folder_content  # Keep this for cleanup
 from modules.model_loader import load_file_from_url
 
@@ -33,7 +31,10 @@ from modules.model_loader import load_file_from_url
 def prepare_environment():
     print(f"Python {sys.version}")
     print(f"{fooocus_version.app_name} version: {fooocus_version.version}")
-    print("Dependency management is handled manually in Colab cells.")
+    if os.environ.get("NEXFOCUS_BOOTSTRAP") == "1":
+        print("Using the private Nexfocus Windows runtime.")
+    else:
+        print("Using the existing manual/Colab Python environment.")
     return
 
 
@@ -92,11 +93,10 @@ if __name__ == "__main__":
     print('[System ARGV] ' + str(sys.argv))
 
     prepare_environment()
-    build_launcher()
     args = ini_args()
     _configure_console_logging(bool(getattr(args, "debug_mode", False)))
 
-    if args.gpu_device_id is not None:
+    if args.gpu_device_id is not None and os.environ.get("NEXFOCUS_BOOTSTRAP") != "1":
         os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_device_id)
         print("Set device to:", args.gpu_device_id)
 
@@ -104,12 +104,20 @@ if __name__ == "__main__":
         os.environ['HF_MIRROR'] = str(args.hf_mirror)
         print("Set hf_mirror to:", args.hf_mirror)
 
-    # Load .env variables (requires python-dotenv to be installed manually)
+    # Load the bootstrap-owned credentials file when present; manual launches
+    # retain the repository-root .env behavior.
     try:
         from dotenv import load_dotenv
-        if os.path.exists(os.path.join(root, '.env')):
-            load_dotenv(os.path.join(root, '.env'))
-            print("Loaded environment variables from .env file.")
+        env_file = os.environ.get("NEXFOCUS_ENV_FILE", os.path.join(root, '.env'))
+        config_file = os.environ.get("NEXFOCUS_CONFIG_PATH")
+        if config_file:
+            # modules.config intentionally keeps the historical lower-case
+            # config_path setting; this is process-local and does not edit the
+            # repository or machine environment.
+            os.environ["config_path"] = config_file
+        if os.path.exists(env_file):
+            load_dotenv(env_file, override=False)
+            print(f"Loaded environment variables from {env_file}.")
     except ImportError:
         print("python-dotenv not installed. .env file will not be loaded automatically.")
     except Exception as e:

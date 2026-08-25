@@ -1,0 +1,17 @@
+Nexfocus Windows one-click distribution
+========================================
+
+This file is a release notice index. The build command copies the license
+files shipped by the private Python and uv inputs and appends the dependency
+license report supplied with the approved wheelhouse. The archive must not be
+published without the generated report.
+
+Application dependencies are installed from exact, hash-verified Windows
+CPython 3.12 wheel locks. CUDA-sensitive torch, torchvision, and xformers
+wheels are obtained from the matching official PyTorch wheel index recorded
+in bootstrap/profiles.py. InsightFace is accepted only as an approved wheel
+input and is never source-built by the bootstrap.
+
+The licenses for the application and each dependency remain the responsibility
+of the release builder. This index is intentionally kept separate from user
+credentials, model files, and generated outputs.

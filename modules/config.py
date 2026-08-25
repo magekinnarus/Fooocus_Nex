@@ -469,6 +469,15 @@ path_model_catalogs_preset = get_dir_or_set_default('path_model_catalogs_preset'
 path_model_catalogs_user = get_dir_or_set_default('path_model_catalogs_user', '../configs/model_catalogs/user/', make_directory=True)
 path_model_thumbnails = get_dir_or_set_default('path_model_thumbnails', '../thumbnails/', make_directory=True)
 
+# The packaged launcher supplies relocatable, read-only application roots.  Do
+# not persist these roots as user-owned state: a repaired/replaced archive may
+# live elsewhere while the user catalogue and thumbnail overlay remain stable.
+bundled_catalog_root = os.environ.get('NEXFOCUS_BUNDLED_CATALOG_ROOT')
+if bundled_catalog_root:
+    path_model_catalogs_preset = os.path.abspath(bundled_catalog_root)
+bundled_thumbnail_root = os.environ.get('NEXFOCUS_BUNDLED_THUMBNAIL_ROOT')
+path_model_thumbnails_bundled = os.path.abspath(bundled_thumbnail_root) if bundled_thumbnail_root else None
+
 
 def get_model_catalog_directories():
     directories = []
@@ -484,6 +493,17 @@ def get_writable_model_catalog_directory():
 
 def get_model_thumbnail_directory():
     return path_model_thumbnails
+
+
+def get_model_thumbnail_directories():
+    directories = []
+    # Keep the legacy single-root getter as the writable/user-root seam.  A
+    # number of application integrations and tests replace that getter when
+    # selecting an isolated thumbnail directory.
+    for path in [get_model_thumbnail_directory(), path_model_thumbnails_bundled]:
+        if path and path not in directories:
+            directories.append(path)
+    return directories
 
 
 def get_default_thumbnail_relative_path():

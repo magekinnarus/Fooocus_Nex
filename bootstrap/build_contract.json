@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "product": "Nexfocus",
+  "platform": "windows-x64-nvidia",
+  "python": "3.12.10",
+  "python_archive": "python-3.12.10-embed-amd64.zip",
+  "uv": "0.12.5",
+  "uv_archive": "uv-x86_64-pc-windows-msvc.zip",
+  "release_input_contract": "bootstrap/release_inputs.json",
+  "wheel_artifact_manifest": {
+    "schema": 1,
+    "authentication": "detached-repository-sha256",
+    "trust_root": "bootstrap/wheel_artifact_trust.json",
+    "approved_source_origins": [
+      "https://files.pythonhosted.org/",
+      "https://download.pytorch.org/whl/cu124/",
+      "https://download.pytorch.org/whl/cu128/"
+    ],
+    "requires_zip_metadata_audit": true,
+    "requires_cp312_windows_tags": true,
+    "requires_marker_evaluated_dependency_closure": true,
+    "requires_detached_manifest_digest": true,
+    "requires_detached_license_evidence": true
+  },
+  "dependency_notice_contract": {
+    "schema": 1,
+    "format": "nexfocus-wheel-notices",
+    "requires_exact_shared_and_profile_wheels": true
+  },
+  "private_runtime": true,
+  "download_cache": {
+    "owner": "private-runtime",
+    "path": "runtime/download-cache",
+    "persistent_across_retries_and_repairs": true,
+    "integrity": "uv-hash-verified-wheel-cache",
+    "partial_cleanup": "uv-owned; never deleted by Nexfocus repair"
+  },
+  "requires_external_nvidia_driver": true,
+  "compute_capability_boundary": "7.5",
+  "profiles": [
+    {
+      "name": "legacy-cu124",
+      "compute_capability": "<7.5",
+      "torch": "2.5.1+cu124",
+      "torchvision": "0.20.1+cu124",
+      "xformers": "0.0.28.post3",
+      "index": "https://download.pytorch.org/whl/cu124"
+    },
+    {
+      "name": "modern-cu128",
+      "compute_capability": ">=7.5",
+      "torch": "2.11.0+cu128",
+      "torchvision": "0.26.0+cu128",
+      "xformers": "0.0.35",
+      "index": "https://download.pytorch.org/whl/cu128"
+    }
+  ],
+  "not_supported": [
+    "linux-portable",
+    "cpu",
+    "amd",
+    "intel",
+    "rocm",
+    "macos",
+    "arm",
+    "cu126",
+    "cu130",
+    "nightly",
+    "driver-installation",
+    "cuda-toolkit-installation",
+    "global-python",
+    "global-git",
+    "global-uv",
+    "models-in-archive",
+    "automatic-updater",
+    "gui-installer"
+  ]
+}

@@ -7,6 +7,53 @@ Historical mission work reports still describe what was true when each work
 order closed. Use the commands in this file for current validation and closure
 evidence.
 
+## Windows one-click bootstrap (P5-M05-W03)
+
+The source-level corrective contract is exercised without importing the heavy
+application:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests\test_w03_windows_bootstrap.py -q
+.\venv\Scripts\python.exe tools\build_windows_release.py --help
+```
+
+The checked-in `bootstrap/release_inputs.json` is the authority for the
+official Python 3.12.10 embeddable ZIP, uv 0.12.5 Windows ZIP, source URLs,
+SHA-256 values, license material, shared-lock source, and the required
+InsightFace resolution. The builder additionally requires a wheel-artifact
+manifest whose exact raw digest is recorded in the repository-owned detached
+trust root, an external hash-verified CP312 Windows wheelhouse, completed
+shared lock, approved InsightFace wheel, and structured
+`nexfocus-wheel-notices` JSON report covering shared and selected-profile
+wheels. The checked-in trust-root sentinel intentionally blocks assembly until
+the Director-approved manifest identity is recorded. It must fail closed when
+any identity, ZIP metadata/tag, graph, wheel, hash, lock, license, or notice
+input is missing.
+
+The builder assembles only the Git-tracked application inventory plus the
+explicit W03 build inputs. It rejects unexpected untracked files, symlinks,
+personal paths, credentials, model/output state, caches, and generated
+archives. The archive audit must show `Nexfocus.bat`, private Python, private
+uv, both approved profile locks, the bundled InsightFace wheel, runtime
+provenance, third-party notices, and no models, outputs, `.env`, `config.txt`,
+virtual environment, or credentials.
+
+Hardware validation covers `nvidia-smi` CSV parsing, multi-GPU physical-ID
+selection, process-local `CUDA_VISIBLE_DEVICES`, driver failure messaging, and
+the exact 7.5 boundary. Runtime validation covers a real-uv interrupted
+install/cache-reuse integration, synthetic retry recovery, atomic ready/current
+markers, second-launch no-resolution reuse, repair data preservation, bounded
+ready-runtime retention, streamed progress, profile/index/version drift rejection,
+wheel-only/no-source-build flags, packaged catalogue and thumbnail fallback,
+content-bound runtime provenance, and credential redaction. A real Windows
+NVIDIA acceptance run must also import the
+selected CUDA torch/torchvision/xformers wheels and exercise an xformers
+attention path.
+
+The corrective implementation is locally testable, but the external wheelhouse,
+clean-Windows install, physical legacy/modern GPU runs, and Director-controlled
+publication gate remain pending evidence rather than claimed here.
+
 ## Environment (local maintainer)
 
 This check depends on the ignored maintainer `tests/` tree and project virtual

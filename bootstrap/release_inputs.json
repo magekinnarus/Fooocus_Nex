@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "platform": "windows-x64",
+  "python": {
+    "version": "3.12.10",
+    "archive_name": "python-3.12.10-embed-amd64.zip",
+    "source_url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+    "executable_member": "python.exe",
+    "pth_member": "python312._pth",
+    "license_members": ["LICENSE.txt"]
+  },
+  "uv": {
+    "version": "0.12.5",
+    "archive_name": "uv-x86_64-pc-windows-msvc.zip",
+    "source_url": "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-pc-windows-msvc.zip",
+    "sha256": "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a",
+    "binary_member": "uv.exe",
+    "license_source": "bootstrap/licenses/uv-MIT.txt",
+    "license_sha256": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c"
+  },
+  "shared_lock_source": "bootstrap/locks/shared-py312-win-amd64.txt",
+  "wheel_artifact_manifest": {
+    "schema": 1,
+    "authentication_method": "detached-repository-sha256",
+    "manifest_filename": "wheel-artifact-manifest.json",
+    "trust_root": "bootstrap/wheel_artifact_trust.json",
+    "approved_source_origins": [
+      "https://files.pythonhosted.org/",
+      "https://download.pytorch.org/whl/cu124/",
+      "https://download.pytorch.org/whl/cu128/"
+    ],
+    "required_fields": [
+      "name",
+      "version",
+      "filename",
+      "sha256",
+      "source_url",
+      "metadata_sha256",
+      "wheel_metadata_sha256",
+      "license"
+    ]
+  },
+  "dependency_notice_contract": {
+    "schema": 1,
+    "format": "nexfocus-wheel-notices",
+    "requires_shared_and_profile_artifacts": true
+  },
+  "insightface": {
+    "name": "insightface",
+    "version": "0.7.3",
+    "required_platform_tag": "win_amd64"
+  }
+}

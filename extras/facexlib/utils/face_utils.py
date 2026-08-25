@@ -215,7 +215,7 @@ if __name__ == '__main__':
     from extras.facexlib.utils.face_restoration_helper import get_largest_face
     from extras.facexlib.visualization import visualize_detection
 
-    img_path = '/home/wxt/datasets/ffhq/ffhq_wild/00009.png'
+    img_path = 'path/to/ffhq/00009.png'
     img_name = os.splitext(os.path.basename(img_path))[0]
 
     # initialize model

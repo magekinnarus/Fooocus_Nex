@@ -128,6 +128,18 @@ def get_thumbnail_library_root() -> Path:
     return Path(config.get_model_thumbnail_directory()).resolve()
 
 
+def get_thumbnail_library_roots() -> list[Path]:
+    getter = getattr(config, 'get_model_thumbnail_directories', None)
+    if getter is None:
+        return [get_thumbnail_library_root()]
+    roots = []
+    for value in getter():
+        root = Path(value).resolve()
+        if root not in roots:
+            roots.append(root)
+    return roots or [get_thumbnail_library_root()]
+
+
 def get_default_thumbnail_relative_path() -> str:
     return config.get_default_thumbnail_relative_path()
 
@@ -144,7 +156,15 @@ def resolve_thumbnail_absolute_path(relative_path: str | os.PathLike[str]) -> Pa
     normalized = _normalize_relative_path(relative_path)
     if normalized is None:
         raise ValueError('Thumbnail relative path is required')
-    return get_thumbnail_library_root() / _strip_thumbnail_prefix(normalized)
+    relative = Path(_strip_thumbnail_prefix(normalized))
+    roots = get_thumbnail_library_roots()
+    for root in roots:
+        candidate = root / relative
+        if candidate.is_file():
+            return candidate
+    # New thumbnails always persist into the first (writable user) root.  A
+    # bundled fallback is read-only and must never become the write target.
+    return roots[0] / relative
 
 
 def build_thumbnail_code(
@@ -304,7 +324,7 @@ def persist_thumbnail_image(
 
     output_width = int(size or get_thumbnail_size())
     output_height = int(output_width / 1.6)
-    output_path = resolve_thumbnail_absolute_path(normalized_relative)
+    output_path = get_thumbnail_library_root() / _strip_thumbnail_prefix(normalized_relative)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_image = _open_source_image(source)

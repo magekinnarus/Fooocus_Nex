@@ -224,30 +224,39 @@ FP16 T5-XXL encoder is about 9.5 GB, plus supporting models and dependencies.
 > If the next scout mission (a native C++ tensor and memory layer) succeeds,
 > it will remove the PyTorch dependency that limits us to NVIDIA hardware.
 
-The validated software floor is PyTorch `2.5.1+cu124`. Newer compatible
-PyTorch/CUDA and xformers builds are supported; see
-[INSTALL.md](INSTALL.md) for the baseline and current-build paths.
+The manual path documents the validated PyTorch `2.5.1+cu124` baseline and
+other compatible current builds. The one-click archive is intentionally closed
+to the two profiles described below; see [INSTALL.md](INSTALL.md) for the
+manual baseline and current-build paths.
 
-### Quick Start
+### Quick Start: Windows one-click setup
 
-1. Follow the step-by-step guide in [INSTALL.md](INSTALL.md).
-2. Run the launcher to verify the environment and start Nexfocus:
+For a supported Windows x64 NVIDIA machine, download
+[`Nexfocus-OneClick-Windows-x64.zip`](https://github.com/magekinnarus/Nexfocus/releases/latest)
+from the latest GitHub Release, extract it to a writable folder, and run
+`Nexfocus.bat`. The archive contains a private Python 3.12 runtime and the
+bootstrap; it does not require global Python, Git, uv, a CUDA Toolkit, a
+compiler, or administrator access.
 
-   - **Windows:** `launch.bat`
-   - **Linux:** `./launch.sh`
+The first run needs an internet connection and several GB of free storage for
+the locked CUDA wheels and application dependencies. It checks the installed
+NVIDIA driver with `nvidia-smi`, selects `legacy-cu124` below compute
+capability 7.5 or `modern-cu128` at/above 7.5, and installs only the matching
+profile. Drivers are not installed by Nexfocus. Models are also not included;
+download them after setup. Later launches reuse the installed private runtime
+without resolving packages again. Use `Nexfocus.bat --repair` when a runtime
+repair is needed.
 
-The launcher verifies Python 3.10+, the virtual environment, PyTorch with
-CUDA, xformers, and uv. It installs only Aria2; all other installation remains
-explicit in INSTALL.md.
+Mutable configuration, credentials, models, outputs, user catalogs, user
+thumbnails, temporary files, and logs are kept under `%LOCALAPPDATA%\Nexfocus`
+and are preserved by repair. The built-in catalogues and their thumbnails stay
+with the application and are available alongside the user overlays. For
+manual/advanced setup, use the [installation guide](INSTALL.md); the repository
+`launch.bat` remains the manual launcher.
 
 A CivitAI API token is required for catalogue-driven CivitAI model downloads.
 See [INSTALL.md](INSTALL.md) for credential setup. Manually downloaded files
 must use the filename and destination expected by the Nexfocus catalogue.
-
-> **Why no portable version?** A portable bundle locks the environment to a
-> fixed configuration, makes components and settings harder to change, and
-> packages a complete Python installation. Following the installation guide
-> produces an environment you can understand, troubleshoot, and adapt.
 
 ### Run on Google Colab
 
