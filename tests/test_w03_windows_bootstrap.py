@@ -1062,6 +1062,9 @@ def test_release_input_contract_is_repository_pinned() -> None:
     assert contract["uv"]["version"] == "0.12.5"
     assert contract["uv"]["archive_name"] == "uv-x86_64-pc-windows-msvc.zip"
     assert contract["python"]["sha256"] != "a" * 64
+    shared_lock = load_lock(Path(str(contract["shared_lock_source"])), require_hashes=False)
+    assert shared_lock.pin("markdown-it-py").version == "4.2.0"
+    assert shared_lock.pin("mdurl").version == "0.1.2"
 
 
 def test_fake_python_and_uv_bytes_fail_identity_validation(tmp_path: Path) -> None:
