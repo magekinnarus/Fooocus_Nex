@@ -45,6 +45,7 @@ ARCHIVE_NAME = "Nexfocus-OneClick-Windows-x64.zip"
 EXCLUDED_DIRECTORIES = {
     ".agent",
     ".codex",
+    ".github",
     ".git",
     ".pytest_cache",
     ".pytest_full_temp",

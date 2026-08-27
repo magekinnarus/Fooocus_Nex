@@ -32,6 +32,7 @@ from bootstrap.user_data import materialize_config, redact_text
 from tools.build_windows_release import (
     _marker_applies,
     _payload_sha256,
+    _is_excluded,
     _source_matches_index,
     _specifier_satisfied,
     _validate_complete_shared_lock,
@@ -1267,3 +1268,8 @@ def test_unexpected_untracked_release_input_fails_closed(monkeypatch: pytest.Mon
     )
     with pytest.raises(ValueError, match="Unexpected untracked"):
         _validate_untracked_workspace(tmp_path, set())
+
+
+def test_release_inventory_excludes_repository_automation() -> None:
+    assert _is_excluded(Path(".github/workflows/build_container.yml"))
+    assert not _is_excluded(Path("launch.py"))
