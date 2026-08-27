@@ -1272,4 +1272,5 @@ def test_unexpected_untracked_release_input_fails_closed(monkeypatch: pytest.Mon
 
 def test_release_inventory_excludes_repository_automation() -> None:
     assert _is_excluded(Path(".github/workflows/build_container.yml"))
+    assert _is_excluded(Path(".ssl/key.pem"))
     assert not _is_excluded(Path("launch.py"))

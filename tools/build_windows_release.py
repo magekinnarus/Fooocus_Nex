@@ -52,6 +52,7 @@ EXCLUDED_DIRECTORIES = {
     ".pytest_w03_temp",
     ".pytest_w03_suite_current",
     ".pytest_w03_finalcheck",
+    ".ssl",
     ".mypy_cache",
     "__pycache__",
     "dist",
