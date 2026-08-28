@@ -1260,6 +1260,12 @@ def test_python_license_and_staged_secret_gates_fail_closed(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="Secret or credential"):
         scan_staged_content(staged)
 
+    (staged / "notes.txt").write_text(
+        "local_tokenizer_path = os.path.abspath('tokenizer')\n",
+        encoding="utf-8",
+    )
+    scan_staged_content(staged)
+
 
 def test_unexpected_untracked_release_input_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(

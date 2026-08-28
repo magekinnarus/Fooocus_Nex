@@ -108,7 +108,7 @@ _SECRET_CONTENT_PATTERNS = (
     re.compile(r"(?i)(?:[A-Z]:[\\/]+Users[\\/]|[\\/]home[\\/]|[\\/]Users[\\/])"),
 )
 _NONEMPTY_ENV_CREDENTIAL = re.compile(
-    r'''(?im)\b[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API[_-]?KEY|CREDENTIAL)[A-Z0-9_]*\s*[:=]\s*'''
+    r'''(?m)^[ \t]*[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API[_-]?KEY|CREDENTIAL)[A-Z0-9_]*[ \t]*[:=][ \t]*'''
 )
 _WHEEL_MANIFEST_SCHEMA = 1
 _UNSUPPORTED_SHARED_PACKAGES = frozenset({"gguf"})
