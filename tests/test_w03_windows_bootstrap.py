@@ -1266,6 +1266,11 @@ def test_python_license_and_staged_secret_gates_fail_closed(tmp_path: Path) -> N
     )
     scan_staged_content(staged)
 
+    stdlib_zip = staged / "runtime" / "python312" / "python312.zip"
+    stdlib_zip.parent.mkdir(parents=True)
+    stdlib_zip.write_bytes(b"official embedded standard library")
+    scan_staged_content(staged)
+
 
 def test_unexpected_untracked_release_input_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(

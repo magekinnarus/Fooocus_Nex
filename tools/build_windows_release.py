@@ -1525,7 +1525,9 @@ def scan_staged_content(root: Path) -> None:
             raise ValueError(f"User state leaked into staging: {relative}")
         if any(fragment in normalized for fragment in ("/cache/", "/__pycache__/", "/.git/", "/release/")):
             raise ValueError(f"Cache or release state leaked into staging: {relative}")
-        if path.suffix.lower() == ".whl" and relative.lower().startswith("app/bootstrap/wheelhouse/") \
+        if relative.lower() == "runtime/python312/python312.zip":
+            pass
+        elif path.suffix.lower() == ".whl" and relative.lower().startswith("app/bootstrap/wheelhouse/") \
                 and path.name.lower().startswith("insightface-"):
             pass
         elif path.suffix.lower() in {".whl", ".zip", ".7z", ".ckpt", ".safetensors", ".gguf", ".onnx"}:
